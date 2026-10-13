@@ -31,16 +31,30 @@ if [[ -n "${NOTARY_PROFILE:-}" ]]; then
     xcrun stapler staple "$ROOT/build/XNotch.app"
     ditto -c -k --sequesterRsrc --keepParent "$ROOT/build/XNotch.app" "$ARCHIVE"
 fi
+# The DMG is the first download; Sparkle keeps updating from the ZIP.
+DMG="$OUT/XNotch-$VERSION.dmg"
+STAGING="$OUT/dmg"
+rm -rf "$STAGING" "$DMG"
+mkdir -p "$STAGING"
+ditto "$ROOT/build/XNotch.app" "$STAGING/XNotch.app"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname XNotch -srcfolder "$STAGING" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+rm -rf "$STAGING"
+if [[ "${CODE_SIGN_IDENTITY:--}" != "-" ]]; then codesign --sign "$CODE_SIGN_IDENTITY" --timestamp "$DMG"; fi
+if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$DMG"
+fi
 SIGNATURE=$("$TOOLS/sign_update" --account "$ACCOUNT" -p "$ARCHIVE")
 python3 scripts/make_appcast.py "$ARCHIVE" "$SIGNATURE" "$OUT/appcast.xml"
 "$TOOLS/sign_update" --account "$ACCOUNT" "$OUT/appcast.xml"
 python3 scripts/verify_release.py "$OUT"
-(cd "$OUT" && shasum -a 256 "XNotch-$VERSION.zip" appcast.xml > SHA256SUMS)
+(cd "$OUT" && shasum -a 256 "XNotch-$VERSION.dmg" "XNotch-$VERSION.zip" appcast.xml > SHA256SUMS)
 echo "Prepared $OUT"
 if [[ "${1:-}" == --publish ]]; then
     COMMIT=$(git rev-parse HEAD)
     git tag -a "v$VERSION" -m "XNotch $VERSION" "$COMMIT"
     git push origin "v$VERSION"
-    gh release create "v$VERSION" "$ARCHIVE" "$OUT/appcast.xml" "$OUT/SHA256SUMS" \
+    gh release create "v$VERSION" "$DMG" "$ARCHIVE" "$OUT/appcast.xml" "$OUT/SHA256SUMS" \
         --repo "$REPOSITORY" --verify-tag --latest --title "XNotch $VERSION" --notes-file "$NOTES"
 fi

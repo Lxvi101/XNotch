@@ -1,6 +1,6 @@
 # Releasing XNotch
 
-A release is a GitHub release with three assets: the universal app ZIP, a signed `appcast.xml`, and `SHA256SUMS`. Installed copies find it through the latest release's appcast and update themselves with Sparkle.
+A release is a GitHub release with four assets: the universal app DMG for first installs, the ZIP that Sparkle updates from, a signed `appcast.xml`, and `SHA256SUMS`. Installed copies find it through the latest release's appcast and update themselves with Sparkle.
 
 ## Once per Mac
 
@@ -20,16 +20,16 @@ A release is a GitHub release with three assets: the universal app ZIP, a signed
    CODE_SIGN_IDENTITY='Developer ID Application: Levi Dan Berger (59UPSTU6WZ)' scripts/release.sh
    ```
 
-5. **Publish.** The same command with `--publish` tags `v<version>`, pushes the tag and creates the GitHub release with all three assets:
+5. **Publish.** The same command with `--publish` tags `v<version>`, pushes the tag and creates the GitHub release with all four assets:
 
    ```sh
    CODE_SIGN_IDENTITY='Developer ID Application: Levi Dan Berger (59UPSTU6WZ)' scripts/release.sh --publish
    ```
 
-6. **Check it.** `gh release view v<version>` should list the ZIP, `appcast.xml` and `SHA256SUMS`. In a copy of the previous version, Settings → About XNotch → Check for Updates should offer the new one.
+6. **Check it.** `gh release view v<version>` should list the DMG, the ZIP, `appcast.xml` and `SHA256SUMS`. In a copy of the previous version, Settings → About XNotch → Check for Updates should offer the new one.
 
 ## Rules
 
-- Never edit a ZIP or `appcast.xml` after it's signed. To redo a release, regenerate and upload all three assets together.
+- Never edit a ZIP or `appcast.xml` after it's signed. To redo a release, regenerate and upload all four assets together.
 - Never reuse a version: publishing refuses an existing tag. Bump `release.json` instead.
 - Publishing requires a clean working tree, with `main` pushed and matching `origin/main`.

@@ -26,6 +26,13 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 cp -R ThirdParty/mediaremote-adapter/MediaRemoteAdapter.framework \
       ThirdParty/mediaremote-adapter/mediaremote-adapter.pl "$APP/Contents/Resources/"
 cp Kit/README.md "$APP/Contents/Resources/XNotchKit.md"
+# The app icon, rendered from the drawing in AppIcon.swift.
+ICON_WORK="$ROOT/build/icon"
+rm -rf "$ICON_WORK"
+mkdir -p "$ICON_WORK"
+swiftc -O -parse-as-library scripts/make_icon.swift XNotch/UI/DesignSystem/AppIcon.swift -o "$ICON_WORK/make_icon"
+"$ICON_WORK/make_icon" "$ICON_WORK/AppIcon.iconset"
+iconutil -c icns "$ICON_WORK/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 # Release notes, shown in Settings → What's New.
 mkdir -p "$APP/Contents/Resources/Releases"
 cp releases/*.md "$APP/Contents/Resources/Releases/"
@@ -45,6 +52,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>dev.levi.XNotch</string>
     <key>CFBundleName</key><string>XNotch</string>
     <key>CFBundleExecutable</key><string>XNotch</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>

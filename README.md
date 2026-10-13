@@ -4,7 +4,7 @@ A macOS notch companion with Now Playing, a file shelf, Lock Screen media contro
 
 ## Install
 
-Download the ZIP from [the latest release](https://github.com/Lxvi101/XNotch/releases/latest), extract it, and move XNotch.app to Applications. XNotch runs without a Dock icon. Open it again, or right-click the notch, to reach Settings.
+Download the DMG from [the latest release](https://github.com/Lxvi101/XNotch/releases/latest), open it, and drag XNotch to Applications. XNotch runs without a Dock icon. Open it again, or right-click the notch, to reach Settings.
 
 The first launch plays a short welcome tour and asks for Full Disk Access, so the shelf and Folders can open files anywhere. XNotch opens the right pane in System Settings and docks a guide beside it; drag XNotch from the guide into the list. The tour then offers the extensions (all start off) and asks for whatever the ones you add need. Replay the tour or grant access later under **Settings → General**.
 

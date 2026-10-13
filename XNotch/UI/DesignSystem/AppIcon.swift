@@ -1,8 +1,9 @@
 import AppKit
 
-/// XNotch's icon. Builds without an icon file get a drawn one, the notch
-/// with its eyes on a dark tile, so the permission guide and System Settings
-/// show something recognisable.
+/// XNotch's icon: the notch with its eyes on a dark tile. build_app.sh
+/// renders `drawn` into the bundle's AppIcon.icns; builds without an icon
+/// file use the drawing directly, so the permission guide and System
+/// Settings still show something recognisable.
 @MainActor
 enum AppIcon {
     /// Read from Info.plist rather than the bundle on disk, which may sit in
@@ -17,7 +18,7 @@ enum AppIcon {
         return drawn
     }()
 
-    private static let drawn = NSImage(size: NSSize(width: 512, height: 512), flipped: true) { bounds in
+    static let drawn = NSImage(size: NSSize(width: 512, height: 512), flipped: true) { bounds in
         let tile = bounds.insetBy(dx: 50, dy: 50)
         let radius = tile.width * 0.225
         NSGraphicsContext.saveGraphicsState()

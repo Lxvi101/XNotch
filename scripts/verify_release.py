@@ -13,6 +13,7 @@ root = pathlib.Path(__file__).resolve().parent.parent
 config = json.loads((root / "release.json").read_text())
 directory = pathlib.Path(sys.argv[1]).resolve()
 archive = directory / f"XNotch-{config['version']}.zip"
+disk_image = directory / f"XNotch-{config['version']}.dmg"
 feed = ET.parse(directory / "appcast.xml")
 item = feed.find("channel/item")
 ns = {"sparkle": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
@@ -31,6 +32,7 @@ with zipfile.ZipFile(archive) as bundle:
 assert info["CFBundleIdentifier"] == "dev.levi.XNotch"
 assert info["CFBundleShortVersionString"] == config["version"]
 assert info["CFBundleVersion"] == config["build"]
+assert info["CFBundleIconFile"] == "AppIcon"
 assert info["SUPublicEDKey"] == config["sparklePublicKey"]
 assert info["SUFeedURL"] == f"https://github.com/{config['repository']}/releases/latest/download/appcast.xml"
 for option in ("SURequireSignedFeed", "SUVerifyUpdateBeforeExtraction", "SUEnableAutomaticChecks", "SUAutomaticallyUpdate"):
@@ -46,7 +48,18 @@ with tempfile.TemporaryDirectory(prefix="xnotch-release-check-") as temporary:
         assert {"arm64", "x86_64"} <= set(architectures), f"Not universal: {binary}"
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md", "Licenses/Sparkle.txt", "Licenses/mediaremote-adapter.txt"):
         assert (app / "Contents/Resources" / name).is_file(), f"Missing license: {name}"
+    assert (app / "Contents/Resources/AppIcon.icns").is_file(), "Missing app icon"
+with tempfile.TemporaryDirectory(prefix="xnotch-dmg-check-") as mount:
+    subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", mount, str(disk_image)], check=True, stdout=subprocess.DEVNULL)
+    try:
+        volume = pathlib.Path(mount)
+        assert (volume / "Applications").resolve() == pathlib.Path("/Applications"), "Missing Applications link"
+        with open(volume / "XNotch.app/Contents/Info.plist", "rb") as plist:
+            assert plistlib.load(plist)["CFBundleVersion"] == config["build"], "DMG holds a different build"
+        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(volume / "XNotch.app")], check=True)
+    finally:
+        subprocess.run(["hdiutil", "detach", mount], check=True, stdout=subprocess.DEVNULL)
 tools = root / ".build/artifacts/sparkle/Sparkle/bin"
 subprocess.run([str(tools / "sign_update"), "--account", config["sparkleKeyAccount"], "--verify", str(archive), enclosure.attrib[f"{{{ns['sparkle']}}}edSignature"]], check=True)
 subprocess.run([str(tools / "sign_update"), "--account", config["sparkleKeyAccount"], "--verify", str(directory / "appcast.xml")], check=True)
-print("Verified universal app, nested code signatures, feed, update signature and licenses.")
+print("Verified universal app, icon, DMG, nested code signatures, feed, update signature and licenses.")
