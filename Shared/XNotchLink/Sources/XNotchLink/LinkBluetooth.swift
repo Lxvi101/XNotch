@@ -15,6 +15,18 @@ public enum LinkBluetooth {
     /// Whether macOS or iOS let this app use Bluetooth, without asking.
     public static var isAllowed: Bool { CBManager.authorization == .allowedAlways }
     public static var isUndetermined: Bool { CBManager.authorization == .notDetermined }
+
+    /// Shows the system's Bluetooth prompt if it hasn't been answered, and
+    /// returns whether Bluetooth may be used.
+    public static func requestAccess() async -> Bool {
+        guard isUndetermined else { return isAllowed }
+        let manager = CBCentralManager(delegate: nil, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        for _ in 0..<240 where isUndetermined {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        withExtendedLifetime(manager) {}
+        return isAllowed
+    }
 }
 
 /// The Mac's side: advertises and accepts L2CAP channels.

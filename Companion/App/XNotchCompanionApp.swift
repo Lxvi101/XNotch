@@ -4,6 +4,7 @@ import XNotchLink
 @main
 struct XNotchCompanionApp: App {
     @StateObject private var link = MacLink()
+    @StateObject private var flow = PairingFlow()
     @AppStorage("didOnboard") private var didOnboard = false
     @Environment(\.scenePhase) private var phase
 
@@ -11,16 +12,23 @@ struct XNotchCompanionApp: App {
         WindowGroup {
             RootView(didOnboard: $didOnboard)
                 .environmentObject(link)
+                .environmentObject(flow)
                 .preferredColorScheme(.dark)
                 .tint(.white)
                 // The Camera app opens the Mac's code as an xnotchlink:// link.
                 .onOpenURL { url in
                     guard let pairing = LinkPairing(url: url) else { return }
-                    link.pair(pairing)
                     didOnboard = true
+                    flow.begin(with: pairing)
                 }
                 .onChange(of: phase, initial: true) { _, phase in
                     link.setActive(phase == .active)
+                }
+                .onAppear {
+                    flow.onStart = { [weak link] in link?.pauseForPairing() }
+                    flow.onEnd = { [weak link] in link?.resumeAfterPairing() }
+                    flow.onConnected = { [weak link] pairing, session in link?.pair(pairing, session: session) }
+                    flow.onSaveForLater = { [weak link] pairing in link?.pair(pairing) }
                 }
         }
     }
@@ -28,6 +36,8 @@ struct XNotchCompanionApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var link: MacLink
+    @EnvironmentObject private var flow: PairingFlow
+    @Environment(\.scenePhase) private var phase
     @Binding var didOnboard: Bool
 
     var body: some View {
@@ -37,7 +47,7 @@ struct RootView: View {
                 OnboardingView { didOnboard = true }
                     .transition(.opacity)
             } else if link.mac == nil {
-                PairView(isStandalone: true)
+                PairView()
                     .transition(.opacity)
             } else {
                 HomeView()
@@ -46,5 +56,11 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: didOnboard)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: link.mac?.id)
+        // Nothing animates behind the pairing screen or while the app is in the background.
+        .environment(\.dotGridPaused, flow.isPresented || phase != .active)
+        .fullScreenCover(isPresented: $flow.isPresented, onDismiss: { flow.dismiss() }) {
+            PairingFlowView()
+                .environmentObject(flow)
+        }
     }
 }

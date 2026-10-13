@@ -65,21 +65,20 @@ struct StatusCaps: View {
     }
 }
 
-/// A field of dots that swell and brighten around a glow: under a finger, a
-/// dragged file, or breathing up from the bottom when idle.
+/// A field of dots, brightening where a soft glow slowly breathes up from
+/// the bottom. Decoration only: it doesn't react to touches.
 struct DotGrid: View {
-    /// In the view's coordinates; nil lets the idle glow breathe.
-    var focus: CGPoint?
     var spacing: CGFloat = 19
     var intensity: Double = 1
+    @Environment(\.dotGridPaused) private var paused
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: focus != nil)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: paused)) { timeline in
             Canvas { context, size in
                 let time = timeline.date.timeIntervalSinceReferenceDate
-                let center = focus ?? CGPoint(x: size.width / 2 + sin(time * 0.6) * size.width * 0.12,
+                let center = CGPoint(x: size.width / 2 + sin(time * 0.6) * size.width * 0.12,
                                               y: size.height * (1.02 - 0.04 * sin(time * 0.9)))
-                let reach = max(size.width, size.height) * (focus == nil ? 0.42 : 0.32)
+                let reach = max(size.width, size.height) * 0.42
                 let columns = Int(size.width / spacing)
                 let rows = Int(size.height / spacing)
                 let inset = CGPoint(x: (size.width - CGFloat(columns - 1) * spacing) / 2,
@@ -96,32 +95,6 @@ struct DotGrid: View {
                     }
                 }
             }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// Blue rings of light, as behind the welcome screen's title.
-struct GlowArcs: View {
-    @State private var phase = false
-
-    var body: some View {
-        ZStack {
-            ForEach(0..<4) { index in
-                Ellipse()
-                    .stroke(LinearGradient(colors: [Palette.cyan.opacity(0), Palette.cyan, Palette.blue, Palette.blue.opacity(0)],
-                                           startPoint: .leading, endPoint: .trailing),
-                            lineWidth: 2.5)
-                    .frame(width: 360 + CGFloat(index) * 90, height: 120 + CGFloat(index) * 70)
-                    .blur(radius: 1.5)
-                    .shadow(color: Palette.blue.opacity(0.9), radius: 14)
-                    .opacity(phase ? 0.95 - Double(index) * 0.18 : 0.55 - Double(index) * 0.1)
-                    .offset(y: CGFloat(index) * -6)
-            }
-        }
-        .compositingGroup()
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { phase = true }
         }
         .allowsHitTesting(false)
     }
@@ -163,5 +136,17 @@ struct StepLayout<Visual: View, Actions: View>: View {
         .padding(.bottom, 12)
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity)
+    }
+}
+
+private struct DotGridPausedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Stops the dot grids' idle animation, for when they can't be seen.
+    var dotGridPaused: Bool {
+        get { self[DotGridPausedKey.self] }
+        set { self[DotGridPausedKey.self] = newValue }
     }
 }

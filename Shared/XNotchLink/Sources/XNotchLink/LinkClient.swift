@@ -1,6 +1,17 @@
 import Foundation
 import Network
 
+/// What a connection attempt is doing, to show it as it happens.
+public enum LinkProgress: Sendable, Equatable {
+    case searching(LinkRoute)
+    /// iOS is asking for Local Network access; the search waits for the answer.
+    case waitingForLocalNetwork
+    /// The Mac answered; the secure handshake is running.
+    case securing(LinkRoute)
+}
+
+public typealias LinkProgressHandler = @Sendable (LinkProgress) -> Void
+
 /// Opening sessions over each route, and the phone's race between them.
 public enum LinkClient {
     private static let queue = DispatchQueue(label: "dev.levi.XNotchLink.browser")
@@ -39,26 +50,32 @@ public enum LinkClient {
 
     /// The same network, or peer-to-peer Wi-Fi nearby: Bonjour finds the Mac.
     public static func connectLocal(to pairing: LinkPairing, as device: LinkDevice, incomingDirectory: URL,
-                                    timeout: TimeInterval = 8) async throws -> LinkSession {
-        let endpoint = try await find(pairing, timeout: timeout)
+                                    timeout: TimeInterval = 8, progress: LinkProgressHandler? = nil) async throws -> LinkSession {
+        progress?(.searching(.local))
+        let endpoint = try await find(pairing, timeout: timeout, progress: progress)
         let transport = NetworkTransport(NWConnection(to: endpoint, using: LinkNetwork.parameters()), route: .local)
         try await transport.start(timeout: timeout)
+        progress?(.securing(.local))
         return try await open(transport, pairing: pairing, as: device, incomingDirectory: incomingDirectory)
     }
 
     /// Through the Mac's relay server.
     public static func connectInternet(to pairing: LinkPairing, as device: LinkDevice,
-                                       incomingDirectory: URL) async throws -> LinkSession {
+                                       incomingDirectory: URL, progress: LinkProgressHandler? = nil) async throws -> LinkSession {
         guard let relay = pairing.relay else {
             throw LinkError.unavailable("\(pairing.name) has no relay server set up for the internet.")
         }
+        progress?(.searching(.internet))
         let transport = try await LinkRelay.connect(LinkRelay.room(for: pairing), server: relay, as: .phone)
+        progress?(.securing(.internet))
         return try await open(transport, pairing: pairing, as: device, incomingDirectory: incomingDirectory)
     }
 
     public static func connectBluetooth(to pairing: LinkPairing, as device: LinkDevice,
-                                        incomingDirectory: URL) async throws -> LinkSession {
+                                        incomingDirectory: URL, progress: LinkProgressHandler? = nil) async throws -> LinkSession {
+        progress?(.searching(.bluetooth))
         let transport = try await LinkBluetoothCentral.connect(to: pairing)
+        progress?(.securing(.bluetooth))
         return try await open(transport, pairing: pairing, as: device, incomingDirectory: incomingDirectory)
     }
 
@@ -66,20 +83,21 @@ public enum LinkClient {
     /// USB and Wi-Fi at once, the internet after a second, Bluetooth after
     /// three. For one-off sends, like the Share extension's.
     public static func connectBest(to pairing: LinkPairing, as device: LinkDevice, incomingDirectory: URL,
-                                   routes: Set<LinkRoute> = Set(LinkRoute.allCases), timeout: TimeInterval = 15) async throws -> LinkSession {
+                                   routes: Set<LinkRoute> = Set(LinkRoute.allCases), timeout: TimeInterval = 15,
+                                   progress: LinkProgressHandler? = nil) async throws -> LinkSession {
         typealias Attempt = (route: LinkRoute, delay: Double, open: @Sendable () async throws -> LinkSession)
         var attempts: [Attempt] = []
         if routes.contains(.local) {
-            attempts.append((.local, 0, { try await connectLocal(to: pairing, as: device, incomingDirectory: incomingDirectory, timeout: timeout) }))
+            attempts.append((.local, 0, { try await connectLocal(to: pairing, as: device, incomingDirectory: incomingDirectory, timeout: timeout, progress: progress) }))
         }
         if routes.contains(.usb) {
             attempts.append((.usb, 0, { try await LinkUSBAcceptor.acceptOnce(pairings: [pairing], as: device, incomingDirectory: incomingDirectory, timeout: timeout) }))
         }
         if routes.contains(.internet), pairing.relay != nil {
-            attempts.append((.internet, 1, { try await connectInternet(to: pairing, as: device, incomingDirectory: incomingDirectory) }))
+            attempts.append((.internet, 1, { try await connectInternet(to: pairing, as: device, incomingDirectory: incomingDirectory, progress: progress) }))
         }
         if routes.contains(.bluetooth) {
-            attempts.append((.bluetooth, 3, { try await connectBluetooth(to: pairing, as: device, incomingDirectory: incomingDirectory) }))
+            attempts.append((.bluetooth, 3, { try await connectBluetooth(to: pairing, as: device, incomingDirectory: incomingDirectory, progress: progress) }))
         }
         let race = Race(count: attempts.count)
         return try await withTaskCancellationHandler {
@@ -103,13 +121,18 @@ public enum LinkClient {
 
     // MARK: Bonjour
 
-    /// Browses Bonjour until the Mac with this pairing's ID shows up.
-    public static func find(_ pairing: LinkPairing, timeout: TimeInterval) async throws -> NWEndpoint {
+    /// Browses Bonjour until the Mac with this pairing's ID shows up. While
+    /// iOS asks for Local Network access the search waits up to 20 seconds
+    /// longer for the answer instead of timing out underneath the prompt.
+    public static func find(_ pairing: LinkPairing, timeout: TimeInterval,
+                            progress: LinkProgressHandler? = nil) async throws -> NWEndpoint {
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: LinkService.type, domain: nil), using: parameters)
         let once = Once()
         let denied = Flag()
+        let deniedNow = Flag()
+        let extended = Flag()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<NWEndpoint, Error>) in
                 browser.browseResultsChangedHandler = { results, _ in
@@ -134,6 +157,13 @@ public enum LinkClient {
                         // Also the state while iOS asks for Local Network access: keep waiting.
                         if case .dns(let code) = error, code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied) {
                             denied.set()
+                            deniedNow.set()
+                            progress?(.waitingForLocalNetwork)
+                        }
+                    case .ready:
+                        if deniedNow.isSet {
+                            deniedNow.clear()
+                            progress?(.searching(.local))
                         }
                     case .cancelled:
                         once.run { continuation.resume(throwing: CancellationError()) }
@@ -142,12 +172,18 @@ public enum LinkClient {
                     }
                 }
                 browser.start(queue: queue)
-                queue.asyncAfter(deadline: .now() + timeout) {
+                @Sendable func expire() {
+                    if deniedNow.isSet, !extended.isSet {
+                        extended.set()
+                        queue.asyncAfter(deadline: .now() + 20, execute: expire)
+                        return
+                    }
                     once.run {
                         browser.cancel()
                         continuation.resume(throwing: denied.isSet ? LinkError.localNetworkDenied : LinkError.notFound(pairing.name))
                     }
                 }
+                queue.asyncAfter(deadline: .now() + timeout, execute: expire)
             }
         } onCancel: {
             browser.cancel()
@@ -315,5 +351,6 @@ private final class Flag: @unchecked Sendable {
     private var value = false
 
     func set() { lock.withLock { value = true } }
+    func clear() { lock.withLock { value = false } }
     var isSet: Bool { lock.withLock { value } }
 }

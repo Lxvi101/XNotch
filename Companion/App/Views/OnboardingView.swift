@@ -28,7 +28,7 @@ struct OnboardingView: View {
             default:
                 StepLayout(title: "Copy here, paste there",
                            subtitle: "Send text straight to your Mac's clipboard, then press ⌘V.",
-                           footer: "Text never leaves your network") {
+                           footer: "End-to-end encrypted, even over the internet") {
                     ClipboardIllustration()
                 } actions: {
                     Button("Continue") { advance() }.buttonStyle(PillButtonStyle())
@@ -54,30 +54,13 @@ private struct WelcomeStep: View {
     let onContinue: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text("Your iPhone,\none drop from the notch")
-                .font(.system(size: 36, weight: .bold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.6), radius: 12)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity)
-                .frame(height: 240)
-                // Wider than the screen on purpose; as a background it doesn't widen the layout.
-                .background { GlowArcs().offset(y: 30) }
-                .padding(.top, 30)
+        StepLayout(title: "Send to your notch",
+                   subtitle: "Photos, files and text go from your iPhone straight onto your Mac's shelf.",
+                   footer: "Works with XNotch on your Mac") {
             NotchIllustration()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Button("Continue", action: onContinue)
-                .buttonStyle(PillButtonStyle())
-            Text("Works with XNotch on your Mac")
-                .font(.system(size: 15))
-                .foregroundStyle(Palette.tertiary)
-                .padding(.top, 18)
+        } actions: {
+            Button("Continue", action: onContinue).buttonStyle(PillButtonStyle())
         }
-        .padding(.horizontal, 26)
-        .padding(.bottom, 12)
-        .frame(maxWidth: 560)
     }
 }
 
@@ -99,6 +82,12 @@ struct NotchIllustration: View {
                         RoundedRectangle(cornerRadius: 26, style: .continuous)
                             .strokeBorder(.white.opacity(0.12), lineWidth: 1.5)
                     }
+                // A faint glow where the files land.
+                Ellipse()
+                    .fill(Palette.cyan.opacity(0.14))
+                    .frame(width: width * 0.5, height: 70)
+                    .blur(radius: 30)
+                    .offset(y: 20)
                 NotchShape()
                     .fill(.black)
                     .frame(width: width * 0.42, height: 46)
@@ -212,34 +201,52 @@ private struct ClipboardIllustration: View {
                 .padding(18)
                 .frame(maxWidth: 300, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Palette.raised))
-                .offset(y: sent ? -8 : 0)
+                .scaleEffect(sent ? 0.97 : 1)
+                .opacity(sent ? 0.6 : 1)
             Image(systemName: "arrow.down")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Palette.cyan)
                 .opacity(sent ? 1 : 0.3)
+                .offset(y: sent ? 4 : -4)
             HStack(spacing: 14) {
                 Image(systemName: "laptopcomputer")
-                    .font(.system(size: 28))
+                    .font(.system(size: 26))
                     .foregroundStyle(.white)
-                VStack(alignment: .leading, spacing: 3) {
+                    .frame(width: 40)
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Mac clipboard").font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
-                    StatusCaps(text: sent ? "Ready to paste" : "Waiting", color: sent ? Palette.green : Palette.tertiary)
+                    // Pinned to the leading edge, so the swap happens in place.
+                    ZStack(alignment: .leading) {
+                        if sent {
+                            StatusCaps(text: "Ready to paste", color: Palette.green)
+                                .transition(.blurReplace)
+                        } else {
+                            StatusCaps(text: "Waiting", color: Palette.tertiary)
+                                .transition(.blurReplace)
+                        }
+                    }
                 }
-                Spacer()
+                .fixedSize()
+                Spacer(minLength: 8)
                 Text("⌘V")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .fixedSize()
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Capsule().fill(Palette.raised))
+                    .background(Capsule().fill(sent ? Palette.green.opacity(0.25) : Palette.raised))
             }
             .padding(18)
             .frame(maxWidth: 320)
             .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Palette.card))
         }
-        .onAppear {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.4).repeatForever(autoreverses: true)) {
-                sent = true
+        .task {
+            // Copy, arrive, pause, again.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { sent = true }
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                withAnimation(.easeInOut(duration: 0.4)) { sent = false }
             }
         }
     }

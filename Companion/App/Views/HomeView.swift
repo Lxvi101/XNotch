@@ -10,7 +10,7 @@ struct HomeView: View {
     @State private var picksPhotos = false
     @State private var picksFiles = false
     @State private var photoItems: [PhotosPickerItem] = []
-    @State private var pairsAnother = false
+    @EnvironmentObject private var flow: PairingFlow
     @State private var confirmsForget = false
     @State private var preview: URL?
     @FocusState private var composing: Bool
@@ -46,13 +46,6 @@ struct HomeView: View {
                 }
                 link.send(files: staged)
             }
-        }
-        .sheet(isPresented: $pairsAnother) {
-            ZStack {
-                Palette.background.ignoresSafeArea()
-                PairView(isStandalone: false)
-            }
-            .presentationDragIndicator(.visible)
         }
         .confirmationDialog("Forget \(link.mac?.name ?? "this Mac")?", isPresented: $confirmsForget, titleVisibility: .visible) {
             Button("Forget", role: .destructive) { if let id = link.mac?.id { link.forget(id) } }
@@ -127,7 +120,12 @@ struct HomeView: View {
                         }
                     }
                 }
-                Button { pairsAnother = true } label: { Label("Pair Another Mac", systemImage: "qrcode.viewfinder") }
+                Button { flow.beginScanning() } label: { Label("Pair Another Mac", systemImage: "qrcode.viewfinder") }
+                if LinkBluetooth.isUndetermined {
+                    Button { Task { await link.enableBluetooth() } } label: {
+                        Label("Use Bluetooth When There's No Wi-Fi", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                }
                 Button(role: .destructive) { confirmsForget = true } label: { Label("Forget This Mac", systemImage: "trash") }
             } label: {
                 HStack(spacing: 8) {

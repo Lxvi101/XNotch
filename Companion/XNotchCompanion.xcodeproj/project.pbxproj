@@ -20,7 +20,9 @@
 		9F5B0CB5E504806D0FD3D275 /* BasketView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59592228D7985CC0E3CFB815 /* BasketView.swift */; };
 		A9A517DE2B2EA61B9E89F3F9 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B70AEB92229509F36349A7 /* ShareViewController.swift */; };
 		AFC62F3DE4527EA94FF271EA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 996E9DBFB0E9307B7E55689B /* OnboardingView.swift */; };
+		B20604065BA864434CF9F9D1 /* PairingFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD91E7E93838CFEF9E044B8C /* PairingFlow.swift */; };
 		DCA7247A3E5BFA6750710A16 /* PairingKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BD0B4185188A297415FA9A6 /* PairingKeychain.swift */; };
+		E31FD714E2642FB6465024AD /* PairingFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D8B15DA700A70B6A3FDBF8D /* PairingFlowView.swift */; };
 		EA242F02C74ECB29FC563D41 /* XNotchLink in Frameworks */ = {isa = PBXBuildFile; productRef = 3B0EAD1323B474762C254D6A /* XNotchLink */; };
 /* End PBXBuildFile section */
 
@@ -58,11 +60,13 @@
 		5A72C4CAD4220D41DE03AF2B /* PairView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairView.swift; sourceTree = "<group>"; };
 		5BD0B4185188A297415FA9A6 /* PairingKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingKeychain.swift; sourceTree = "<group>"; };
 		85C7984C674597EC96CF8C06 /* XNotchCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = XNotchCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8D8B15DA700A70B6A3FDBF8D /* PairingFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingFlowView.swift; sourceTree = "<group>"; };
 		93A53011D73352006DF8A608 /* XNotchCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XNotchCompanionApp.swift; sourceTree = "<group>"; };
 		93B3E1B9A7C3A6AF07990557 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		95D5A3E471B9DFD7AAA1AD7C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		996E9DBFB0E9307B7E55689B /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		A644770C30D0F42296AF21E6 /* XNotchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XNotchShare.entitlements; sourceTree = "<group>"; };
+		BD91E7E93838CFEF9E044B8C /* PairingFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingFlow.swift; sourceTree = "<group>"; };
 		BF0F17C9A997327FBE6C5008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F4B70AEB92229509F36349A7 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F8C97B2725AD6FC25D994470 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -103,6 +107,7 @@
 				59592228D7985CC0E3CFB815 /* BasketView.swift */,
 				F8C97B2725AD6FC25D994470 /* HomeView.swift */,
 				996E9DBFB0E9307B7E55689B /* OnboardingView.swift */,
+				8D8B15DA700A70B6A3FDBF8D /* PairingFlowView.swift */,
 				5A72C4CAD4220D41DE03AF2B /* PairView.swift */,
 			);
 			path = Views;
@@ -122,6 +127,7 @@
 				93B3E1B9A7C3A6AF07990557 /* Assets.xcassets */,
 				BF0F17C9A997327FBE6C5008 /* Info.plist */,
 				595125BAA715B8E03755C896 /* MacLink.swift */,
+				BD91E7E93838CFEF9E044B8C /* PairingFlow.swift */,
 				12F04434550685FBF909B22C /* XNotchCompanion.entitlements */,
 				93A53011D73352006DF8A608 /* XNotchCompanionApp.swift */,
 				2CEB0EAC392DA5578921FBBB /* Views */,
@@ -266,6 +272,8 @@
 				7AA0710598EDDCA1CD76932A /* MacLink.swift in Sources */,
 				AFC62F3DE4527EA94FF271EA /* OnboardingView.swift in Sources */,
 				300184038E4F0FCFFD655B1C /* PairView.swift in Sources */,
+				B20604065BA864434CF9F9D1 /* PairingFlow.swift in Sources */,
+				E31FD714E2642FB6465024AD /* PairingFlowView.swift in Sources */,
 				DCA7247A3E5BFA6750710A16 /* PairingKeychain.swift in Sources */,
 				4FC9AB6A6915C66A7C0C3D6A /* Theme.swift in Sources */,
 				2C74EB0E39FDBC1156950C3C /* XNotchCompanionApp.swift in Sources */,

@@ -54,6 +54,8 @@ final class MacLink: ObservableObject {
     private var queueTask: Task<Void, Never>?
     private var sendingSession: LinkSession?
     private var lastFailure: String?
+    private var isPausedForPairing = false
+    private var bluetoothTask: Task<Void, Never>?
     private var isActive = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
@@ -77,12 +79,38 @@ final class MacLink: ObservableObject {
 
     // MARK: Pairing
 
-    func pair(_ pairing: LinkPairing) {
+    /// Saves the pairing and makes it the Mac to send to. `session` is the
+    /// connection the pairing screen already opened: kept, not redone.
+    func pair(_ pairing: LinkPairing, session: LinkSession? = nil) {
         stored.pairings.removeAll { $0.id == pairing.id }
         stored.pairings.append(pairing)
         stored.selectedID = pairing.id
         PairingKeychain.save(stored)
-        reconnect()
+        disconnect()
+        isPausedForPairing = false
+        connectIfNeeded()
+        if let session { adopt(session) }
+        updateStatus()
+    }
+
+    /// The pairing screen connects on its own; nothing here competes with it.
+    func pauseForPairing() {
+        isPausedForPairing = true
+        disconnect()
+    }
+
+    func resumeAfterPairing() {
+        guard isPausedForPairing else { return }
+        isPausedForPairing = false
+        connectIfNeeded()
+    }
+
+    /// Asks for Bluetooth, then adds it as the last fallback.
+    func enableBluetooth() async {
+        guard await LinkBluetooth.requestAccess() else { return }
+        objectWillChange.send()
+        guard !routeTasks.isEmpty, bluetoothTask == nil else { return }
+        startBluetoothLoop()
     }
 
     func select(_ id: String) {
@@ -127,6 +155,7 @@ final class MacLink: ObservableObject {
     private func disconnect() {
         routeTasks.forEach { $0.cancel() }
         routeTasks = []
+        bluetoothTask = nil
         usb?.cancel()
         usb = nil
         let open = sessions.values
@@ -141,7 +170,7 @@ final class MacLink: ObservableObject {
     /// USB waits for the Mac to dial in; Wi-Fi always looks; the internet and
     /// Bluetooth only step in after nothing faster has connected for a moment.
     private func connectIfNeeded() {
-        guard isActive, routeTasks.isEmpty, mac != nil else { return }
+        guard isActive, !isPausedForPairing, routeTasks.isEmpty, mac != nil else { return }
         let device = ThisDevice.link
         let incoming = ThisDevice.incomingDirectory
         #if !targetEnvironment(simulator)
@@ -156,11 +185,20 @@ final class MacLink: ObservableObject {
             Task { [weak self] in
                 await self?.routeLoop(.internet, after: 1.5) { try await LinkClient.connectInternet(to: $0, as: device, incomingDirectory: incoming) }
             },
-            Task { [weak self] in
-                await self?.routeLoop(.bluetooth, after: 3) { try await LinkClient.connectBluetooth(to: $0, as: device, incomingDirectory: incoming) }
-            },
         ]
+        // Only once allowed: starting it earlier would show iOS's prompt at a random moment.
+        if LinkBluetooth.isAllowed { startBluetoothLoop() }
         updateStatus()
+    }
+
+    private func startBluetoothLoop() {
+        let device = ThisDevice.link
+        let incoming = ThisDevice.incomingDirectory
+        let task = Task<Void, Never> { [weak self] in
+            await self?.routeLoop(.bluetooth, after: 3) { try await LinkClient.connectBluetooth(to: $0, as: device, incomingDirectory: incoming) }
+        }
+        bluetoothTask = task
+        routeTasks.append(task)
     }
 
     private func routeLoop(_ route: LinkRoute, after delay: Double, connect: @escaping (LinkPairing) async throws -> LinkSession) async {
@@ -250,16 +288,19 @@ final class MacLink: ObservableObject {
         PairingKeychain.save(stored)
     }
 
+    /// Publishes only real changes, so the screen doesn't redraw for nothing.
     private func updateStatus() {
+        let new: Status
         if mac == nil {
-            status = .unpaired
+            new = .unpaired
         } else if let session {
-            status = .connected(session.route, session.routeTitle)
+            new = .connected(session.route, session.routeTitle)
         } else if let lastFailure {
-            status = .failed(lastFailure)
+            new = .failed(lastFailure)
         } else {
-            status = .searching
+            new = .searching
         }
+        if status != new { status = new }
     }
 
     // MARK: Sending

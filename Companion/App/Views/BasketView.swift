@@ -6,15 +6,17 @@ import UniformTypeIdentifiers
 struct BasketView: View {
     @EnvironmentObject private var link: MacLink
     let onAdd: () -> Void
-    @State private var focus: CGPoint?
     @State private var isTargeted = false
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
                 .fill(Color(white: 0.06))
-            DotGrid(focus: focus, intensity: isTargeted ? 1.3 : 1)
+            DotGrid()
                 .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+            // A file held over the basket: a faint tint that fades, nothing that jumps.
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .fill(Palette.cyan.opacity(isTargeted ? 0.08 : 0))
                 .opacity(link.outgoing.isEmpty ? 1 : 0.45)
             if link.outgoing.isEmpty {
                 emptyState
@@ -33,15 +35,11 @@ struct BasketView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
                 .strokeBorder(isTargeted ? Palette.cyan.opacity(0.8) : .white.opacity(0.07), lineWidth: isTargeted ? 2 : 1)
+                .animation(.easeOut(duration: 0.25), value: isTargeted)
         }
         .contentShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
         // Simultaneous, so Add Files and the tiles keep their taps.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { focus = $0.location }
-                .onEnded { _ in withAnimation(.easeOut(duration: 0.4)) { focus = nil } }
-        )
-        .onDrop(of: [.item], delegate: BasketDropDelegate(focus: $focus, isTargeted: $isTargeted) { urls in
+        .onDrop(of: [.item], delegate: BasketDropDelegate(isTargeted: $isTargeted) { urls in
             link.send(files: urls)
         })
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: link.outgoing)
@@ -226,28 +224,23 @@ private struct IncomingBanner: View {
 
 /// Files dropped on the basket (iPad, or iPhone from another app's drag).
 private struct BasketDropDelegate: DropDelegate {
-    @Binding var focus: CGPoint?
     @Binding var isTargeted: Bool
     let onFiles: ([URL]) -> Void
 
     func dropEntered(info: DropInfo) {
-        withAnimation(.spring(response: 0.3)) { isTargeted = true }
-        focus = info.location
+        withAnimation(.easeOut(duration: 0.25)) { isTargeted = true }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        focus = info.location
-        return DropProposal(operation: .copy)
+        DropProposal(operation: .copy)
     }
 
     func dropExited(info: DropInfo) {
-        withAnimation(.spring(response: 0.3)) { isTargeted = false }
-        focus = nil
+        withAnimation(.easeOut(duration: 0.25)) { isTargeted = false }
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        isTargeted = false
-        focus = nil
+        withAnimation(.easeOut(duration: 0.25)) { isTargeted = false }
         let providers = info.itemProviders(for: [.item])
         Task { @MainActor in
             var urls: [URL] = []
