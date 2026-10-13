@@ -137,6 +137,10 @@ async fn download(
         let content_range = format!("bytes {}-{}/{}", served.start, served.end.saturating_sub(1), total);
         h.insert(header::CONTENT_RANGE, HeaderValue::from_str(&content_range).expect("ascii"));
     }
+    if !inline {
+        // Belt and braces: even if a browser renders an attachment, it gets no script and no origin.
+        h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox; default-src 'none'"));
+    }
     harden(h);
     response
 }

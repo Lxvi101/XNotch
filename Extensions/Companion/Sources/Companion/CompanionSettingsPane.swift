@@ -6,22 +6,36 @@ import XNotchLink
 struct CompanionSettingsPane: View {
     @ObservedObject var server: CompanionServer
     @State private var confirmsReset = false
+    /// The code holds the pairing key: shown on request, hidden again soon.
+    @State private var showsCode = false
+    @State private var cloudLinks: (url: String, token: String)?
 
     var body: some View {
         Form {
             Section {
                 HStack(alignment: .center, spacing: 18) {
-                    PairingCode(url: server.pairing.url)
+                    if showsCode {
+                        PairingCode(url: server.pairing.url)
+                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    }
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Scan with XNotch on your iPhone or iPad")
                             .font(.headline)
-                        Text("Then share files and text to “XNotch” from any app. Both devices need to be on the same Wi-Fi.")
+                        Text("Then share files and text to “XNotch” from any app. Anyone who scans this code can send to this Mac, so show it only to your own devices.")
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         status
+                        Button(showsCode ? "Hide Code" : "Show Pairing Code") {
+                            withAnimation(.easeOut(duration: 0.2)) { showsCode.toggle() }
+                        }
                     }
                 }
                 .padding(.vertical, 6)
+                .task(id: showsCode) {
+                    guard showsCode else { return }
+                    try? await Task.sleep(nanoseconds: 180_000_000_000)
+                    withAnimation(.easeOut(duration: 0.2)) { showsCode = false }
+                }
             } header: {
                 Text("Pair")
             }
@@ -67,7 +81,7 @@ struct CompanionSettingsPane: View {
                 TextField("Relay server", text: $server.relayServer, prompt: Text("https://drop.example.com"))
                 SecureField("Access token", text: $server.relayToken, prompt: Text("API_TOKEN from the server"))
                 HStack {
-                    if let cloud = server.cloudLinksServer, cloud.url != server.relayServer {
+                    if let cloud = cloudLinks, cloud.url != server.relayServer {
                         Button("Use the Cloud Links Server") {
                             server.relayServer = cloud.url
                             server.relayToken = cloud.token
@@ -75,7 +89,6 @@ struct CompanionSettingsPane: View {
                         }
                     }
                     Spacer()
-                    Button("Apply", action: server.applyRelaySettings)
                 }
             } header: {
                 Text("Over the Internet")
@@ -123,6 +136,9 @@ struct CompanionSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        // Read once: not on every redraw while a transfer updates the pane.
+        .onAppear { cloudLinks = server.cloudLinksServer }
+        .onDisappear { showsCode = false }
         .confirmationDialog("Reset pairing?", isPresented: $confirmsReset) {
             Button("Reset Pairing", role: .destructive) { server.resetPairing() }
         } message: {
@@ -140,7 +156,7 @@ struct CompanionSettingsPane: View {
 
     private var relayStatus: String {
         switch server.relayState {
-        case .off: "Off. Add your XNotch Cloud server below."
+        case .off: server.relayProblem ?? "Off. Add your XNotch Cloud server below."
         case .connecting: "Connecting to the relay…"
         case .ready: "Waiting at \(server.relayURL?.host ?? "the relay")"
         case .failed(let reason): reason
@@ -183,10 +199,11 @@ struct CompanionSettingsPane: View {
 /// The pairing URL as a QR code, dark on white so any camera reads it.
 private struct PairingCode: View {
     let url: URL
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let image = Self.image(for: url.absoluteString) {
+            if let image {
                 Image(nsImage: image)
                     .interpolation(.none)
                     .resizable()
@@ -195,6 +212,8 @@ private struct PairingCode: View {
             }
         }
         .frame(width: 148, height: 148)
+        // Made once per code, not on every redraw.
+        .task(id: url) { image = Self.image(for: url.absoluteString) }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white))
         .shadow(color: .black.opacity(0.12), radius: 6, y: 2)

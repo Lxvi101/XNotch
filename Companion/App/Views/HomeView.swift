@@ -13,6 +13,7 @@ struct HomeView: View {
     @EnvironmentObject private var flow: PairingFlow
     @State private var confirmsForget = false
     @State private var preview: URL?
+    @State private var stagingFailure: String?
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -34,7 +35,18 @@ struct HomeView: View {
                       preferredItemEncoding: .current, photoLibrary: .shared())
         .fileImporter(isPresented: $picksFiles, allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
-            link.send(files: urls.compactMap { try? MacLink.stage($0) })
+            Task {
+                let staged = await MacLink.stage(urls)
+                link.send(files: staged.files)
+                if !staged.failed.isEmpty {
+                    stagingFailure = "XNotch couldn't read \(ListFormatter.localizedString(byJoining: staged.failed)). If it's in iCloud, open it in Files once so it downloads, then try again."
+                }
+            }
+        }
+        .alert("Couldn't add a file", isPresented: Binding(get: { stagingFailure != nil }, set: { if !$0 { stagingFailure = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(stagingFailure ?? "")
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }

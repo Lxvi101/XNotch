@@ -99,13 +99,17 @@ public final class NetworkTransport: LinkTransport, @unchecked Sendable {
         let once = Once()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let connection = self.connection
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
                         once.run { continuation.resume() }
                     case .failed(let error), .waiting(let error):
-                        // Waiting means unreachable or refused: Network would retry forever.
-                        once.run { continuation.resume(throwing: LinkError.connectionFailed(error.localizedDescription)) }
+                        // Waiting means unreachable or refused: Network would retry forever, so stop it.
+                        once.run {
+                            connection.cancel()
+                            continuation.resume(throwing: LinkError.connectionFailed(error.localizedDescription))
+                        }
                     case .cancelled:
                         once.run { continuation.resume(throwing: LinkError.closed) }
                     default:
@@ -114,7 +118,10 @@ public final class NetworkTransport: LinkTransport, @unchecked Sendable {
                 }
                 connection.start(queue: queue)
                 queue.asyncAfter(deadline: .now() + timeout) {
-                    once.run { continuation.resume(throwing: LinkError.timedOut) }
+                    once.run {
+                        connection.cancel()
+                        continuation.resume(throwing: LinkError.timedOut)
+                    }
                 }
             }
         } onCancel: {

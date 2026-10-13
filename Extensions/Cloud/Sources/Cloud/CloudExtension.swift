@@ -65,7 +65,7 @@ struct CloudButton: View {
             return [.action("Set Up Cloud Links…", symbol: "gearshape", handler: openSettings)]
         }
         guard !links.isUploading else { return [] }
-        var items: [NotchMenuItem] = CloudLinks.expiryChoices.map { choice in
+        var items: [NotchMenuItem] = links.availableExpiries.map { choice in
             .action("Link for \(choice.title)", symbol: choice.seconds == links.defaultExpiry ? "link" : nil) {
                 links.share(context.targets, expiresIn: choice.seconds)
             }

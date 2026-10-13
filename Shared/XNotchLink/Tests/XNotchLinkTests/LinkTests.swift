@@ -293,3 +293,46 @@ private final class Capture: @unchecked Sendable {
     func add(_ data: Data) { lock.withLock { bytes += data } }
     var data: Data { lock.withLock { bytes } }
 }
+
+final class FileNameTests: XCTestCase {
+    func testLongNamesKeepTheirExtensionAndFit() {
+        let long = String(repeating: "a", count: 250) + ".pdf"
+        let fitted = linkSafeFileName(long)
+        XCTAssertTrue(fitted.hasSuffix(".pdf"))
+        XCTAssertLessThanOrEqual(fitted.utf8.count, 240)
+        let emoji = String(repeating: "😀", count: 127) + ".jpg"
+        XCTAssertLessThanOrEqual(linkSafeFileName(emoji).utf8.count, 240)
+        XCTAssertTrue(linkSafeFileName(emoji).hasSuffix(".jpg"))
+    }
+
+    func testJoinersSurviveAndOverridesDont() {
+        XCTAssertEqual(linkSafeFileName("👩‍💻.png"), "👩‍💻.png")
+        XCTAssertEqual(linkSafeFileName("invoice\u{202E}fdp.exe"), "invoicefdp.exe")
+    }
+}
+
+final class SessionLimitTests: XCTestCase {
+    func testOversizedTextIsRefusedWithoutClosingTheSession() async throws {
+        let pairing = LinkPairing(id: "mac-1", name: "Mac", key: LinkPairing.generateKey())
+        let (a, b) = MemoryTransport.pair()
+        let (macSession, phoneSession) = try await sessionPair(a, b, pairing: pairing)
+        Task { await macSession.run { _ in } }
+        Task { await phoneSession.run { _ in } }
+        do {
+            try await phoneSession.sendText(String(repeating: "\u{1}", count: 900_000))
+            XCTFail("Must be refused")
+        } catch LinkError.rejected {}
+        try await phoneSession.sendText("still connected")
+    }
+
+    func testARaceCancelledBeforeItStartsEndsAtOnce() async {
+        let pairing = LinkPairing(id: UUID().uuidString, name: "Nowhere", key: LinkPairing.generateKey())
+        let task = Task {
+            try await LinkClient.connectBest(to: pairing, as: phone, incomingDirectory: temporaryDirectory(), routes: [.local], timeout: 5)
+        }
+        task.cancel()
+        let started = Date()
+        _ = try? await task.value
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+}

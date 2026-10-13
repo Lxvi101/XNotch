@@ -290,21 +290,32 @@ private final class Race: @unchecked Sendable {
     private var fallback: Error = LinkError.closed
     private var errors: [(LinkRoute, Error)] = []
     private var tasks: [Task<Void, Never>] = []
+    private var cancelled = false
+    private var ended = false
 
     init(count: Int) {
         remaining = count
     }
 
     func begin(_ continuation: CheckedContinuation<LinkSession, Error>, fallback: Error) {
-        lock.withLock {
-            self.continuation = continuation
+        let alreadyCancelled = lock.withLock { () -> Bool in
             self.fallback = fallback
+            if cancelled { return true }
+            self.continuation = continuation
+            return false
         }
+        if alreadyCancelled { return continuation.resume(throwing: CancellationError()) }
         if remaining == 0 { finish(.failure(fallback)) }
     }
 
+    /// Attempts added after the race ended are cancelled right away.
     func add(_ task: Task<Void, Never>) {
-        lock.withLock { tasks.append(task) }
+        let over = lock.withLock { () -> Bool in
+            if cancelled || ended { return true }
+            tasks.append(task)
+            return false
+        }
+        if over { task.cancel() }
     }
 
     func won(_ session: LinkSession) {
@@ -329,6 +340,7 @@ private final class Race: @unchecked Sendable {
     }
 
     func cancel() {
+        lock.withLock { cancelled = true }
         finish(.failure(CancellationError()))
     }
 
@@ -337,6 +349,7 @@ private final class Race: @unchecked Sendable {
     private func finish(_ result: Result<LinkSession, Error>) -> Bool {
         let (continuation, tasks) = lock.withLock { () -> (CheckedContinuation<LinkSession, Error>?, [Task<Void, Never>]) in
             defer { self.continuation = nil }
+            if self.continuation != nil { ended = true }
             return (self.continuation, self.tasks)
         }
         guard let continuation else { return false }

@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import VisionKit
 import XNotchLink
@@ -28,10 +29,35 @@ struct PairingFlowView: View {
 private struct ScanStep: View {
     @EnvironmentObject private var flow: PairingFlow
     @State private var pasteFailed = false
+    @State private var camera = AVCaptureDevice.authorizationStatus(for: .video)
 
     var body: some View {
         ZStack(alignment: .top) {
-            if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
+            if camera == .notDetermined {
+                // The scanner only works once iOS has asked; ask right away.
+                Color.black.ignoresSafeArea()
+                    .task {
+                        _ = await AVCaptureDevice.requestAccess(for: .video)
+                        camera = AVCaptureDevice.authorizationStatus(for: .video)
+                    }
+            } else if camera != .authorized {
+                VStack(spacing: 14) {
+                    Image(systemName: "camera.fill").font(.system(size: 40)).foregroundStyle(Palette.secondary)
+                    Text("Camera access is off")
+                        .font(.system(size: 22, weight: .bold))
+                    Text("Allow the camera for XNotch in Settings to scan here, or point the Camera app at the code instead.")
+                        .foregroundStyle(Palette.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .frame(maxWidth: 260)
+                    .padding(.top, 6)
+                }
+                .padding(32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
                 QRScanner { flow.scanned($0) }
                     .ignoresSafeArea()
                 RoundedRectangle(cornerRadius: 32, style: .continuous)
@@ -152,7 +178,7 @@ private struct ProgressStep: View {
                     }
                 }
                 Spacer()
-                if flow.phase == .connecting {
+                if flow.phase != .connected {
                     Button { flow.dismiss() } label: { CircleButtonLabel(symbol: "xmark", size: 40) }
                 }
             }

@@ -122,10 +122,25 @@ public enum LinkError: LocalizedError, Sendable {
 /// path component, without leading dots or path separators.
 public func linkSafeFileName(_ name: String) -> String {
     let last = name.split(whereSeparator: { $0 == "/" || $0 == "\\" || $0 == ":" }).last.map(String.init) ?? ""
-    let cleaned = String(last.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
-        .trimmingCharacters(in: CharacterSet(charactersIn: ". ").union(.whitespaces))
-    let limited = String(cleaned.prefix(200))
-    return limited.isEmpty ? "File" : limited
+    // Control characters and bidi overrides go; joiners stay, so emoji and scripts that need them survive.
+    let cleaned = String(String.UnicodeScalarView(last.unicodeScalars.filter { scalar in
+        scalar.properties.generalCategory != .control && !(0x202A...0x202E).contains(scalar.value)
+            && !(0x2066...0x2069).contains(scalar.value)
+    }))
+    .trimmingCharacters(in: CharacterSet(charactersIn: ". ").union(.whitespaces))
+    guard !cleaned.isEmpty else { return "File" }
+    return fitted(cleaned, maxBytes: 240)
+}
+
+/// Shortened to `maxBytes` of UTF-8 (the file system allows 255; the rest
+/// leaves room for " 2"), cutting the name rather than the extension.
+private func fitted(_ name: String, maxBytes: Int) -> String {
+    guard name.utf8.count > maxBytes else { return name }
+    let ext = (name as NSString).pathExtension
+    let suffix = ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext
+    var base = suffix.isEmpty ? name : String(name.dropLast(suffix.count))
+    while base.utf8.count + suffix.utf8.count > maxBytes, !base.isEmpty { base.removeLast() }
+    return base + suffix
 }
 
 /// `directory/name`, or `name 2.ext`, `name 3.ext`… when that's taken.

@@ -21,8 +21,14 @@ struct XNotchCompanionApp: App {
                     didOnboard = true
                     flow.begin(with: pairing)
                 }
+                // Only real background counts: Control Center or a system alert
+                // make the app inactive for a moment, and that mustn't drop the link.
                 .onChange(of: phase, initial: true) { _, phase in
-                    link.setActive(phase == .active)
+                    switch phase {
+                    case .active: link.setActive(true)
+                    case .background: link.setActive(false)
+                    default: break
+                    }
                 }
                 .onAppear {
                     flow.onStart = { [weak link] in link?.pauseForPairing() }

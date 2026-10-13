@@ -37,12 +37,24 @@ struct CloudClient: Sendable {
     var session: URLSession = .shared
 
     /// `nil` unless the URL is http(s) and there's a token.
+    /// "drop.example.com" means https. Plain http only for servers on your
+    /// own network: elsewhere the token would cross the internet in clear.
     init?(server: String, token: String) {
-        let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty, let url = URL(string: trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed),
-              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http", url.host != nil else { return nil }
+        var trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        if !trimmed.isEmpty, !trimmed.contains("://") { trimmed = "https://" + trimmed }
+        guard !token.isEmpty, let url = URL(string: trimmed), let host = url.host,
+              let scheme = url.scheme?.lowercased(), scheme == "https" || (scheme == "http" && Self.isLocal(host)) else { return nil }
         baseURL = url
         self.token = token
+    }
+
+    static func isLocal(_ host: String) -> Bool {
+        if host == "localhost" || host.hasSuffix(".local") || !host.contains(".") { return true }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        return parts[0] == 10 || parts[0] == 127 || (parts[0] == 192 && parts[1] == 168)
+            || (parts[0] == 172 && (16...31).contains(parts[1])) || (parts[0] == 169 && parts[1] == 254)
     }
 
     func info() async throws -> Info {

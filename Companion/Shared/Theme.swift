@@ -71,9 +71,12 @@ struct DotGrid: View {
     var spacing: CGFloat = 19
     var intensity: Double = 1
     @Environment(\.dotGridPaused) private var paused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: paused)) { timeline in
+        // A slow drift needs few frames; none at all with Reduce Motion or in Low Power Mode.
+        let still = paused || reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled
+        TimelineView(.animation(minimumInterval: 1 / 20, paused: still)) { timeline in
             Canvas { context, size in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let center = CGPoint(x: size.width / 2 + sin(time * 0.6) * size.width * 0.12,

@@ -9,6 +9,10 @@ struct CloudSettingsPane: View {
             Section {
                 TextField("Server URL", text: $links.server, prompt: Text("https://drop.example.com"))
                 SecureField("Access token", text: $links.token, prompt: Text("API_TOKEN from the server"))
+                if links.server.lowercased().hasPrefix("http://"), links.client == nil, !links.token.isEmpty {
+                    Label("Use https: plain http is only for servers on your own network.", systemImage: "lock.slash")
+                        .foregroundStyle(.orange)
+                }
                 HStack {
                     checkStatus
                     Spacer()
@@ -24,7 +28,7 @@ struct CloudSettingsPane: View {
 
             Section {
                 Picker("Links expire after", selection: $links.defaultExpiry) {
-                    ForEach(CloudLinks.expiryChoices, id: \.seconds) { choice in
+                    ForEach(links.availableExpiries, id: \.seconds) { choice in
                         Text(choice.title).tag(choice.seconds)
                     }
                 }
@@ -33,7 +37,11 @@ struct CloudSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Your Links") {
+            Section {
+                if let failure = links.revokeFailure {
+                    Label(failure, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
                 let active = links.links.filter { !$0.isExpired }
                 if active.isEmpty {
                     Text("Links you create appear here until they expire.")
@@ -43,6 +51,8 @@ struct CloudSettingsPane: View {
                         LinkRow(link: link, onCopy: { links.copy(link) }, onRevoke: { links.revoke(link) })
                     }
                 }
+            } header: {
+                Text("Your Links")
             }
         }
         .formStyle(.grouped)

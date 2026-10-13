@@ -213,6 +213,7 @@ async fn full_drop_lifecycle() {
     assert_eq!(unsafe_inline.header("content-type"), "text/html");
     assert!(unsafe_inline.header("content-disposition").starts_with("attachment;"));
     assert_eq!(unsafe_inline.header("x-content-type-options"), "nosniff");
+    assert_eq!(unsafe_inline.header("content-security-policy"), "sandbox; default-src 'none'");
     let pdf = h.get(&format!("/{id}/r%C3%A9sum%C3%A9%20%231%3F.pdf?inline=1"), &[]).await;
     assert_eq!(pdf.status, StatusCode::OK);
     assert_eq!(pdf.text(), "%PDF-1.4");

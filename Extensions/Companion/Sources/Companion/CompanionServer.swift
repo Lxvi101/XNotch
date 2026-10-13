@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Network
 import Security
 import XNotchLink
@@ -56,11 +57,12 @@ final class CompanionServer: ObservableObject {
     @Published var destination: URL {
         didSet { defaults.set(destination.path, forKey: Keys.destination) }
     }
+    /// Applied a moment after the last edit: no Apply button to forget.
     @Published var relayServer: String {
-        didSet { defaults.set(relayServer, forKey: Keys.relay) }
+        didSet { scheduleRelayApply() }
     }
     @Published var relayToken: String {
-        didSet { Keychain.write(relayToken, service: relayTokenService) }
+        didSet { scheduleRelayApply() }
     }
     @Published var bluetoothEnabled: Bool {
         didSet {
@@ -85,8 +87,17 @@ final class CompanionServer: ObservableObject {
     private var relayTask: Task<Void, Never>?
     private var bluetooth: LinkBluetoothPeripheral?
     private var transferReset: DispatchWorkItem?
+    private var relayApplyWork: DispatchWorkItem?
+    /// The relay the room is registered with, to leave it when that changes.
+    private var registeredRelay: (server: URL, token: String, room: String)?
+    private var shelfBatch: [URL] = []
+    private var shelfBatchWork: DispatchWorkItem?
     private var transferGeneration = 0
     private var isRunning = false
+    /// Why the pairing key couldn't be loaded; nothing starts while set.
+    private var keyFailure: String?
+    /// Handshakes still running, so switching off can cut them short.
+    private var pendingAccepts: [UUID: (task: Task<Void, Never>, transport: LinkTransport)] = [:]
 
     private enum Keys {
         static let destination = "destination", relay = "relayServer", bluetooth = "bluetooth"
@@ -98,7 +109,13 @@ final class CompanionServer: ObservableObject {
         macName = Host.current().localizedName ?? "Mac"
         store = PairingStore(defaults: defaults, service: keychainService)
         relayTokenService = keychainService + ".relay"
-        pairing = store.load(macName: macName)
+        do {
+            pairing = try store.load(macName: macName)
+        } catch {
+            // Nothing runs on a stand-in key: phones would see a stranger.
+            pairing = LinkPairing(id: "unavailable", name: macName, key: LinkPairing.generateKey())
+            keyFailure = error.localizedDescription
+        }
         incoming = directory.appendingPathComponent("Incoming", isDirectory: true)
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         destination = defaults.string(forKey: Keys.destination).map { URL(fileURLWithPath: $0, isDirectory: true) } ?? downloads
@@ -111,18 +128,32 @@ final class CompanionServer: ObservableObject {
 
     var me: LinkDevice { LinkDevice(id: pairing.id, name: macName, kind: .mac) }
 
-    /// http(s) and a token, or nil: the internet route is off.
+    /// http(s) and a token, or nil: the internet route is off. "drop.example.com" means https.
     var relayURL: URL? {
-        let trimmed = relayServer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !relayToken.isEmpty, let url = URL(string: trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed),
-              ["https", "http"].contains(url.scheme), url.host != nil else { return nil }
+        var trimmed = relayServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !relayToken.isEmpty, !trimmed.isEmpty else { return nil }
+        if !trimmed.contains("://") { trimmed = "https://" + trimmed }
+        guard let url = URL(string: trimmed), ["https", "http"].contains(url.scheme), url.host != nil else { return nil }
         return url
+    }
+
+    /// Typed in, but not usable: shown instead of "Off".
+    var relayProblem: String? {
+        let typed = !relayServer.trimmingCharacters(in: .whitespaces).isEmpty
+        if typed && relayToken.isEmpty { return "Add the server's access token." }
+        if typed && relayURL == nil { return "That server address isn't a valid URL." }
+        return nil
     }
 
     // MARK: Lifecycle
 
     func start() {
         guard !isRunning else { return }
+        if let keyFailure {
+            state = .failed(keyFailure)
+            return
+        }
         isRunning = true
         startListener()
         startUSB()
@@ -142,6 +173,11 @@ final class CompanionServer: ObservableObject {
         relayState = .off
         bluetooth?.stop()
         bluetooth = nil
+        for pending in pendingAccepts.values {
+            pending.task.cancel()
+            pending.transport.close()
+        }
+        pendingAccepts = [:]
         for device in devices {
             for session in device.sessions.values { Task { await session.close() } }
         }
@@ -157,15 +193,34 @@ final class CompanionServer: ObservableObject {
             Task { await LinkRelay.unregister(oldRoom, server: relay, token: token) }
         }
         stop()
-        pairing = store.reset(macName: macName)
+        do {
+            pairing = try store.reset(macName: macName)
+            keyFailure = nil
+        } catch {
+            keyFailure = error.localizedDescription
+        }
         pairing.relay = relayURL
         log.info("Pairing reset")
         start()
     }
 
-    /// After changing the relay settings.
+    private func scheduleRelayApply() {
+        relayApplyWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyRelaySettings() }
+        relayApplyWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    /// Saves the relay settings and reconnects with them.
     func applyRelaySettings() {
+        relayApplyWork?.cancel()
+        defaults.set(relayServer, forKey: Keys.relay)
+        Keychain.write(relayToken, service: relayTokenService)
         pairing.relay = relayURL
+        if let old = registeredRelay, old.server != relayURL || old.token != relayToken {
+            registeredRelay = nil
+            Task { await LinkRelay.unregister(old.room, server: old.server, token: old.token) }
+        }
         guard isRunning else { return }
         relayTask?.cancel()
         relayTask = nil
@@ -181,8 +236,12 @@ final class CompanionServer: ObservableObject {
             let listener = try NWListener(using: LinkNetwork.parameters())
             listener.service = NWListener.Service(name: macName, type: LinkService.type,
                                                   txtRecord: NWTXTRecord([LinkService.idKey: pairing.id]))
-            listener.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in self?.listenerChanged(state) }
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                Task { @MainActor in
+                    // A late word from a listener that's already been replaced.
+                    guard let self, let listener, self.listener === listener else { return }
+                    self.listenerChanged(state)
+                }
             }
             listener.newConnectionHandler = { [weak self] connection in
                 Task { @MainActor in self?.acceptIncoming(NetworkTransport(connection, route: .local)) }
@@ -224,9 +283,12 @@ final class CompanionServer: ObservableObject {
 
     /// The phone connected to us (local network, relay, Bluetooth): it starts the handshake.
     private func acceptIncoming(_ transport: LinkTransport) {
+        guard isRunning else { return transport.close() }
         let pairing = self.pairing
         let me = self.me
-        Task {
+        let id = UUID()
+        let task = Task {
+            defer { pendingAccepts[id] = nil }
             do {
                 if let network = transport as? NetworkTransport { try await network.start() }
                 let session = try await LinkClient.accept(transport, as: me, incomingDirectory: incoming, relay: pairing.relay) { id in
@@ -237,6 +299,7 @@ final class CompanionServer: ObservableObject {
                 transport.close()
             }
         }
+        pendingAccepts[id] = (task, transport)
     }
 
     // MARK: USB
@@ -275,12 +338,12 @@ final class CompanionServer: ObservableObject {
                 do {
                     let session = try await LinkClient.open(transport, pairing: pairing, as: me,
                                                             incomingDirectory: incoming, relay: pairing.relay)
-                    adopt(session)
                     // Dial again only once this USB session has ended.
-                    while !Task.isCancelled, devices.contains(where: { $0.sessions[.usb] === session }) {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await withTaskCancellationHandler {
+                        await adopt(session).value
+                    } onCancel: {
+                        Task { await session.close() }
                     }
-                    if Task.isCancelled { await session.close() }
                 } catch {
                     transport.close()
                 }
@@ -309,6 +372,7 @@ final class CompanionServer: ObservableObject {
                     if !registered {
                         try await LinkRelay.register(room, server: server, token: token)
                         registered = true
+                        registeredRelay = (server, token, room)
                     }
                     relayState = .ready
                     let transport = try await LinkRelay.connect(room, server: server, as: .mac)
@@ -321,6 +385,8 @@ final class CompanionServer: ObservableObject {
                     continue
                 } catch {
                     guard !Task.isCancelled else { return }
+                    // The server may have forgotten the room (a reset, a new volume): register again.
+                    registered = false
                     relayState = .failed(error.localizedDescription)
                     try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
                     delay = min(delay * 2, 60)
@@ -356,9 +422,12 @@ final class CompanionServer: ObservableObject {
 
     // MARK: Devices
 
-    private func adopt(_ session: LinkSession) {
+    /// Runs the session until it ends; the task finishes then.
+    @discardableResult
+    private func adopt(_ session: LinkSession) -> Task<Void, Never> {
         Task {
-            guard let info = await session.peer else { return await session.close() }
+            // Switched off while this one was connecting: let it go.
+            guard isRunning, let info = await session.peer else { return await session.close() }
             let route = session.route
             if let index = devices.firstIndex(where: { $0.id == info.id }) {
                 if let old = devices[index].sessions[route] { Task { await old.close() } }
@@ -382,11 +451,21 @@ final class CompanionServer: ObservableObject {
     private func receive(_ item: LinkSession.Incoming, from device: LinkDevice) throws {
         switch item {
         case .file(let temporary, let name):
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-            let target = linkUniqueURL(for: name, in: destination)
-            try FileManager.default.moveItem(at: temporary, to: target)
+            var target = linkUniqueURL(for: name, in: destination)
+            do {
+                try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: temporary, to: target)
+            } catch {
+                note("exclamationmark.triangle.fill", "Couldn't save \(name) from \(device.name): \(error.localizedDescription)")
+                throw error
+            }
+            // Like AirDrop: Gatekeeper checks it before it can run.
+            var values = URLResourceValues()
+            values.quarantineProperties = [kLSQuarantineAgentNameKey as String: "XNotch",
+                                           kLSQuarantineTypeKey as String: kLSQuarantineTypeOtherDownload]
+            try? target.setResourceValues(values)
             note("arrow.down.circle.fill", "\(target.lastPathComponent) from \(device.name)")
-            onFiles?([target])
+            addToShelf(target)
         case .text(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
@@ -394,6 +473,21 @@ final class CompanionServer: ObservableObject {
             note("doc.on.clipboard.fill", "Copied “\(preview)” from \(device.name)")
             onText?()
         }
+    }
+
+    /// Files arriving close together land on the shelf as one batch: the
+    /// notch opens once, not once per photo.
+    private func addToShelf(_ url: URL) {
+        shelfBatch.append(url)
+        shelfBatchWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !shelfBatch.isEmpty else { return }
+            let batch = shelfBatch
+            shelfBatch = []
+            onFiles?(batch)
+        }
+        shelfBatchWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     private func note(_ symbol: String, _ text: String) {
@@ -417,7 +511,9 @@ final class CompanionServer: ObservableObject {
                     guard let session = devices.first(where: { $0.id == id })?.session else { throw LinkError.closed }
                     let prepared = try await PreparedFile.make(for: url)
                     defer { prepared.cleanUp() }
+                    let throttle = ProgressThrottle()
                     try await session.sendFile(prepared.url, name: prepared.name) { fraction in
+                        guard throttle.shouldReport(fraction) else { return }
                         Task { @MainActor in
                             // Progress may still be in flight after the transfer ended.
                             guard self.transferGeneration == generation, self.isSending else { return }
@@ -515,5 +611,19 @@ enum Keychain {
         item[kSecValueData as String] = Data(value.utf8)
         item[kSecAttrLabel as String] = "XNotch iPhone & iPad relay token"
         SecItemAdd(item as CFDictionary, nil)
+    }
+}
+
+/// Lets progress through once per whole percent, from any thread.
+final class ProgressThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = -1.0
+
+    func shouldReport(_ fraction: Double) -> Bool {
+        lock.withLock {
+            guard fraction - last >= 0.01 || (fraction >= 1 && last < 1) else { return false }
+            last = fraction
+            return true
+        }
     }
 }

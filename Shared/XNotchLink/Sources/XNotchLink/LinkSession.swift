@@ -127,8 +127,11 @@ public actor LinkSession {
     /// Sends text for the other device's clipboard and waits until it's there.
     public func sendText(_ text: String) async throws {
         guard !isFinished else { throw LinkError.closed }
-        guard text.utf8.count <= LinkService.maxTextBytes else { throw LinkError.rejected("That text is too long.") }
         let message = LinkMessage(kind: .text, text: text)
+        // Escaping can make the encoded message several times longer than the text.
+        guard text.utf8.count <= LinkService.maxTextBytes, (try? LinkFrame.message(message).encoded()) != nil else {
+            throw LinkError.rejected("That text is too long to send.")
+        }
         try await awaitingAck(for: message.id) { try await self.send(message) }
     }
 
@@ -139,18 +142,23 @@ public actor LinkSession {
     // MARK: Internals
 
     /// Registers for the acknowledgement, sends under the send lock, then waits.
+    /// Cancelling ends the session: a half-sent file can't be taken back.
     private func awaitingAck(for id: UUID, send: @escaping () async throws -> Void) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            guard !isFinished else { return continuation.resume(throwing: LinkError.closed) }
-            pendingAcks[id] = continuation
-            Task {
-                do {
-                    try await self.withSendLock(send)
-                } catch {
-                    self.failPending(id, error)
-                    self.finish()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !isFinished else { return continuation.resume(throwing: LinkError.closed) }
+                pendingAcks[id] = continuation
+                Task {
+                    do {
+                        try await self.withSendLock(send)
+                    } catch {
+                        self.failPending(id, error)
+                        self.finish()
+                    }
                 }
             }
+        } onCancel: {
+            Task { await self.close() }
         }
     }
 

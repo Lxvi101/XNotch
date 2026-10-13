@@ -16,17 +16,34 @@ struct PairingStore {
         self.service = service
     }
 
-    func load(macName: String) -> LinkPairing {
-        if let id = defaults.string(forKey: Self.idKey), let key = readKey(), key.count == 32 {
-            return LinkPairing(id: id, name: macName, key: key)
+    enum Failure: LocalizedError {
+        case keychain(OSStatus)
+
+        var errorDescription: String? {
+            switch self {
+            case .keychain(let status):
+                let reason = SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)"
+                return "The pairing key couldn't be read from the Keychain (\(reason)). Phones stay paired once it's readable again."
+            }
         }
-        return reset(macName: macName)
+    }
+
+    /// The saved pairing, or a new one when there is none yet. Any other
+    /// Keychain trouble throws: making a new key then would quietly unpair
+    /// every phone.
+    func load(macName: String) throws -> LinkPairing {
+        if let id = defaults.string(forKey: Self.idKey) {
+            let (key, status) = readKey()
+            if let key, key.count == 32 { return LinkPairing(id: id, name: macName, key: key) }
+            if status != errSecSuccess, status != errSecItemNotFound { throw Failure.keychain(status) }
+        }
+        return try reset(macName: macName)
     }
 
     @discardableResult
-    func reset(macName: String) -> LinkPairing {
+    func reset(macName: String) throws -> LinkPairing {
         let pairing = LinkPairing(id: UUID().uuidString, name: macName, key: LinkPairing.generateKey())
-        writeKey(pairing.key)
+        try writeKey(pairing.key)
         defaults.set(pairing.id, forKey: Self.idKey)
         return pairing
     }
@@ -37,21 +54,24 @@ struct PairingStore {
          kSecAttrAccount as String: Self.account]
     }
 
-    private func readKey() -> Data? {
+    private func readKey() -> (Data?, OSStatus) {
         var lookup = query
         lookup[kSecReturnData as String] = true
         lookup[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(lookup as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        let status = SecItemCopyMatching(lookup as CFDictionary, &result)
+        return (status == errSecSuccess ? result as? Data : nil, status)
     }
 
-    private func writeKey(_ key: Data) {
-        SecItemDelete(query as CFDictionary)
-        var item = query
-        item[kSecValueData as String] = key
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        item[kSecAttrLabel as String] = "XNotch iPhone & iPad pairing"
-        SecItemAdd(item as CFDictionary, nil)
+    private func writeKey(_ key: Data) throws {
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: key] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = query
+            item[kSecValueData as String] = key
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            item[kSecAttrLabel as String] = "XNotch iPhone & iPad pairing"
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else { throw Failure.keychain(status) }
     }
 }

@@ -1,3 +1,4 @@
+import CoreServices
 import Security
 import XCTest
 import XNotchLink
@@ -37,7 +38,8 @@ final class CompanionServerTests: XCTestCase {
 
     func testFilesFromThePhoneLandInTheFolderAndOnTheShelf() async throws {
         var shelved: [URL] = []
-        server.onFiles = { shelved += $0 }
+        var batches = 0
+        server.onFiles = { shelved += $0; batches += 1 }
         let phone = try await connectPhone(server.pairing)
         Task { await phone.run { _ in } }
         for _ in 0..<30 where server.devices.isEmpty { try await Task.sleep(nanoseconds: 100_000_000) }
@@ -48,8 +50,12 @@ final class CompanionServerTests: XCTestCase {
         try Data(repeating: 7, count: 800_000).write(to: photo)
         try await phone.sendFile(photo)
         try await phone.sendFile(photo) // same name again: kept side by side
+        for _ in 0..<20 where shelved.count < 2 { try await Task.sleep(nanoseconds: 100_000_000) }
 
         XCTAssertEqual(shelved.map(\.lastPathComponent), ["IMG_0001.heic", "IMG_0001 2.heic"])
+        XCTAssertEqual(batches, 1, "Files arriving together open the shelf once")
+        let quarantine = try shelved[0].resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
+        XCTAssertEqual(quarantine?[kLSQuarantineAgentNameKey as String] as? String, "XNotch", "Received files are quarantined")
         XCTAssertEqual(try Data(contentsOf: shelved[0]), try Data(contentsOf: photo))
         XCTAssertTrue(shelved.allSatisfy { $0.deletingLastPathComponent().standardizedFileURL == server.destination.standardizedFileURL })
         XCTAssertEqual(server.recent.count, 2)

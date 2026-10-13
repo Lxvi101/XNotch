@@ -69,6 +69,25 @@ public final class WebSocketTransport: LinkTransport, @unchecked Sendable {
         task = URLSession.shared.webSocketTask(with: url)
         task.maximumMessageSize = 9 << 20
         task.resume()
+        keepAlive()
+    }
+
+    /// A ping every 20 seconds: a network that died quietly closes the
+    /// socket instead of leaving a transfer waiting forever.
+    private func keepAlive() {
+        let task = self.task
+        Task { [weak self] in
+            while self != nil, task.state == .running {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard task.state == .running else { return }
+                let answered = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    let once = Once()
+                    task.sendPing { error in once.run { continuation.resume(returning: error == nil) } }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 10) { once.run { continuation.resume(returning: false) } }
+                }
+                if !answered { task.cancel(with: .goingAway, reason: nil) }
+            }
+        }
     }
 
     /// Parks until the other side's first message, which proves it's there.

@@ -42,7 +42,8 @@ struct BasketView: View {
         .onDrop(of: [.item], delegate: BasketDropDelegate(isTargeted: $isTargeted) { urls in
             link.send(files: urls)
         })
-        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: link.outgoing)
+        // Items arriving, finishing or leaving; progress animates in its own ring.
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: link.outgoing.map(\.layoutKey))
         .animation(.spring(response: 0.4), value: link.incomingProgress?.name)
     }
 
@@ -89,7 +90,8 @@ struct BasketView: View {
                     ForEach(link.outgoing) { item in
                         BasketTile(item: item)
                             .contextMenu {
-                                if case .failed = item.state {
+                                if case .failed(let reason) = item.state {
+                                    Text(reason)
                                     Button { link.retry(item.id) } label: { Label("Try Again", systemImage: "arrow.clockwise") }
                                 }
                                 if !item.isSending {
@@ -121,13 +123,21 @@ private struct BasketTile: View {
                 stateBadge
             }
             .frame(width: 84, height: 84)
-            Text(item.name)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .multilineTextAlignment(.center)
-                .frame(width: 92, height: 30, alignment: .top)
+            Group {
+                if case .failed(let reason) = item.state {
+                    // Why, right under it; tap to try again, hold for more.
+                    Text(reason)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(item.name)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(2)
+            .truncationMode(.middle)
+            .multilineTextAlignment(.center)
+            .frame(width: 92, height: 30, alignment: .top)
         }
         .task(id: item.id) { await loadThumbnail() }
     }

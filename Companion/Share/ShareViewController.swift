@@ -46,6 +46,8 @@ final class ShareModel: ObservableObject {
     private let pairing: LinkPairing?
     private var providers: [NSItemProvider] = []
     private var task: Task<Void, Never>?
+    private var session: LinkSession?
+    private var finished = false
     #if targetEnvironment(simulator)
     private static let routes: Set<LinkRoute> = [.local, .internet]
     #else
@@ -66,15 +68,30 @@ final class ShareModel: ObservableObject {
 
     func retry() { run() }
 
+    /// Also while sending: the connection closes and the Mac drops the partial file.
     func cancel() {
         task?.cancel()
+        closeSession()
         cleanUp()
+        finish()
+    }
+
+    private func finish() {
+        guard !finished else { return }
+        finished = true
         onFinish?()
+    }
+
+    private func closeSession() {
+        guard let session else { return }
+        self.session = nil
+        Task { await session.close() }
     }
 
     private func run() {
         guard let pairing else { return }
         task?.cancel()
+        closeSession()
         phase = .preparing
         task = Task {
             do {
@@ -85,26 +102,33 @@ final class ShareModel: ObservableObject {
                 let session = try await LinkClient.connectBest(to: pairing, as: ThisDevice.link,
                                                                incomingDirectory: ThisDevice.incomingDirectory,
                                                                routes: Self.routes)
+                guard !Task.isCancelled else { await session.close(); return }
+                self.session = session
                 route = session.routeTitle
-                Task { await session.run { _ in } }
+                // The app receives what the Mac sends; refuse it here so the Mac says so.
+                Task { await session.run { _ in throw LinkError.rejected("Open XNotch on the iPhone to receive files.") } }
                 let total = Double(max(1, shared.files.count + (shared.text == nil ? 0 : 1)))
                 phase = .sending(0)
                 for (index, file) in shared.files.enumerated() {
+                    let throttle = ShareThrottle()
                     try await session.sendFile(file) { fraction in
+                        guard throttle.shouldReport(fraction) else { return }
                         Task { @MainActor in
                             if case .sending = self.phase { self.phase = .sending((Double(index) + fraction) / total) }
                         }
                     }
                 }
                 if let text = shared.text { try await session.sendText(text) }
-                await session.close()
+                closeSession()
                 cleanUp()
                 phase = .sent
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 try? await Task.sleep(nanoseconds: 900_000_000)
-                onFinish?()
+                finish()
             } catch is CancellationError {
             } catch {
+                closeSession()
+                guard !Task.isCancelled else { return }
                 phase = .failed(error.localizedDescription)
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
@@ -180,7 +204,7 @@ struct SharedContent {
                     }
                     let target = folder.appendingPathComponent(linkSafeFileName(name))
                     try FileManager.default.copyItem(at: url, to: target)
-                    continuation.resume(returning: target)
+                    continuation.resume(returning: try zippedIfFolder(target))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -231,7 +255,7 @@ struct ShareView: View {
                     status
                 }
                 Spacer()
-                if !isBusy && model.phase != .sent {
+                if model.phase != .sent {
                     Button { model.cancel() } label: { CircleButtonLabel(symbol: "xmark", size: 38) }
                 }
             }
@@ -319,4 +343,31 @@ private struct ProgressBar: View {
         }
         .frame(height: 10)
     }
+}
+
+/// Lets progress through once per whole percent.
+private final class ShareThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = -1.0
+
+    func shouldReport(_ fraction: Double) -> Bool {
+        lock.withLock {
+            guard fraction - last >= 0.01 || (fraction >= 1 && last < 1) else { return false }
+            last = fraction
+            return true
+        }
+    }
+}
+
+/// Folders travel zipped, as in the app.
+private func zippedIfFolder(_ url: URL) throws -> URL {
+    guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return url }
+    let zip = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".zip")
+    var coordinationError: NSError?
+    var copyError: Error?
+    NSFileCoordinator().coordinate(readingItemAt: url, options: .forUploading, error: &coordinationError) { temporary in
+        do { try FileManager.default.copyItem(at: temporary, to: zip) } catch { copyError = error }
+    }
+    if let error = coordinationError ?? copyError { throw error }
+    return zip
 }

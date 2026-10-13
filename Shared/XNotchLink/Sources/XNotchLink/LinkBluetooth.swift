@@ -39,7 +39,6 @@ public final class LinkBluetoothPeripheral: NSObject, CBPeripheralManagerDelegat
     private let queue = DispatchQueue(label: "dev.levi.XNotchLink.bluetooth")
     private var manager: CBPeripheralManager?
     private var psm: CBL2CAPPSM?
-    private var channels: [CBL2CAPChannel] = []
 
     public init(pairing: LinkPairing) {
         tag = LinkBluetooth.tag(for: pairing)
@@ -59,13 +58,14 @@ public final class LinkBluetoothPeripheral: NSObject, CBPeripheralManagerDelegat
             manager.stopAdvertising()
             manager.removeAllServices()
             if let psm = self.psm { manager.unpublishL2CAPChannel(psm) }
-            self.channels.removeAll()
             self.psm = nil
             self.manager = nil
         }
     }
 
     public func peripheralManagerDidUpdateState(_ manager: CBPeripheralManager) {
+        // Below powered-on the system drops the channel and services: publish again when back.
+        if manager.state != .poweredOn { psm = nil }
         switch manager.state {
         case .poweredOn:
             if psm == nil { manager.publishL2CAPChannel(withEncryption: false) }
@@ -86,6 +86,7 @@ public final class LinkBluetoothPeripheral: NSObject, CBPeripheralManagerDelegat
             return
         }
         self.psm = psm
+        manager.removeAllServices()
         let info = CBMutableCharacteristic(type: LinkBluetooth.info, properties: .read, value: nil, permissions: .readable)
         let service = CBMutableService(type: LinkBluetooth.service, primary: true)
         service.characteristics = [info]
@@ -108,7 +109,6 @@ public final class LinkBluetoothPeripheral: NSObject, CBPeripheralManagerDelegat
 
     public func peripheralManager(_ manager: CBPeripheralManager, didOpen channel: CBL2CAPChannel?, error: Error?) {
         guard let channel, let input = channel.inputStream, let output = channel.outputStream else { return }
-        channels.append(channel)
         onChannel?(StreamTransport(input: input, output: output, route: .bluetooth, owner: channel))
     }
 }

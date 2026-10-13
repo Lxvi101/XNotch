@@ -35,8 +35,16 @@ final class CloudLinks: ObservableObject {
     @Published var server: String {
         didSet { defaults.set(server, forKey: Keys.server); check = .none }
     }
+    /// Saved a moment after the last keystroke, not on every one.
     @Published var token: String {
-        didSet { Keychain.write(token); check = .none }
+        didSet {
+            check = .none
+            tokenSave?.cancel()
+            let token = token
+            let work = DispatchWorkItem { Keychain.write(token) }
+            tokenSave = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+        }
     }
     @Published var defaultExpiry: TimeInterval {
         didSet { defaults.set(defaultExpiry, forKey: Keys.expiry) }
@@ -44,6 +52,11 @@ final class CloudLinks: ObservableObject {
     @Published private(set) var links: [SharedLink] = []
     @Published private(set) var transfer: Transfer = .idle
     @Published private(set) var check: Check = .none
+    /// Why the last revoke didn't go through; the link still works then.
+    @Published private(set) var revokeFailure: String?
+    /// The server's limits, once known.
+    @Published private(set) var info: CloudClient.Info?
+    private var tokenSave: DispatchWorkItem?
 
     var onCopied: (() -> Void)?
 
@@ -94,19 +107,34 @@ final class CloudLinks: ObservableObject {
                 let sizes = urls.map(Self.size(of:))
                 let total = max(1, sizes.reduce(0, +))
                 let title = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
+                // Known limits first: a file the server would refuse fails here, clearly.
+                let info = try await client.info()
+                self.info = info
+                if let tooBig = zip(urls, sizes).first(where: { UInt64($0.1) > info.maxFileSize }) {
+                    throw TooLarge(name: tooBig.0.lastPathComponent, limit: info.maxFileSize)
+                }
                 let drop = try await client.createDrop(expiresIn: expiresIn, title: title)
-                var done: Int64 = 0
-                for (url, size) in zip(urls, sizes) {
-                    let prepared = try await PreparedFile.make(for: url)
-                    defer { prepared.cleanUp() }
-                    let base = done
-                    try await client.upload(prepared.url, name: prepared.name, to: drop.id) { fraction in
-                        Task { @MainActor in
-                            guard self.generation == current, self.isUploading else { return }
-                            self.transfer = .uploading(Double(base + Int64(Double(size) * fraction)) / Double(total))
+                do {
+                    var done: Int64 = 0
+                    for (url, size) in zip(urls, sizes) {
+                        let prepared = try await PreparedFile.make(for: url)
+                        defer { prepared.cleanUp() }
+                        // A folder's size is only known once zipped.
+                        let preparedSize = (try? prepared.url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
+                        if preparedSize > info.maxFileSize { throw TooLarge(name: prepared.name, limit: info.maxFileSize) }
+                        let base = done
+                        try await client.upload(prepared.url, name: prepared.name, to: drop.id) { fraction in
+                            Task { @MainActor in
+                                guard self.generation == current, self.isUploading else { return }
+                                self.transfer = .uploading(Double(base + Int64(Double(size) * fraction)) / Double(total))
+                            }
                         }
+                        done += size
                     }
-                    done += size
+                } catch {
+                    // Don't leave a half-filled link behind that nobody can see or revoke.
+                    try? await client.delete(drop: drop.id)
+                    throw error
                 }
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(drop.url.absoluteString, forType: .string)
@@ -126,18 +154,32 @@ final class CloudLinks: ObservableObject {
         NSPasteboard.general.setString(link.url.absoluteString, forType: .string)
     }
 
-    /// Deletes the drop on the server, so the link stops working now.
+    /// Deletes the drop on the server, so the link stops working now. The
+    /// row stays until the server confirms: a link that still works must
+    /// not look deleted.
     func revoke(_ link: SharedLink) {
-        links.removeAll { $0.id == link.id }
-        save()
-        guard let client else { return }
+        revokeFailure = nil
+        guard let client else {
+            revokeFailure = "Add your server to delete links."
+            return
+        }
         Task {
             do {
                 try await client.delete(drop: link.id)
+                links.removeAll { $0.id == link.id }
+                save()
             } catch {
-                log.error("Couldn't delete \(link.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Couldn't delete a link: \(error.localizedDescription, privacy: .public)")
+                revokeFailure = "“\(link.title)” still works: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// The lifetimes the server accepts.
+    var availableExpiries: [(title: String, seconds: TimeInterval)] {
+        guard let max = info?.maxExpirySeconds else { return Self.expiryChoices }
+        let allowed = Self.expiryChoices.filter { $0.seconds <= TimeInterval(max) }
+        return allowed.isEmpty ? [Self.expiryChoices[0]] : allowed
     }
 
     func testConnection() {
@@ -149,6 +191,7 @@ final class CloudLinks: ObservableObject {
         Task {
             do {
                 let info = try await client.info()
+                self.info = info
                 check = .ok("Connected to \(info.name) \(info.version)")
             } catch {
                 check = .failed(error.localizedDescription)
@@ -242,5 +285,14 @@ struct PreparedFile {
 
     func cleanUp() {
         if let temporary { try? FileManager.default.removeItem(at: temporary) }
+    }
+}
+
+struct TooLarge: LocalizedError {
+    let name: String
+    let limit: UInt64
+
+    var errorDescription: String? {
+        "\(name) is larger than the server allows (\(ByteCountFormatter.string(fromByteCount: Int64(limit), countStyle: .file)))."
     }
 }

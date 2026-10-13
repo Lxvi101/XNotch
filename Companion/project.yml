@@ -42,7 +42,11 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: XNotch
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         AppIdentifierPrefix: $(AppIdentifierPrefix)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         UILaunchScreen:
           UIColorName: ""
         UIUserInterfaceStyle: Dark
@@ -84,7 +88,11 @@ targets:
       path: Share/Info.plist
       properties:
         CFBundleDisplayName: XNotch
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         AppIdentifierPrefix: $(AppIdentifierPrefix)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: XNotch sends what you share to your Mac over this network.
         NSBonjourServices: [_xnotchlink._tcp]
         NSExtension:

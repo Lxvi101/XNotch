@@ -114,6 +114,11 @@ final class PairingFlow: ObservableObject {
                 guard let self, !Task.isCancelled else { await session.close(); return }
                 connectedRoute = session.routeTitle
                 phase = .connected
+                // A pasted pairing link holds the key: don't leave it on the clipboard.
+                if let text = UIPasteboard.general.string, let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+                   LinkPairing(url: url)?.id == pairing.id {
+                    UIPasteboard.general.string = ""
+                }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 onConnected?(pairing, session)
             } catch is CancellationError {

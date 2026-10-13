@@ -33,6 +33,8 @@ final class MacLink: ObservableObject {
         let name: String
         let content: Content
         var state: State = .waiting
+        /// Routes that failed under it; after three it shows as failed.
+        var attempts = 0
     }
 
     struct Received: Identifiable, Hashable {
@@ -73,6 +75,8 @@ final class MacLink: ObservableObject {
     }
 
     init() {
+        // Copies left by a run that ended mid-send.
+        try? FileManager.default.removeItem(at: Self.outgoingDirectory)
         loadReceived()
         status = mac == nil ? .unpaired : .searching
     }
@@ -132,18 +136,34 @@ final class MacLink: ObservableObject {
     /// Connected while the app is in front. Leaving mid-transfer asks iOS
     /// for a little time to finish.
     func setActive(_ active: Bool) {
+        guard active != isActive else { return }
         isActive = active
         if active {
             endBackgroundTask()
             connectIfNeeded()
-        } else if outgoing.contains(where: { $0.state == .waiting || $0.isSending }) {
-            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Send to Mac") { [weak self] in
-                self?.disconnect()
-                self?.endBackgroundTask()
-            }
-        } else {
-            disconnect()
+            return
         }
+        // No new connections while away; the ones up stay while something is moving.
+        stopRouteLoops()
+        guard hasWorkInFlight else { return disconnect() }
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Send to Mac") { [weak self] in
+            self?.disconnect()
+            self?.endBackgroundTask()
+        }
+    }
+
+    /// Files going either way, or text waiting to go.
+    private var hasWorkInFlight: Bool {
+        incomingProgress != nil || outgoing.contains { $0.state == .waiting || $0.isSending }
+    }
+
+    private func stopRouteLoops() {
+        routeTasks.forEach { $0.cancel() }
+        routeTasks = []
+        bluetoothTask = nil
+        usb?.cancel()
+        usb = nil
     }
 
     private func reconnect() {
@@ -153,11 +173,7 @@ final class MacLink: ObservableObject {
     }
 
     private func disconnect() {
-        routeTasks.forEach { $0.cancel() }
-        routeTasks = []
-        bluetoothTask = nil
-        usb?.cancel()
-        usb = nil
+        stopRouteLoops()
         let open = sessions.values
         sessions = [:]
         for session in open { Task { await session.close() } }
@@ -262,12 +278,16 @@ final class MacLink: ObservableObject {
             await session.run(onReceive: { [weak self] item in
                 try await self?.receive(item)
             }, onProgress: { [weak self] name, fraction in
-                Task { @MainActor in self?.incomingProgress = fraction < 1 ? (name, fraction) : nil }
+                Task { @MainActor in
+                    self?.incomingProgress = fraction < 1 ? (name, fraction) : nil
+                    if fraction >= 1 { self?.finishBackgroundWorkIfDone() }
+                }
             })
             if sessions[route] === session { sessions[route] = nil }
             incomingProgress = nil
             updateStatus()
             processQueue()
+            finishBackgroundWorkIfDone()
         }
     }
 
@@ -321,6 +341,7 @@ final class MacLink: ObservableObject {
     func retry(_ id: UUID) {
         guard let index = outgoing.firstIndex(where: { $0.id == id }) else { return }
         outgoing[index].state = .waiting
+        outgoing[index].attempts = 0
         processQueue()
     }
 
@@ -333,6 +354,20 @@ final class MacLink: ObservableObject {
         guard let item = outgoing.first(where: { $0.id == id }), !item.isSending else { return }
         cleanUp(item)
         outgoing.removeAll { $0.id == id }
+    }
+
+    /// `stage` for several files, off the main thread: big files, folders to
+    /// zip and iCloud files still downloading take time. Returns the names
+    /// that couldn't be read.
+    nonisolated static func stage(_ urls: [URL]) async -> (files: [URL], failed: [String]) {
+        await Task.detached(priority: .userInitiated) {
+            var files: [URL] = []
+            var failed: [String] = []
+            for url in urls {
+                do { files.append(try stage(url)) } catch { failed.append(url.lastPathComponent) }
+            }
+            return (files, failed)
+        }.value
     }
 
     /// Copies picked files somewhere the app owns until they're sent.
@@ -368,7 +403,8 @@ final class MacLink: ObservableObject {
         }
     }
 
-    /// Each item goes over the fastest route at the moment it starts.
+    /// Each item goes over the fastest route at the moment it starts. A route
+    /// that fails under it hands the item to the next one, from the start.
     private func drain() async {
         defer { sendingSession = nil }
         while let index = outgoing.firstIndex(where: { $0.state == .waiting }), let session {
@@ -378,7 +414,10 @@ final class MacLink: ObservableObject {
             do {
                 switch item.content {
                 case .file(let url):
+                    let throttle = ProgressThrottle()
                     try await session.sendFile(url) { fraction in
+                        // A screen update per whole percent, not per chunk.
+                        guard throttle.shouldReport(fraction) else { return }
                         Task { @MainActor [weak self] in
                             guard self?.outgoing.first(where: { $0.id == item.id })?.isSending == true else { return }
                             self?.setState(item.id, .sending(fraction))
@@ -388,14 +427,17 @@ final class MacLink: ObservableObject {
                     try await session.sendText(text)
                 }
                 setState(item.id, .sent)
+                cleanUp(item)
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            } catch LinkError.closed {
-                // That route went away: the next one takes it from the start.
-                setState(item.id, .waiting)
+            } catch LinkError.rejected(let reason) {
+                // The Mac said no: another route won't change its mind.
+                setState(item.id, .failed(reason))
+            } catch {
                 if let route = sessions.first(where: { $0.value === session })?.key { sessions[route] = nil }
                 updateStatus()
-            } catch {
-                setState(item.id, .failed(error.localizedDescription))
+                guard let index = outgoing.firstIndex(where: { $0.id == item.id }) else { continue }
+                outgoing[index].attempts += 1
+                outgoing[index].state = outgoing[index].attempts < 3 ? .waiting : .failed(error.localizedDescription)
             }
             pruneSlowRoutes()
         }
@@ -413,7 +455,7 @@ final class MacLink: ObservableObject {
     }
 
     private func finishBackgroundWorkIfDone() {
-        guard !isActive, !outgoing.contains(where: { $0.state == .waiting || $0.isSending }) else { return }
+        guard !isActive, !hasWorkInFlight else { return }
         disconnect()
         endBackgroundTask()
     }
@@ -427,6 +469,7 @@ final class MacLink: ObservableObject {
     // MARK: Receiving
 
     private func receive(_ item: LinkSession.Incoming) throws {
+        defer { finishBackgroundWorkIfDone() }
         switch item {
         case .file(let temporary, let name):
             let target = linkUniqueURL(for: name, in: Self.receivedDirectory)
@@ -458,5 +501,31 @@ extension MacLink.Outgoing {
     var isSending: Bool {
         if case .sending = state { return true }
         return false
+    }
+}
+
+/// Lets progress through once per whole percent, from any thread.
+final class ProgressThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = -1.0
+
+    func shouldReport(_ fraction: Double) -> Bool {
+        lock.withLock {
+            guard fraction - last >= 0.01 || (fraction >= 1 && last < 1) else { return false }
+            last = fraction
+            return true
+        }
+    }
+}
+
+extension MacLink.Outgoing {
+    /// What the basket animates on: not every progress step.
+    var layoutKey: String {
+        switch state {
+        case .waiting: "\(id)w"
+        case .sending: "\(id)s"
+        case .sent: "\(id)d"
+        case .failed: "\(id)f"
+        }
     }
 }
