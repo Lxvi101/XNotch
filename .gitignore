@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+build/
+.swiftpm/
+__pycache__/
+*.pyc
+.env*
+*.p12
+*.p8
+*.pem
+*.key
+/re/
+/vendor/
+/tools/
+/InspirationVideos/

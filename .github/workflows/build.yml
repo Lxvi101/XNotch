@@ -1,0 +1,30 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  universal-app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH=$(python3 - <<'PY'
+          import pathlib, re
+          candidates = list(pathlib.Path('/Applications').glob('Xcode_26*.app'))
+          assert candidates, 'The runner must provide Xcode 26 or later.'
+          print(max(candidates, key=lambda p: tuple(map(int, re.findall(r'\d+', p.name)))) / 'Contents/Developer')
+          PY
+          )
+          sudo xcode-select -s "$XCODE_PATH"
+      - name: Build and verify universal app
+        run: |
+          scripts/build_app.sh
+          lipo -verify_arch arm64 x86_64 build/XNotch.app/Contents/MacOS/XNotch
+          codesign --verify --deep --strict build/XNotch.app
+          ditto -c -k --sequesterRsrc --keepParent build/XNotch.app build/XNotch-development.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XNotch-universal-development
+          path: build/XNotch-development.zip
