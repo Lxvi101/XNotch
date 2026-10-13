@@ -8,7 +8,7 @@ Download the DMG from [the latest release](https://github.com/Lxvi101/XNotch/rel
 
 The first launch plays a short welcome tour and asks for Full Disk Access, so the shelf and Folders can open files anywhere. XNotch opens the right pane in System Settings and docks a guide beside it; drag XNotch from the guide into the list. The tour then offers the extensions (all start off) and asks for whatever the ones you add need. Replay the tour or grant access later under **Settings → General**.
 
-The 0.2.0 release is Developer ID signed but not notarized. macOS may require first-launch approval in System Settings → Privacy & Security.
+Releases are signed with Developer ID and notarized by Apple, so XNotch opens without a security warning.
 
 ## AI Usage
 

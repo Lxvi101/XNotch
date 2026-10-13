@@ -11,6 +11,8 @@ PUBLIC_KEY=$(plutil -extract sparklePublicKey raw -o - release.json)
 NOTES="$ROOT/releases/$VERSION.md"
 [[ -f "$NOTES" ]] || { echo "Missing $NOTES" >&2; exit 1; }
 if [[ "${1:-}" == --publish ]]; then
+    # Signed but unnotarized apps are blocked by Gatekeeper on first launch.
+    [[ -n "${NOTARY_PROFILE:-}" ]] || { echo 'Set NOTARY_PROFILE to publish; see RELEASING.md.' >&2; exit 1; }
     [[ -z $(git status --porcelain) ]] || { echo 'Commit all changes before publishing.' >&2; exit 1; }
     [[ $(gh repo view --json nameWithOwner --jq .nameWithOwner) == "$REPOSITORY" ]] || { echo 'Wrong origin repository.' >&2; exit 1; }
     [[ $(git rev-parse HEAD) == $(git ls-remote origin refs/heads/main | cut -f1) ]] || { echo 'Push main before publishing.' >&2; exit 1; }
@@ -44,6 +46,8 @@ if [[ "${CODE_SIGN_IDENTITY:--}" != "-" ]]; then codesign --sign "$CODE_SIGN_IDE
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
     xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$DMG"
+    spctl --assess --type execute --verbose "$ROOT/build/XNotch.app"
+    spctl --assess --type open --context context:primary-signature --verbose "$DMG"
 fi
 SIGNATURE=$("$TOOLS/sign_update" --account "$ACCOUNT" -p "$ARCHIVE")
 python3 scripts/make_appcast.py "$ARCHIVE" "$SIGNATURE" "$OUT/appcast.xml"
