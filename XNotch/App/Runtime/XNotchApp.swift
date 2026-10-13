@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let onboarding = OnboardingController(model: model, preferences: model.preferences)
         let settings = SettingsWindowController(model: model, lockScreen: lockScreen, updater: updater,
                                                 onReplayOnboarding: { [weak onboarding] in onboarding?.start() })
-        model.onOpenSettings = { [weak settings] in settings?.show() }
+        model.onOpenSettings = { [weak settings] pane in settings?.show(pane: pane) }
         let permissions = PermissionCenter.shared
         permissions.onGuideMoved = { [weak model] frame in model?.watchPermissionGuide(frame) }
         permissions.onGuideFinished = { [weak model] granted in model?.permissionGuideFinished(granted: granted) }

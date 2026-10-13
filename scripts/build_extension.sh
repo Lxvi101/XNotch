@@ -29,6 +29,8 @@ ID=$(field id)
 NAME=$(field name)
 VERSION=$(field version)
 PRINCIPAL=$(field principalClass)
+# Names go into Info.plist's XML, so "iPhone & iPad" needs escaping.
+xml() { local v=${1//&/&amp;}; v=${v//</&lt;}; print -r -- ${v//>/&gt;} }
 PRODUCT=$(swift package --package-path "$PKG" dump-package | plutil -extract products.0.name raw -o - -)
 
 ARCH_FLAGS=()
@@ -36,7 +38,7 @@ for ARCH in ${(s: :)${ARCHITECTURES:-"arm64 x86_64"}}; do ARCH_FLAGS+=(--arch "$
 swift build -c release "${ARCH_FLAGS[@]}" --package-path "$PKG" --product "$PRODUCT" >&2
 BIN=$(swift build -c release "${ARCH_FLAGS[@]}" --package-path "$PKG" --show-bin-path)
 
-BUNDLE="$OUT/${NAME// /}.xnext"
+BUNDLE="$OUT/$PRODUCT.xnext"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$BIN/lib$PRODUCT.dylib" "$BUNDLE/Contents/MacOS/$PRODUCT"
@@ -52,7 +54,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key><string>dev.levi.XNotch.extension.$ID</string>
-    <key>CFBundleName</key><string>$NAME</string>
+    <key>CFBundleName</key><string>$(xml "$NAME")</string>
     <key>CFBundleExecutable</key><string>$PRODUCT</string>
     <key>CFBundlePackageType</key><string>BNDL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>

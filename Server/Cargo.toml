@@ -1,0 +1,44 @@
+[package]
+name = "xnotch-cloud"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Minimal self-hostable file-drop server backing the XNotch Cloud button"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "xnotch-cloud"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "tracing", "ws"] }
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+mime_guess = { version = "2", default-features = false }
+object_store = { version = "0.14", default-features = false, features = ["aws", "fs"] }
+percent-encoding = "2"
+rand = { version = "0.10", default-features = false, features = ["std", "thread_rng"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = { version = "2", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
+tower-http = { version = "0.6", default-features = false, features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json", "ansi", "std"] }
+# Already pulled in by axum's `ws` feature; used only for its error type, to tell
+# oversized relay messages apart. Keep the version in step with axum's.
+tungstenite = { version = "0.29", default-features = false }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

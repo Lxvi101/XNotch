@@ -6,6 +6,6 @@
   "symbol": "folder.fill",
   "tint": "#3A82F7",
   "principalClass": "FoldersPrincipal",
-  "kit": { "abi": 2, "minAPI": "1.1.0" },
+  "kit": { "abi": 3, "minAPI": "1.1.0" },
   "creator": { "name": "XNotch" }
 }

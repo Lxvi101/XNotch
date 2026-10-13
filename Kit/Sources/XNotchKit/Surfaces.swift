@@ -75,6 +75,81 @@ public protocol SettingsPaneProviding {
     func makeSettingsPane() -> AnyView
 }
 
+// MARK: Shelf
+
+/// What a shelf control acts on.
+@MainActor
+public struct ShelfContext {
+    private let resolveTargets: @MainActor () -> [URL]
+
+    public init(targets: @escaping @MainActor () -> [URL]) {
+        resolveTargets = targets
+    }
+
+    /// The selected files, or every file on the shelf when none is selected.
+    /// Read it when the control is used, not when it's built.
+    public var targets: [URL] { resolveTargets() }
+}
+
+/// Controls on the shelf (API 1.3.0).
+@MainActor
+public protocol ShelfAccessoryProviding {
+    /// Shown in the shelf header, before AirDrop, while the shelf has files.
+    /// Use `ShelfHeaderButton` to match the header's own buttons.
+    func makeShelfAccessory(context: ShelfContext) -> AnyView?
+
+    /// Added to a shelf file's right-click menu, for these files.
+    func shelfMenuItems(for files: [URL]) -> [NotchMenuItem]
+}
+
+/// The shelf header's round button. `label` is drawn at 10.5 pt in the
+/// header's colours; pass a symbol name for the common case.
+public struct ShelfHeaderButton<Label: View>: View {
+    private let action: @MainActor () -> Void
+    private let label: Label
+    @Environment(\.shelfHeaderButtonSize) private var size
+
+    public init(action: @escaping @MainActor () -> Void, @ViewBuilder label: () -> Label) {
+        self.action = action
+        self.label = label()
+    }
+
+    public var body: some View {
+        NotchHoverReader { hovering in
+            Button { action() } label: {
+                label
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.6))
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(.white.opacity(hovering ? 0.16 : 0.08)))
+                    .scaleEffect(hovering ? 1.06 : 1)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .animation(KitMotion.content, value: hovering)
+        }
+    }
+}
+
+private struct ShelfHeaderButtonSizeKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 24
+}
+
+extension EnvironmentValues {
+    /// The shelf header's button diameter: smaller when extensions add
+    /// buttons, so they all stay clear of the camera housing.
+    public var shelfHeaderButtonSize: CGFloat {
+        get { self[ShelfHeaderButtonSizeKey.self] }
+        set { self[ShelfHeaderButtonSizeKey.self] = newValue }
+    }
+}
+
+extension ShelfHeaderButton where Label == Image {
+    public init(symbol: String, action: @escaping @MainActor () -> Void) {
+        self.init(action: action) { Image(systemName: symbol) }
+    }
+}
+
 // MARK: Permissions
 
 /// Something an extension can't do until the user allows it, like reading

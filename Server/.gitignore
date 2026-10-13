@@ -1,0 +1,4 @@
+/target/
+.env
+# The repository root ignores `.env*`; keep the example tracked.
+!.env.example

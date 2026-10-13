@@ -1,0 +1,108 @@
+# XNotch for iPhone and iPad. Generate the Xcode project with `xcodegen` in this folder.
+name: XNotchCompanion
+options:
+  bundleIdPrefix: dev.levi.XNotch
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: 59UPSTU6WZ
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  XNotchLink:
+    path: ../Shared/XNotchLink
+targets:
+  XNotchCompanion:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    dependencies:
+      - target: XNotchShare
+      - package: XNotchLink
+    entitlements:
+      path: App/XNotchCompanion.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)dev.levi.XNotch.companion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.levi.XNotch.companion
+        PRODUCT_NAME: XNotch
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: XNotch
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: XNotch
+        AppIdentifierPrefix: $(AppIdentifierPrefix)
+        UILaunchScreen:
+          UIColorName: ""
+        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSLocalNetworkUsageDescription: XNotch sends files and text to your Mac over this network.
+        NSBonjourServices: [_xnotchlink._tcp]
+        NSCameraUsageDescription: XNotch scans the pairing code your Mac shows.
+        NSBluetoothAlwaysUsageDescription: XNotch reaches your Mac over Bluetooth when there's no Wi-Fi.
+        NSPhotoLibraryUsageDescription: XNotch sends the photos and videos you pick to your Mac.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.levi.XNotch.companion
+            CFBundleURLSchemes: [xnotchlink]
+  XNotchShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Share
+      - Shared
+    dependencies:
+      - package: XNotchLink
+    entitlements:
+      path: Share/XNotchShare.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)dev.levi.XNotch.companion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.levi.XNotch.companion.share
+        PRODUCT_NAME: XNotchShare
+        INFOPLIST_KEY_CFBundleDisplayName: XNotch
+    info:
+      path: Share/Info.plist
+      properties:
+        CFBundleDisplayName: XNotch
+        AppIdentifierPrefix: $(AppIdentifierPrefix)
+        NSLocalNetworkUsageDescription: XNotch sends what you share to your Mac over this network.
+        NSBonjourServices: [_xnotchlink._tcp]
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsAttachmentsWithMaxCount: 50
+              NSExtensionActivationSupportsFileWithMaxCount: 50
+              NSExtensionActivationSupportsImageWithMaxCount: 50
+              NSExtensionActivationSupportsMovieWithMaxCount: 50
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+schemes:
+  XNotchCompanion:
+    build:
+      targets:
+        XNotchCompanion: all
+        XNotchShare: all
+    run:
+      config: Debug

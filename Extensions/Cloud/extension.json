@@ -1,0 +1,11 @@
+{
+  "id": "cloud",
+  "name": "Cloud Links",
+  "version": "1.0.0",
+  "summary": "Share shelf files as links that expire, from your own server.",
+  "symbol": "icloud.and.arrow.up.fill",
+  "tint": "#0A84FF",
+  "principalClass": "CloudPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.3.0" },
+  "creator": { "name": "XNotch" }
+}

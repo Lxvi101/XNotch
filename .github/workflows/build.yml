@@ -30,3 +30,34 @@ jobs:
         with:
           name: XNotch-universal-development
           path: build/XNotch-development.zip
+  link-and-extensions:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH=$(python3 - <<'PY'
+          import pathlib, re
+          candidates = list(pathlib.Path('/Applications').glob('Xcode_26*.app'))
+          assert candidates, 'The runner must provide Xcode 26 or later.'
+          print(max(candidates, key=lambda p: tuple(map(int, re.findall(r'\d+', p.name)))) / 'Contents/Developer')
+          PY
+          )
+          sudo xcode-select -s "$XCODE_PATH"
+      - name: Test the link, Cloud Links and iPhone & iPad
+        run: |
+          swift test --package-path Shared/XNotchLink
+          swift test --package-path Extensions/Cloud
+          swift test --package-path Extensions/Companion
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the Cloud Links server
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked

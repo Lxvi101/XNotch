@@ -3,10 +3,10 @@ import AppKit
 public enum XNotchKit {
     /// Raised on any binary-incompatible change. XNotch refuses an extension
     /// built against a different ABI instead of crashing inside it.
-    public static let abi = 2
+    public static let abi = 3
     /// Semantic version of the API. An extension's manifest names the lowest
     /// version it needs in `kit.minAPI`.
-    public static let apiVersion = "1.2.0"
+    public static let apiVersion = "1.3.0"
 }
 
 public typealias ExtensionID = String
@@ -20,7 +20,7 @@ public typealias ExtensionID = String
 }
 
 /// The extension itself. Conform to surface protocols (`NotchPageProviding`,
-/// `NotchKeyHandling`, `SettingsPaneProviding`) to appear in XNotch.
+/// `NotchKeyHandling`, `SettingsPaneProviding`, `ShelfAccessoryProviding`) to appear in XNotch.
 @MainActor
 public protocol XNotchExtension: AnyObject {
     /// Must equal `XNotchExtensionID` in Info.plist and `id` in extension.json.

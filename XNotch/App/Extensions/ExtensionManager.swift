@@ -9,6 +9,9 @@ protocol ExtensionNotchDriver: AnyObject {
     var isOpen: Bool { get }
     func open(page: OpenPage)
     func close()
+    var shelfFiles: [URL] { get }
+    func openSettings(extension id: ExtensionID)
+    func addToShelf(_ urls: [URL])
 }
 
 /// Discovers `.xnext` bundles (built into the app, and in
@@ -118,6 +121,14 @@ final class ExtensionManager: ObservableObject {
         }
     }
 
+    /// Active extensions' shelf controls, in load order.
+    var shelfAccessoryProviders: [ShelfAccessoryProviding] {
+        entries.compactMap { entry in
+            guard entry.isActive else { return nil }
+            return entry.instance as? ShelfAccessoryProviding
+        }
+    }
+
     func settingsPane(for id: ExtensionID) -> AnyView? {
         guard let entry = entries.first(where: { $0.id == id }), entry.isActive,
               let provider = entry.instance as? SettingsPaneProviding else { return nil }
@@ -207,7 +218,7 @@ final class ExtensionManager: ObservableObject {
 
 /// One extension's view of the host.
 @MainActor
-private final class HostBridge: ExtensionHost, NotchControl {
+private final class HostBridge: ExtensionHost, NotchControl, ShelfAccess {
     let extensionID: ExtensionID
     let storage: ExtensionStorage
     let workspace = ExtensionWorkspace()
@@ -223,6 +234,13 @@ private final class HostBridge: ExtensionHost, NotchControl {
     }
 
     var notch: NotchControl { self }
+    var shelf: ShelfAccess { self }
+
+    var files: [URL] { manager?.driver?.shelfFiles ?? [] }
+
+    func add(_ urls: [URL]) {
+        manager?.driver?.addToShelf(urls)
+    }
 
     var isOpen: Bool { manager?.driver?.isOpen ?? false }
 
@@ -236,5 +254,9 @@ private final class HostBridge: ExtensionHost, NotchControl {
 
     func pagesDidChange() {
         manager?.pagesDidChange()
+    }
+
+    func openSettings() {
+        manager?.driver?.openSettings(extension: extensionID)
     }
 }

@@ -11,6 +11,7 @@
 
 import AppKit
 import SwiftUI
+import XNotchKit
 
 /// AppKit overlay for a shelf tile: click/⌘-click selection, double-click to
 /// open, right-click menu, and dragging files out as real file URLs. Hover is
@@ -21,6 +22,7 @@ struct ShelfItemInteraction: NSViewRepresentable {
     let store: ShelfStore
     let dragImage: NSImage?
     let onDragOut: (Bool) -> Void
+    let extensionMenuItems: @MainActor ([URL]) -> [NotchMenuItem]
 
     func makeNSView(context: Context) -> ShelfItemInteractionView {
         let view = ShelfItemInteractionView()
@@ -37,6 +39,7 @@ struct ShelfItemInteraction: NSViewRepresentable {
         view.store = store
         view.dragImage = dragImage
         view.onDragOut = onDragOut
+        view.extensionMenuItems = extensionMenuItems
     }
 }
 
@@ -45,6 +48,7 @@ final class ShelfItemInteractionView: NSView, NSDraggingSource {
     weak var store: ShelfStore?
     var dragImage: NSImage?
     var onDragOut: ((Bool) -> Void)?
+    var extensionMenuItems: (@MainActor ([URL]) -> [NotchMenuItem])?
 
     private var mouseDownEvent: NSEvent?
     private var draggedItems: [ShelfItem] = []
@@ -129,6 +133,15 @@ final class ShelfItemInteractionView: NSView, NSDraggingSource {
         menu.addItem(ClosureMenuItem("AirDrop", symbol: "dot.radiowaves.left.and.right") {
             ShelfActions.airDrop(items.map(\.url))
         })
+        let extensionEntries = extensionMenuItems?(items.map(\.url)) ?? []
+        if !extensionEntries.isEmpty {
+            menu.addItem(.separator())
+            let extra = NotchContextMenuView.menu(extensionEntries)
+            for entry in extra.items {
+                extra.removeItem(entry)
+                menu.addItem(entry)
+            }
+        }
         menu.addItem(.separator())
         let removeTitle = count > 1 ? "Remove \(count) Items" : "Remove from Shelf"
         menu.addItem(ClosureMenuItem(removeTitle, symbol: "minus.circle") { [weak store] in

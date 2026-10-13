@@ -1,9 +1,11 @@
 import SwiftUI
+import XNotchKit
 
 /// The open shelf. The top band flanks the camera housing, so its two groups
 /// sit either side of a spacer as wide as the physical notch.
 struct ShelfView: View {
     @ObservedObject var store: ShelfStore
+    let extensions: ExtensionManager
     let notchSize: CGSize
     /// Hidden when the page switcher occupies the header's leading side.
     let showsTitle: Bool
@@ -19,6 +21,18 @@ struct ShelfView: View {
         .padding(.horizontal, NotchMetrics.shelfTopCornerRadius + MediaLayout.inset)
         .padding(.bottom, 10)
         .frame(width: NotchMetrics.shelf.outerWidth, height: NotchMetrics.shelf.height)
+        .environmentObject(extensions.pointer)
+        .environment(\.shelfExtensionMenuItems) { [weak extensions] files in
+            extensions?.shelfAccessoryProviders.flatMap { $0.shelfMenuItems(for: files) } ?? []
+        }
+    }
+
+    private var accessoryContext: ShelfContext {
+        ShelfContext { [weak store] in
+            guard let store else { return [] }
+            let selected = store.items.filter { store.selection.contains($0.id) }
+            return (selected.isEmpty ? store.items : selected).map(\.url)
+        }
     }
 
     private var header: some View {
@@ -36,12 +50,20 @@ struct ShelfView: View {
             .opacity(showsTitle ? 1 : 0)
             Spacer(minLength: notchSize.width + 12)
             if !store.items.isEmpty {
-                HeaderButton(symbol: "dot.radiowaves.left.and.right") {
-                    ShelfActions.airDrop(store.items.map(\.url))
+                let providers = extensions.shelfAccessoryProviders
+                // Extension buttons make the row tighter, so it stays beside the camera, not under it.
+                HStack(spacing: providers.isEmpty ? 6 : 3) {
+                    ForEach(Array(providers.enumerated()), id: \.offset) { _, provider in
+                        provider.makeShelfAccessory(context: accessoryContext)
+                    }
+                    HeaderButton(symbol: "dot.radiowaves.left.and.right") {
+                        ShelfActions.airDrop(store.items.map(\.url))
+                    }
+                    HeaderButton(symbol: "trash") {
+                        withAnimation(Motion.content) { store.removeAll() }
+                    }
                 }
-                HeaderButton(symbol: "trash") {
-                    withAnimation(Motion.content) { store.removeAll() }
-                }
+                .environment(\.shelfHeaderButtonSize, providers.isEmpty ? 24 : 22)
             }
         }
         .padding(.top, 2)
@@ -91,13 +113,14 @@ private struct HeaderButton: View {
     let symbol: String
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.shelfHeaderButtonSize) private var size
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.6))
-                .frame(width: 24, height: 24)
+                .frame(width: size, height: size)
                 .background(Circle().fill(.white.opacity(hovering ? 0.16 : 0.08)))
                 .scaleEffect(hovering ? 1.06 : 1)
                 .contentShape(Circle())
@@ -138,6 +161,7 @@ struct ShelfTile: View {
     let onDragOut: (Bool) -> Void
 
     @State private var thumbnail: NSImage?
+    @Environment(\.shelfExtensionMenuItems) private var extensionMenuItems
 
     init(item: ShelfItem, store: ShelfStore, onDragOut: @escaping (Bool) -> Void) {
         self.item = item
@@ -186,7 +210,8 @@ struct ShelfTile: View {
         .animation(Motion.content, value: hovering)
         .animation(Motion.content, value: isSelected)
         .overlay {
-            ShelfItemInteraction(item: item, store: store, dragImage: thumbnail, onDragOut: onDragOut)
+            ShelfItemInteraction(item: item, store: store, dragImage: thumbnail, onDragOut: onDragOut,
+                                 extensionMenuItems: extensionMenuItems)
         }
         .background {
             GeometryReader { proxy in
@@ -200,5 +225,17 @@ struct ShelfTile: View {
             FileIcons.setThumbnail(image, for: item.path)
             withAnimation(Motion.content) { thumbnail = image }
         }
+    }
+}
+
+/// Extensions' entries for a shelf file's right-click menu.
+private struct ShelfExtensionMenuItemsKey: EnvironmentKey {
+    static let defaultValue: @MainActor ([URL]) -> [NotchMenuItem] = { _ in [] }
+}
+
+extension EnvironmentValues {
+    var shelfExtensionMenuItems: @MainActor ([URL]) -> [NotchMenuItem] {
+        get { self[ShelfExtensionMenuItemsKey.self] }
+        set { self[ShelfExtensionMenuItemsKey.self] = newValue }
     }
 }

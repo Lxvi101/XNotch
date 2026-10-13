@@ -6,6 +6,6 @@
   "symbol": "chart.bar.fill",
   "tint": "#D97757",
   "principalClass": "AIUsagePrincipal",
-  "kit": { "abi": 2, "minAPI": "1.2.0" },
+  "kit": { "abi": 3, "minAPI": "1.2.0" },
   "creator": { "name": "XNotch" }
 }

@@ -1,0 +1,11 @@
+{
+  "id": "companion",
+  "name": "iPhone & iPad",
+  "version": "1.0.0",
+  "summary": "Share files and text from your iPhone or iPad straight onto the shelf.",
+  "symbol": "iphone.gen3",
+  "tint": "#5E5CE6",
+  "principalClass": "CompanionPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.3.0" },
+  "creator": { "name": "XNotch" }
+}

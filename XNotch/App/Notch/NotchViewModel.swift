@@ -60,7 +60,7 @@ final class NotchViewModel: ObservableObject {
     var tileFrames: [UUID: CGRect] = [:]
     /// Asks the controller to re-read the pointer after AppKit swallowed events (drag sessions).
     var onPointerSyncNeeded: (() -> Void)?
-    var onOpenSettings: (() -> Void)?
+    var onOpenSettings: ((SettingsPane?) -> Void)?
 
     private(set) var isPointerInside = false
     private var isPressed = false
@@ -333,8 +333,9 @@ final class NotchViewModel: ObservableObject {
             hovered = tileFrames.first { $0.value.contains(point) }?.key
         }
         if shelf.hoveredID != hovered { shelf.hoveredID = hovered }
-        let onExtensionPage = surface == .open && !isDraggingOut && extensionPages.contains { $0.page == page }
-        extensions.pointer.update(onExtensionPage ? point : nil)
+        // Extension pages and shelf accessories hover through the published pointer.
+        let publishes = surface == .open && !isDraggingOut && (page == .shelf || extensionPages.contains { $0.page == page })
+        extensions.pointer.update(publishes ? point : nil)
     }
 
     /// Pressing a pill leaves the shell alone; pressing the notch squashes it.
@@ -419,7 +420,7 @@ final class NotchViewModel: ObservableObject {
 
     func openSettings() {
         close()
-        onOpenSettings?()
+        onOpenSettings?(nil)
     }
 
     func openMediaApp() {
@@ -710,7 +711,24 @@ final class NotchViewModel: ObservableObject {
     }
 }
 
-extension NotchViewModel: ExtensionNotchDriver {}
+extension NotchViewModel: ExtensionNotchDriver {
+    var shelfFiles: [URL] { shelf.items.map(\.url) }
+
+    func openSettings(extension id: ExtensionID) {
+        close()
+        onOpenSettings?(.extensionPane(id))
+    }
+
+    /// Files an extension brought, say from an iPhone, arrive like a drop.
+    func addToShelf(_ urls: [URL]) {
+        guard servicesStarted else { return }
+        receive(urls)
+        guard !isPresentingOnboarding else { return }
+        land()
+        open(page: .shelf)
+        if !isPointerInside { scheduleCollapse() }
+    }
+}
 
 enum Haptics {
     @MainActor static func tap() {

@@ -1,0 +1,552 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0D4D811B412254D4E25A010C /* PairingKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BD0B4185188A297415FA9A6 /* PairingKeychain.swift */; };
+		14C28221EA03D90C7C7CF3B5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93B3E1B9A7C3A6AF07990557 /* Assets.xcassets */; };
+		1B8EE073BE3D63643A051F60 /* XNotchShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 31A128372904050F3352C1BF /* XNotchShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2C74EB0E39FDBC1156950C3C /* XNotchCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A53011D73352006DF8A608 /* XNotchCompanionApp.swift */; };
+		300184038E4F0FCFFD655B1C /* PairView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A72C4CAD4220D41DE03AF2B /* PairView.swift */; };
+		4FA34DD0F012A5190AB0203C /* XNotchLink in Frameworks */ = {isa = PBXBuildFile; productRef = C57B7C5C23D0160A85E18BC3 /* XNotchLink */; };
+		4FC9AB6A6915C66A7C0C3D6A /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4081AD1281CB96885DDA09FD /* Theme.swift */; };
+		6C360583F1C087CE040A63D9 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4081AD1281CB96885DDA09FD /* Theme.swift */; };
+		7AA0710598EDDCA1CD76932A /* MacLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595125BAA715B8E03755C896 /* MacLink.swift */; };
+		92E28855D49B5D4E50893F81 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8C97B2725AD6FC25D994470 /* HomeView.swift */; };
+		9F5B0CB5E504806D0FD3D275 /* BasketView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59592228D7985CC0E3CFB815 /* BasketView.swift */; };
+		A9A517DE2B2EA61B9E89F3F9 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B70AEB92229509F36349A7 /* ShareViewController.swift */; };
+		AFC62F3DE4527EA94FF271EA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 996E9DBFB0E9307B7E55689B /* OnboardingView.swift */; };
+		DCA7247A3E5BFA6750710A16 /* PairingKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BD0B4185188A297415FA9A6 /* PairingKeychain.swift */; };
+		EA242F02C74ECB29FC563D41 /* XNotchLink in Frameworks */ = {isa = PBXBuildFile; productRef = 3B0EAD1323B474762C254D6A /* XNotchLink */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BF183330601FDEFEE316BFF3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A0D658E9FCB05A1F6525D3E9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D28E13F1778601B6C8004181;
+			remoteInfo = XNotchShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F17FB955B94CA9423C330335 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				1B8EE073BE3D63643A051F60 /* XNotchShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		12F04434550685FBF909B22C /* XNotchCompanion.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XNotchCompanion.entitlements; sourceTree = "<group>"; };
+		228D05D5CB81475143F08049 /* XNotchLink */ = {isa = PBXFileReference; lastKnownFileType = folder; name = XNotchLink; path = ../Shared/XNotchLink; sourceTree = SOURCE_ROOT; };
+		31A128372904050F3352C1BF /* XNotchShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = XNotchShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		4081AD1281CB96885DDA09FD /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		595125BAA715B8E03755C896 /* MacLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLink.swift; sourceTree = "<group>"; };
+		59592228D7985CC0E3CFB815 /* BasketView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasketView.swift; sourceTree = "<group>"; };
+		5A72C4CAD4220D41DE03AF2B /* PairView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairView.swift; sourceTree = "<group>"; };
+		5BD0B4185188A297415FA9A6 /* PairingKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingKeychain.swift; sourceTree = "<group>"; };
+		85C7984C674597EC96CF8C06 /* XNotchCompanion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = XNotchCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		93A53011D73352006DF8A608 /* XNotchCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XNotchCompanionApp.swift; sourceTree = "<group>"; };
+		93B3E1B9A7C3A6AF07990557 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		95D5A3E471B9DFD7AAA1AD7C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		996E9DBFB0E9307B7E55689B /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		A644770C30D0F42296AF21E6 /* XNotchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XNotchShare.entitlements; sourceTree = "<group>"; };
+		BF0F17C9A997327FBE6C5008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F4B70AEB92229509F36349A7 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		F8C97B2725AD6FC25D994470 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AACDC42F97232E62F6FD5939 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA242F02C74ECB29FC563D41 /* XNotchLink in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F4A85A3AC8979723A8092704 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4FA34DD0F012A5190AB0203C /* XNotchLink in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		10417AC8FE98E39631E7032B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				85C7984C674597EC96CF8C06 /* XNotchCompanion.app */,
+				31A128372904050F3352C1BF /* XNotchShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		2CEB0EAC392DA5578921FBBB /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				59592228D7985CC0E3CFB815 /* BasketView.swift */,
+				F8C97B2725AD6FC25D994470 /* HomeView.swift */,
+				996E9DBFB0E9307B7E55689B /* OnboardingView.swift */,
+				5A72C4CAD4220D41DE03AF2B /* PairView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		4070C951F5E8E43447BFDE7E /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				228D05D5CB81475143F08049 /* XNotchLink */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		58CF8CF4713937DF8CA3C838 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				93B3E1B9A7C3A6AF07990557 /* Assets.xcassets */,
+				BF0F17C9A997327FBE6C5008 /* Info.plist */,
+				595125BAA715B8E03755C896 /* MacLink.swift */,
+				12F04434550685FBF909B22C /* XNotchCompanion.entitlements */,
+				93A53011D73352006DF8A608 /* XNotchCompanionApp.swift */,
+				2CEB0EAC392DA5578921FBBB /* Views */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		6C0C0385A4E8042CDFB61199 /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				95D5A3E471B9DFD7AAA1AD7C /* Info.plist */,
+				F4B70AEB92229509F36349A7 /* ShareViewController.swift */,
+				A644770C30D0F42296AF21E6 /* XNotchShare.entitlements */,
+			);
+			path = Share;
+			sourceTree = "<group>";
+		};
+		73EF222D9548BD85CEA23586 = {
+			isa = PBXGroup;
+			children = (
+				58CF8CF4713937DF8CA3C838 /* App */,
+				4070C951F5E8E43447BFDE7E /* Packages */,
+				6C0C0385A4E8042CDFB61199 /* Share */,
+				A215D934B8196BD043995334 /* Shared */,
+				10417AC8FE98E39631E7032B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A215D934B8196BD043995334 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				5BD0B4185188A297415FA9A6 /* PairingKeychain.swift */,
+				4081AD1281CB96885DDA09FD /* Theme.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		64DF7C7B2BA9A23C21C587D5 /* XNotchCompanion */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B35B0D3D0FA82451A0322E6E /* Build configuration list for PBXNativeTarget "XNotchCompanion" */;
+			buildPhases = (
+				5A6DA80DB10F0497D78E71F5 /* Sources */,
+				A078B2EB224FC4659562E103 /* Resources */,
+				F4A85A3AC8979723A8092704 /* Frameworks */,
+				F17FB955B94CA9423C330335 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6A79D65471371F8090C2C99E /* PBXTargetDependency */,
+			);
+			name = XNotchCompanion;
+			packageProductDependencies = (
+				C57B7C5C23D0160A85E18BC3 /* XNotchLink */,
+			);
+			productName = XNotchCompanion;
+			productReference = 85C7984C674597EC96CF8C06 /* XNotchCompanion.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D28E13F1778601B6C8004181 /* XNotchShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 95644D5A3877B9AFFA7CE4F9 /* Build configuration list for PBXNativeTarget "XNotchShare" */;
+			buildPhases = (
+				C5EE290D1F867923220338C7 /* Sources */,
+				AACDC42F97232E62F6FD5939 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = XNotchShare;
+			packageProductDependencies = (
+				3B0EAD1323B474762C254D6A /* XNotchLink */,
+			);
+			productName = XNotchShare;
+			productReference = 31A128372904050F3352C1BF /* XNotchShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A0D658E9FCB05A1F6525D3E9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					64DF7C7B2BA9A23C21C587D5 = {
+						DevelopmentTeam = 59UPSTU6WZ;
+						ProvisioningStyle = Automatic;
+					};
+					D28E13F1778601B6C8004181 = {
+						DevelopmentTeam = 59UPSTU6WZ;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = E0A01D267665DF8667BAFBAE /* Build configuration list for PBXProject "XNotchCompanion" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 73EF222D9548BD85CEA23586;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				73E658A37E45D0328CFFBB38 /* XCLocalSwiftPackageReference "../Shared/XNotchLink" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 10417AC8FE98E39631E7032B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				64DF7C7B2BA9A23C21C587D5 /* XNotchCompanion */,
+				D28E13F1778601B6C8004181 /* XNotchShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A078B2EB224FC4659562E103 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				14C28221EA03D90C7C7CF3B5 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5A6DA80DB10F0497D78E71F5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9F5B0CB5E504806D0FD3D275 /* BasketView.swift in Sources */,
+				92E28855D49B5D4E50893F81 /* HomeView.swift in Sources */,
+				7AA0710598EDDCA1CD76932A /* MacLink.swift in Sources */,
+				AFC62F3DE4527EA94FF271EA /* OnboardingView.swift in Sources */,
+				300184038E4F0FCFFD655B1C /* PairView.swift in Sources */,
+				DCA7247A3E5BFA6750710A16 /* PairingKeychain.swift in Sources */,
+				4FC9AB6A6915C66A7C0C3D6A /* Theme.swift in Sources */,
+				2C74EB0E39FDBC1156950C3C /* XNotchCompanionApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C5EE290D1F867923220338C7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0D4D811B412254D4E25A010C /* PairingKeychain.swift in Sources */,
+				A9A517DE2B2EA61B9E89F3F9 /* ShareViewController.swift in Sources */,
+				6C360583F1C087CE040A63D9 /* Theme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6A79D65471371F8090C2C99E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D28E13F1778601B6C8004181 /* XNotchShare */;
+			targetProxy = BF183330601FDEFEE316BFF3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		11CD33EAAB6C3EAEE86B19D5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 59UPSTU6WZ;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1B7F2F10EAC374A88A1B57D2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/XNotchCompanion.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = App/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XNotch;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.levi.XNotch.companion;
+				PRODUCT_NAME = XNotch;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		26E6516CDC52C1CC4A5F3B0B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Share/XNotchShare.entitlements;
+				INFOPLIST_FILE = Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XNotch;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.levi.XNotch.companion.share;
+				PRODUCT_NAME = XNotchShare;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		43583400A5BF98470C208469 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Share/XNotchShare.entitlements;
+				INFOPLIST_FILE = Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XNotch;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.levi.XNotch.companion.share;
+				PRODUCT_NAME = XNotchShare;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7124B041E98F27E40507E8D5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/XNotchCompanion.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = App/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XNotch;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.levi.XNotch.companion;
+				PRODUCT_NAME = XNotch;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EF0FD08B32A7F8B61898BB9F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 59UPSTU6WZ;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		95644D5A3877B9AFFA7CE4F9 /* Build configuration list for PBXNativeTarget "XNotchShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				26E6516CDC52C1CC4A5F3B0B /* Debug */,
+				43583400A5BF98470C208469 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B35B0D3D0FA82451A0322E6E /* Build configuration list for PBXNativeTarget "XNotchCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7124B041E98F27E40507E8D5 /* Debug */,
+				1B7F2F10EAC374A88A1B57D2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E0A01D267665DF8667BAFBAE /* Build configuration list for PBXProject "XNotchCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EF0FD08B32A7F8B61898BB9F /* Debug */,
+				11CD33EAAB6C3EAEE86B19D5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		73E658A37E45D0328CFFBB38 /* XCLocalSwiftPackageReference "../Shared/XNotchLink" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Shared/XNotchLink;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3B0EAD1323B474762C254D6A /* XNotchLink */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = XNotchLink;
+		};
+		C57B7C5C23D0160A85E18BC3 /* XNotchLink */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = XNotchLink;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A0D658E9FCB05A1F6525D3E9 /* Project object */;
+}

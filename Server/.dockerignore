@@ -1,0 +1,12 @@
+target/
+tests/
+.git/
+.gitignore
+.dockerignore
+.env
+.env.*
+*.md
+docker-compose.yml
+Dockerfile
+rustfmt.toml
+.DS_Store

@@ -44,7 +44,7 @@ let package = Package(
   "symbol": "cloud.sun.fill",
   "tint": "#2F9BFF",
   "principalClass": "WeatherPrincipal",
-  "kit": { "abi": 2, "minAPI": "1.1.0" },
+  "kit": { "abi": 3, "minAPI": "1.1.0" },
   "creator": { "name": "You", "url": "https://example.com" }
 }
 ```
@@ -98,6 +98,7 @@ final class WeatherExtension: XNotchExtension, NotchPageProviding {
 | `NotchKeyHandling` | Key presses while your page is open and the notch has keyboard focus (after a click into it). Return `true` to consume. Escape and ⌘, are XNotch's. |
 | `SettingsPaneProviding` | A page under Extensions in Settings. Return a `Form { … }.formStyle(.grouped)` to match. |
 | `PermissionRequesting` | Permissions XNotch asks for in its welcome tour, right after its own (API 1.2.0). List what's missing without prompting; show macOS's prompt only in `requestPermission(_:)`. |
+| `ShelfAccessoryProviding` | A button in the shelf header and entries in a shelf file's right-click menu (API 1.3.0). `ShelfContext.targets` is the selection, or every file when nothing is selected; read it when the button is used. Draw the button with `ShelfHeaderButton` so it matches the header and shrinks with it. |
 
 A page's content area is `NotchPageContext.contentWidth` (400 pt) wide and `NotchPageDescriptor.contentHeight` tall (98 pt by default, the shelf's height). XNotch draws the notch row above it and reveals your view with the same blur-to-focus spring as its own pages.
 
@@ -113,7 +114,8 @@ While your page is fully hidden XNotch removes its view, so `@State` inside it r
 `activate(host:)` hands you an `ExtensionHost`:
 
 - `storage.defaults`: a UserDefaults suite of your own. `storage.directory` is a private folder under Application Support.
-- `notch`: `open(page:)`, `close()`, `isOpen`, and `pagesDidChange()` when a page's title or badge changes.
+- `notch`: `open(page:)`, `close()`, `isOpen`, `pagesDidChange()` when a page's title or badge changes, and `openSettings()` to show your pane in Settings (API 1.3.0).
+- `shelf` (API 1.3.0): `files` on the shelf, and `add(_:)` to put files there and open the notch on them, as a drop does. The iPhone & iPad extension uses it for files that arrive from a phone.
 - `workspace`: open and reveal files, and `chooseFolders()` for a picker in front of everything.
 - `feedback.tick()`: the trackpad tick, which respects the user's haptics setting.
 - `log`: an `os.Logger` under `dev.levi.XNotch.extension`.
@@ -136,6 +138,8 @@ FolderTile(folder)
 ```
 
 Right-clicking anywhere else in the notch shows XNotch's own menu (Settings, Quit).
+
+- **Pop-up menus:** `notchMenu` opens the same kind of menu on any click, under the view, like a pop-up button (API 1.3.0). Cloud Links uses it for the link's lifetime.
 
 ## Versioning
 

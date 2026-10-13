@@ -8,6 +8,8 @@ public protocol ExtensionHost: AnyObject {
     var extensionID: ExtensionID { get }
     var storage: ExtensionStorage { get }
     var notch: NotchControl { get }
+    /// The shelf (API 1.3.0).
+    var shelf: ShelfAccess { get }
     var workspace: ExtensionWorkspace { get }
     var feedback: ExtensionFeedback { get }
     var log: Logger { get }
@@ -22,6 +24,18 @@ public protocol NotchControl: AnyObject {
     func close()
     /// Re-reads `NotchPageProviding.pages`, for a changed title or badge.
     func pagesDidChange()
+    /// Opens Settings on this extension's pane (API 1.3.0).
+    func openSettings()
+}
+
+/// The shelf, for extensions that bring files to it.
+@MainActor
+public protocol ShelfAccess: AnyObject {
+    /// The files on the shelf, in order.
+    var files: [URL] { get }
+    /// Puts files on the shelf and opens the notch on it, as a drop does.
+    /// Files already on the shelf are skipped.
+    func add(_ urls: [URL])
 }
 
 /// Per-extension persistence: a defaults suite and a private directory.

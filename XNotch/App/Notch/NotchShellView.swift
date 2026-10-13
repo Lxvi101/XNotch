@@ -53,8 +53,8 @@ struct NotchShellView: View {
             DropZoneView(hovered: model.hoveredDropTarget, notchSize: model.notchSize)
                 .reveal(model.dropReveal, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
-            ShelfView(store: model.shelf, notchSize: model.notchSize, showsTitle: destinations.count == 1,
-                      onDragOut: model.setDraggingOut)
+            ShelfView(store: model.shelf, extensions: extensions, notchSize: model.notchSize,
+                      showsTitle: destinations.count == 1, onDragOut: model.setDraggingOut)
                 .reveal(model.shelfReveal, unmountsWhenHidden: true)
                 .allowsHitTesting(model.surface == .open && model.page == .shelf)
             MediaPlayerPage(track: media.track ?? NowPlayingTrack(), media: media, notchSize: model.notchSize)

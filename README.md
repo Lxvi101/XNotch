@@ -27,6 +27,30 @@ Limitations:
 - Readings are cached without emails or credentials and are never shown for a different account than the one signed in. While offline, the last reading stays visible, marked stale, with its original time.
 - Not yet supported: Claude's claude.ai cookie and `claude /usage` fallbacks, Cursor team and enterprise member budgets, importing cookies from a browser, and local token and cost history.
 
+## iPhone & iPad
+
+Share files from your iPhone or iPad straight onto the shelf, and send text to the Mac's clipboard. The **iPhone & iPad** extension listens on your local network; the XNotch app for iPhone and iPad (in [Companion](Companion)) sends to it:
+
+- **Share sheet:** in any app, tap Share and pick XNotch. Photos, PDFs, downloads and files land in the Mac's Downloads folder and on the shelf. Links and plain text go to the clipboard.
+- **The app:** a basket for photos and files, a text field for the clipboard, and a Paste button that sends what you copied. Files you send from the Mac (right-click a shelf file, or the phone button in the shelf header while the app is open) show under **From your Mac** and in the Files app.
+
+To pair, add the extension under **Settings → Extensions**, open **Settings → Extensions → iPhone & iPad** and scan the code with the app, or point the Camera app at it. Received files are saved to Downloads; change that in the same pane.
+
+The phone and the Mac use the fastest route that's up, and switch when a faster one appears:
+
+1. **USB**: a cable. The Mac reaches the app through the same service Xcode and Finder use.
+2. **Wi-Fi**: the same network, or peer-to-peer Wi-Fi (AirDrop's radio) when the devices are near each other without one.
+3. **Internet**: through your XNotch Cloud server's relay, when they're apart. Add the server under **Over the Internet** in the same pane; **Use the Cloud Links Server** copies it from Cloud Links.
+4. **Bluetooth**: slow, but it needs no Wi-Fi at all. macOS asks once.
+
+Every route carries the same end-to-end encryption: the code holds a 256-bit key only the two devices know, each connection proves it on both sides and agrees fresh keys (X25519, ChaCha20-Poly1305), so neither the network nor the relay can read or alter anything. **Reset Pairing** makes a new key and unpairs every device.
+
+## Cloud Links
+
+Share shelf files as links that expire, from a server you run. Click the cloud in the shelf header and pick how long the link lives (1 hour to 30 days); XNotch uploads the files (folders are zipped) and copies the link. Right-click a file for a link with your default lifetime. **Settings → Extensions → Cloud Links** lists your links until they expire; delete one there to stop it working at once.
+
+The server is in [Server](Server): one small Rust binary that stores files on disk or in any S3-compatible bucket (Backblaze B2, Cloudflare R2, AWS S3, MinIO), and deploys with Docker or [Dokploy](https://dokploy.com) on a VPS or a Raspberry Pi. Set its `PUBLIC_URL` and `API_TOKEN`, then enter the same URL and token in Settings and click **Test Connection**. Each link is a page that previews images and offers every file for download; expired links stop working immediately and their files are deleted.
+
 ## Updates
 
 Automatic checking and downloading are enabled by default. Sparkle checks daily, verifies the signed feed and update archive before extraction, and manages installation and relaunch. Adjust these settings or check manually under **Settings → About XNotch → Updates**. An update that needs attention makes XNotch temporarily available in the Dock.
@@ -42,9 +66,11 @@ scripts/build_app.sh
 scripts/build_app.sh --run
 ```
 
-This builds a universal `build/XNotch.app`, including Sparkle and the bundled Folders and AI Usage extensions. `--run` copies it to `~/Applications` and opens it from there, because a bundle inside a protected folder such as Documents makes macOS ask for that folder. Development builds use ad hoc signing. Use `ARCHITECTURES=arm64` for a faster local build, or set `CODE_SIGN_IDENTITY` to your Developer ID certificate to sign for distribution.
+This builds a universal `build/XNotch.app`, including Sparkle and the bundled extensions (Folders, AI Usage, iPhone & iPad, Cloud Links). `--run` copies it to `~/Applications` and opens it from there, because a bundle inside a protected folder such as Documents makes macOS ask for that folder. Development builds use ad hoc signing. Use `ARCHITECTURES=arm64` for a faster local build, or set `CODE_SIGN_IDENTITY` to your Developer ID certificate to sign for distribution.
 
 See [XNotchKit](Kit/README.md) for the extension API and [Folders](Extensions/Folders) for a complete example.
+
+The iPhone and iPad app is an Xcode project in [Companion](Companion), and the Cloud Links server is a Cargo project in [Server](Server); each folder's README explains how to build and run it. Both phone and Mac use the link protocol in [Shared/XNotchLink](Shared/XNotchLink) (`swift test` there runs its tests).
 
 ## Release
 

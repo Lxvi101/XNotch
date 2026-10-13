@@ -66,6 +66,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>XNotch receives files and text from your iPhone and iPad on this network.</string>
+    <key>NSBonjourServices</key><array><string>_xnotchlink._tcp</string></array>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>XNotch receives files from your iPhone and iPad over Bluetooth when there's no Wi-Fi.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
