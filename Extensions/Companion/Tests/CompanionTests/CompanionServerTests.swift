@@ -26,7 +26,7 @@ final class CompanionServerTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        server.stop()
+        server?.stop()
         SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
     }
 
