@@ -3,7 +3,7 @@ import XNotchKit
 import SwiftUI
 
 enum SettingsPane: Hashable {
-    case general, music, lockScreen, shelf, extensions, about
+    case general, music, lockScreen, shelf, extensions, changelog, about
     case extensionPane(ExtensionID)
 }
 
@@ -20,6 +20,7 @@ struct SettingsView: View {
     let shelf: ShelfStore
     let media: NowPlayingService
     let onPreviewLockScreen: () -> Void
+    let onReplayOnboarding: () -> Void
 
     var body: some View {
         NavigationSplitView {
@@ -38,6 +39,7 @@ struct SettingsView: View {
                     }
                 }
                 Section {
+                    row(.changelog, "What's New", "sparkles", .orange)
                     row(.about, "About XNotch", "info.circle.fill", .blue)
                 }
             }
@@ -62,7 +64,8 @@ struct SettingsView: View {
     private var detail: some View {
         switch navigation.selection {
         case .general:
-            GeneralPane(preferences: preferences).navigationTitle("General")
+            GeneralPane(preferences: preferences, permissions: .shared, onReplayOnboarding: onReplayOnboarding)
+                .navigationTitle("General")
         case .music:
             MusicPane(preferences: preferences, media: media).navigationTitle("Music")
         case .lockScreen:
@@ -78,6 +81,8 @@ struct SettingsView: View {
             } else {
                 ContentUnavailableView("Extension unavailable", systemImage: "puzzlepiece.extension")
             }
+        case .changelog:
+            ChangelogPane().navigationTitle("What's New")
         case .about:
             AboutPane(updater: updater).navigationTitle("About")
         }
@@ -106,6 +111,8 @@ struct SettingsIcon: View {
 
 private struct GeneralPane: View {
     @ObservedObject var preferences: Preferences
+    @ObservedObject var permissions: PermissionCenter
+    let onReplayOnboarding: () -> Void
 
     var body: some View {
         Form {
@@ -130,6 +137,19 @@ private struct GeneralPane: View {
                 Text("Notch")
             }
             Section {
+                ForEach(Permission.requested) { permission in
+                    PermissionRow(permission: permission, isGranted: permissions.isGranted(permission),
+                                  isRequesting: permissions.activeRequest == permission) {
+                        permissions.request(permission)
+                    }
+                }
+            } header: {
+                Text("Permissions")
+            } footer: {
+                Text("XNotch opens the right place in System Settings and shows you what to drag where.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 LabeledContent("Settings", value: "⌘ ,")
                 LabeledContent("Close the notch", value: "esc")
                 LabeledContent("Shelf: Quick Look, delete", value: "space, ⌫")
@@ -140,10 +160,42 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Button("Show Welcome Tour", action: onReplayOnboarding)
                 Button("Quit XNotch", role: .destructive) { NSApp.terminate(nil) }
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct PermissionRow: View {
+    let permission: Permission
+    let isGranted: Bool
+    let isRequesting: Bool
+    let onRequest: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(symbol: permission.symbol, color: Color(nsColor: permission.tint), size: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(permission.title)
+                Text(permission.reason)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            if isGranted {
+                Label("Allowed", systemImage: "checkmark.circle.fill")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.green)
+            } else if isRequesting {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Allow…", action: onRequest)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -387,6 +439,8 @@ private struct AboutPane: View {
                 credit("mediaremote-adapter", "© Jonas van den Berg, BSD 3-Clause.")
                 credit("SkyLightWindow", "© Lakr Aream, MIT.")
                 credit("Sparkle", "© Sparkle Project, permissive license.")
+                credit("PermissionFlow and AskForPermission", "The permission guide follows their design. MIT.")
+                credit("bloub", "The eyes follow its measurements of the x.ai avatar. MIT.")
             }
         }
         .formStyle(.grouped)

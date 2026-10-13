@@ -27,7 +27,6 @@ final class ShelfStore: ObservableObject {
             .appendingPathComponent("XNotch", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         fileURL = support.appendingPathComponent("shelf.json")
-        load()
     }
 
     static var receivedFilesDirectory: URL {
@@ -78,7 +77,8 @@ final class ShelfStore: ObservableObject {
 
     // MARK: Persistence
 
-    private func load() {
+    /// Checks every saved item still exists, which touches the folders they live in.
+    func load() {
         guard let data = try? Data(contentsOf: fileURL),
               let decoded = try? JSONDecoder().decode([ShelfItem].self, from: data) else { return }
         items = decoded.compactMap(Self.resolved)

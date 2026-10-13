@@ -44,6 +44,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var highlightedPill: OpenPage?
     /// Reveal progress per extension page, keyed by `OpenPage.id`.
     @Published private(set) var extensionReveal: [String: CGFloat] = [:]
+    @Published private(set) var eyesReveal: CGFloat = 0
+    /// The onboarding draws its own notch over this one and owns the pointer.
+    @Published private(set) var isPresentingOnboarding = false
 
     @Published private(set) var hoveredDropTarget: DropTarget?
     @Published private(set) var notchSize: CGSize
@@ -52,6 +55,7 @@ final class NotchViewModel: ObservableObject {
     let media = NowPlayingService()
     let extensions = ExtensionManager()
     let preferences = Preferences.shared
+    let eyes = NotchEyes()
     /// Tile frames in canvas coordinates, reported by the shelf layout.
     var tileFrames: [UUID: CGRect] = [:]
     /// Asks the controller to re-read the pointer after AppKit swallowed events (drag sessions).
@@ -62,6 +66,8 @@ final class NotchViewModel: ObservableObject {
     private var isPressed = false
     private var isDraggingOut = false
     private var showsTrayWings = false
+    /// Who wants the eyes up: the onboarding, a permission guide.
+    private var eyesReasons: Set<EyesReason> = []
     /// Media wings stay up while playing and for a moment after pausing.
     private(set) var mediaActive = false
     private var pendingWingsToast = false
@@ -81,7 +87,6 @@ final class NotchViewModel: ObservableObject {
         media.$track
             .sink { [weak self] track in self?.mediaChanged(track) }
             .store(in: &cancellables)
-        media.start()
 
         extensions.driver = self
         extensions.$pagesRevision
@@ -102,8 +107,27 @@ final class NotchViewModel: ObservableObject {
                 self?.previewPills()
             }
             .store(in: &cancellables)
+    }
+
+    private var servicesStarted = false
+
+    /// Media, the shelf and extensions all read files, some in protected
+    /// folders. On first run they wait until the onboarding has asked for
+    /// Full Disk Access, so macOS doesn't ask folder by folder first.
+    func startServices() {
+        guard !servicesStarted else { return }
+        servicesStarted = true
+        media.start()
+        shelf.load()
         extensions.loadAll()
-        extensionPages = Self.pages(of: extensions)
+        extensionPagesChanged()
+    }
+
+    func setPresentingOnboarding(_ presenting: Bool) {
+        guard presenting != isPresentingOnboarding else { return }
+        if presenting { close() }
+        isPresentingOnboarding = presenting
+        onPointerSyncNeeded?()
     }
 
     var pillsIconOnly: Bool { preferences.pillsIconOnly }
@@ -111,7 +135,10 @@ final class NotchViewModel: ObservableObject {
     var hasMedia: Bool { media.track != nil && preferences.showsMediaInNotch }
     private var showsMediaActivity: Bool { mediaActive && preferences.showsMediaInNotch }
 
+    var showsEyes: Bool { !eyesReasons.isEmpty }
+
     var restingGeometry: NotchShellGeometry {
+        if showsEyes { return NotchMetrics.eyes(notchSize) }
         if showsTrayWings { return NotchMetrics.wings(notchSize) }
         if showsMediaActivity { return NotchMetrics.mediaWings(notchSize) }
         return NotchMetrics.closed(notchSize)
@@ -131,7 +158,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     /// Whether a click lands on the closed media wings' play/pause glyph.
-    var showsMediaWings: Bool { surface == .closed && !showsTrayWings && showsMediaActivity }
+    var showsMediaWings: Bool { surface == .closed && !showsEyes && !showsTrayWings && showsMediaActivity }
 
     /// Re-read when an extension reports its pages changed, not per render.
     private(set) var extensionPages: [ExtensionPage] = []
@@ -186,7 +213,8 @@ final class NotchViewModel: ObservableObject {
             extensionReveal = Dictionary(uniqueKeysWithValues: extensionPages.map {
                 ($0.page.id, surface == .open && page == $0.page ? CGFloat(1) : 0)
             })
-            trayWingsReveal = surface == .closed && showsTrayWings ? 1 : 0
+            trayWingsReveal = surface == .closed && showsTrayWings && !showsEyes ? 1 : 0
+            eyesReveal = surface == .closed && showsEyes ? 1 : 0
             mediaWingsReveal = showsMediaWings ? 1 : 0
             // Elements on their way out fade where they are.
             if mediaOpenReveal > 0 || mediaWingsReveal > 0 { mediaPlacement = placement }
@@ -459,6 +487,50 @@ final class NotchViewModel: ObservableObject {
         guard active != mediaActive else { return }
         mediaActive = active
         if surface == .closed { render(active ? Motion.open : Motion.close) }
+    }
+
+    // MARK: Eyes
+
+    enum EyesReason {
+        case onboarding, permissionGuide
+    }
+
+    func setEyesVisible(_ visible: Bool, for reason: EyesReason) {
+        let wasShowing = showsEyes
+        if visible {
+            eyesReasons.insert(reason)
+        } else {
+            eyesReasons.remove(reason)
+        }
+        guard showsEyes != wasShowing else { return }
+        if showsEyes {
+            eyes.pointer = NSEvent.mouseLocation
+            eyes.expression = .asleep
+        }
+        if surface == .closed { render(showsEyes ? Motion.open : Motion.close) }
+        onPointerSyncNeeded?()
+    }
+
+    /// The eyes follow a permission guide across the screen while it's up.
+    func watchPermissionGuide(_ frame: NSRect?) {
+        if let frame {
+            eyes.focus = CGPoint(x: frame.midX, y: frame.maxY - 40)
+            if !isPresentingOnboarding && !eyesReasons.contains(.permissionGuide) {
+                setEyesVisible(true, for: .permissionGuide)
+                eyes.expression = .attentive
+            }
+        } else {
+            eyes.focus = nil
+        }
+    }
+
+    func permissionGuideFinished(granted: Bool) {
+        guard !isPresentingOnboarding else { return }
+        eyes.flash(granted ? .happy : .sleepy, for: 1.4)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard PermissionCenter.shared.activeRequest == nil else { return }
+            self?.setEyesVisible(false, for: .permissionGuide)
+        }
     }
 
     // MARK: Keyboard

@@ -95,6 +95,10 @@ enum NotchMetrics {
     static let shelfTopCornerRadius: CGFloat = 22
     static let shelfBottomRadius: CGFloat = 34
 
+    /// The strip under the camera where the eyes sit, and their size.
+    static let eyesStrip: CGFloat = 40
+    static let eyesUnit: CGFloat = 46
+
     static let autoCollapseDelay: TimeInterval = 0.8
     static let wingsToastDuration: TimeInterval = 2.6
 
@@ -125,6 +129,11 @@ enum NotchMetrics {
     static func mediaWings(_ notch: CGSize) -> NotchShellGeometry {
         NotchShellGeometry(width: notch.width + 2 * MediaLayout.wingWidth, height: notch.height,
                            topCornerRadius: closedTopCornerRadius, bottomRadius: closedBottomRadius)
+    }
+
+    static func eyes(_ notch: CGSize) -> NotchShellGeometry {
+        NotchShellGeometry(width: notch.width + 40, height: notch.height + eyesStrip,
+                           topCornerRadius: 12, bottomRadius: 24)
     }
 
     static func media(_ notch: CGSize) -> NotchShellGeometry {

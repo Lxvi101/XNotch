@@ -8,11 +8,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let lockScreen: LockScreenController
     private let updater: SoftwareUpdater
     private let navigation = SettingsNavigation()
+    private let onReplayOnboarding: () -> Void
 
-    init(model: NotchViewModel, lockScreen: LockScreenController, updater: SoftwareUpdater) {
+    init(model: NotchViewModel, lockScreen: LockScreenController, updater: SoftwareUpdater,
+         onReplayOnboarding: @escaping () -> Void) {
         self.model = model
         self.lockScreen = lockScreen
         self.updater = updater
+        self.onReplayOnboarding = onReplayOnboarding
     }
 
     func show(pane: SettingsPane? = nil) {
@@ -27,7 +30,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let view = SettingsView(navigation: navigation, preferences: .shared, extensions: model.extensions,
                                 updater: updater,
                                 shelf: model.shelf, media: model.media,
-                                onPreviewLockScreen: { [weak self] in self?.lockScreen.preview() })
+                                onPreviewLockScreen: { [weak self] in self?.lockScreen.preview() },
+                                onReplayOnboarding: { [weak self] in
+                                    self?.window?.orderOut(nil)
+                                    self?.onReplayOnboarding()
+                                })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 500),
                               styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)

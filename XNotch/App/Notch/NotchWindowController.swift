@@ -37,6 +37,7 @@ final class NotchWindowController {
         container.onDrop = { [weak self] urls, point in self?.drop(urls, at: point) ?? false }
         container.onPromisedFileReceived = { [weak self] url in self?.model.receive([url]) }
         model.onPointerSyncNeeded = { [weak self] in self?.syncPointer(NSEvent.mouseLocation) }
+        model.eyes.anchor = Self.eyesAnchor(on: screen, notch: model.notchSize)
 
         installMonitors()
         installDragDetector()
@@ -70,6 +71,11 @@ final class NotchWindowController {
         screen = next
         window.setFrame(Self.canvasFrame(on: next), display: true)
         model.updateNotchSize(NotchMetrics.physicalNotchSize(on: next))
+        model.eyes.anchor = Self.eyesAnchor(on: next, notch: model.notchSize)
+    }
+
+    private static func eyesAnchor(on screen: NSScreen, notch: CGSize) -> CGPoint {
+        CGPoint(x: screen.frame.midX, y: screen.frame.maxY - notch.height - NotchMetrics.eyesStrip / 2)
     }
 
     // MARK: Geometry
@@ -189,6 +195,11 @@ final class NotchWindowController {
         // File drags are driven by the drag detector and the drop target.
         guard !dragDetector.isContentDragging else { return }
         let point = NSEvent.mouseLocation
+        if model.showsEyes || model.isPresentingOnboarding { model.eyes.pointer = point }
+        guard !model.isPresentingOnboarding else {
+            window.ignoresMouseEvents = true
+            return
+        }
         // Global moves arrive for the whole screen. Far from a closed notch
         // they change nothing once the shell has relaxed, so skip them.
         if event.type == .mouseMoved || event.type == .leftMouseDragged, model.surface == .closed, !model.pillsActive {
@@ -221,6 +232,10 @@ final class NotchWindowController {
     }
 
     private func syncPointer(_ point: NSPoint) {
+        guard !model.isPresentingOnboarding else {
+            window.ignoresMouseEvents = true
+            return
+        }
         if model.surface == .closed {
             attract(toward: point, radius: pointerRadius, isFileDrag: false)
         }
@@ -264,6 +279,8 @@ final class NotchWindowController {
     }
 
     private func fileDragMoved(to point: NSPoint) {
+        if model.showsEyes || model.isPresentingOnboarding { model.eyes.pointer = point }
+        guard !model.isPresentingOnboarding else { return }
         switch model.surface {
         case .closed:
             attract(toward: point, radius: fileDragRadius, isFileDrag: true)

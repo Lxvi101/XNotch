@@ -26,6 +26,9 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 cp -R ThirdParty/mediaremote-adapter/MediaRemoteAdapter.framework \
       ThirdParty/mediaremote-adapter/mediaremote-adapter.pl "$APP/Contents/Resources/"
 cp Kit/README.md "$APP/Contents/Resources/XNotchKit.md"
+# Release notes, shown in Settings → What's New.
+mkdir -p "$APP/Contents/Resources/Releases"
+cp releases/*.md "$APP/Contents/Resources/Releases/"
 cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp ThirdParty/mediaremote-adapter/LICENSE "$APP/Contents/Resources/Licenses/mediaremote-adapter.txt"
@@ -85,9 +88,16 @@ echo "$APP"
 if [[ "${1:-}" == "--run" ]]; then
     pkill -x XNotch 2>/dev/null || true
     while pgrep -x XNotch >/dev/null; do sleep 0.1; done
+    # Run from ~/Applications: a bundle inside a protected folder such as
+    # Documents makes macOS ask for that folder when the app reads its own
+    # resources or is dragged into a permission list.
+    RUN_APP="$HOME/Applications/XNotch.app"
+    mkdir -p "$HOME/Applications"
+    rm -rf "$RUN_APP"
+    ditto "$APP" "$RUN_APP"
     # LaunchServices briefly rejects (-600) an app it still considers terminating.
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        open "$APP" 2>/dev/null && break
+        open "$RUN_APP" 2>/dev/null && break
         sleep 0.5
     done
 fi

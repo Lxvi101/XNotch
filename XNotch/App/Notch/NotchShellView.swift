@@ -27,6 +27,7 @@ struct NotchShellView: View {
                              iconOnly: model.pillsIconOnly)
         }
         .frame(width: NotchMetrics.canvasSize.width, height: NotchMetrics.canvasSize.height, alignment: .top)
+        .opacity(model.isPresentingOnboarding ? 0 : 1)
         .coordinateSpace(name: Self.canvasSpace)
         .onPreferenceChange(ShelfTileFramesKey.self) { frames in
             MainActor.assumeIsolated { model.tileFrames = frames }
@@ -43,6 +44,11 @@ struct NotchShellView: View {
         ZStack(alignment: .top) {
             TrayWingsView(store: model.shelf, notchSize: model.notchSize)
                 .reveal(model.trayWingsReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
+                .allowsHitTesting(false)
+            NotchEyesView(eyes: model.eyes, unit: NotchMetrics.eyesUnit)
+                .frame(width: model.notchSize.width, height: NotchMetrics.eyesStrip)
+                .padding(.top, model.notchSize.height - 4)
+                .reveal(model.eyesReveal, hiddenScale: 0.6, maxBlur: 4, travel: -12, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
             DropZoneView(hovered: model.hoveredDropTarget, notchSize: model.notchSize)
                 .reveal(model.dropReveal, unmountsWhenHidden: true)

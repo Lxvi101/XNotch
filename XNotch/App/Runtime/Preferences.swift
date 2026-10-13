@@ -16,6 +16,7 @@ final class Preferences: ObservableObject {
     @Published var disabledExtensions: Set<String> {
         didSet { defaults.set(Array(disabledExtensions).sorted(), forKey: Key.disabledExtensions) }
     }
+    @Published var hasCompletedOnboarding: Bool { didSet { defaults.set(hasCompletedOnboarding, forKey: Key.onboarding) } }
     @Published private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
     private enum Key {
@@ -25,6 +26,7 @@ final class Preferences: ObservableObject {
         static let media = "showsMediaInNotch"
         static let lockScreen = "lockScreenMediaEnabled"
         static let disabledExtensions = "disabledExtensions"
+        static let onboarding = "hasCompletedOnboarding"
     }
 
     private init() {
@@ -37,6 +39,7 @@ final class Preferences: ObservableObject {
         showsMediaInNotch = defaults.bool(forKey: Key.media)
         lockScreenMediaEnabled = defaults.bool(forKey: Key.lockScreen)
         disabledExtensions = Set(defaults.stringArray(forKey: Key.disabledExtensions) ?? [])
+        hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
     }
 
     func setLaunchesAtLogin(_ enabled: Bool) {

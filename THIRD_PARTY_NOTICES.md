@@ -8,6 +8,8 @@ XNotch is distributed under GPL-3.0-or-later. See LICENSE. Individual files reta
 
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+- **PermissionFlow** (Copyright 2026 小弟调调, https://github.com/jaywcjlove/PermissionFlow) and **AskForPermission** (Copyright 2026 Riko, https://github.com/riko2chen/AskForPermission), both MIT: the permission guide in XNotch/App/Permissions reimplements their approach (a guide docked under System Settings, a draggable app bundle, polling for the grant).
+- **bloub** (Copyright 2026 Jérémy Perret, https://github.com/jeremy-prt/bloub), MIT: the notch eyes in XNotch/App/Notch/NotchEyes.swift use its measured eye proportions, expressions and blink timing.
 - **Sparkle 2.10.0**: Copyright Sparkle Project contributors. Its full license, including incorporated components, is in ThirdParty/Sparkle/LICENSE. Source: https://github.com/sparkle-project/Sparkle. Distributed through Swift Package Manager.
 
 Release app bundles include this notice, the GPL, and the mediaremote-adapter and Sparkle licenses in Contents/Resources.
