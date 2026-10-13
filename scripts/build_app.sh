@@ -33,6 +33,7 @@ cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp ThirdParty/mediaremote-adapter/LICENSE "$APP/Contents/Resources/Licenses/mediaremote-adapter.txt"
 cp ThirdParty/Sparkle/LICENSE "$APP/Contents/Resources/Licenses/Sparkle.txt"
+cp ThirdParty/CodexBar/LICENSE "$APP/Contents/Resources/Licenses/CodexBar.txt"
 for EXT in Extensions/*(/); do
     scripts/build_extension.sh "$EXT" --output "$APP/Contents/PlugIns" >/dev/null
 done

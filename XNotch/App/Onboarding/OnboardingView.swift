@@ -174,8 +174,11 @@ private struct StepText {
     let title: String
     let body: String
 
-    static func of(_ step: OnboardingState.Step, permission: Permission, access: OnboardingState.Access) -> StepText {
-        switch step {
+    @MainActor
+    static func of(_ step: OnboardingState.Step, state: OnboardingState) -> StepText {
+        let permission = state.permission
+        let access = state.access
+        return switch step {
         case .hello:
             StepText(title: "Hi, I'm your notch.",
                      body: "I keep files close, play your music and run extensions, right under the camera. Let me show you around.")
@@ -192,10 +195,30 @@ private struct StepText {
             access == .granted
                 ? StepText(title: "Thank you.", body: "\(permission.title) is on. I can open anything you hand me.")
                 : StepText(title: "Let me reach your files.", body: permission.reason + " Nothing leaves your Mac.")
+        case .extensions:
+            StepText(title: "Want a few extras?",
+                     body: "Extensions add pages to me. Pick any you like; the rest wait in Settings.")
+        case .extensionAccess:
+            extensions(state)
         case .done:
             StepText(title: "You're all set.",
                      body: "Hover me any time. Right-click for Settings, where you can replay this tour.")
         }
+    }
+}
+
+extension StepText {
+    @MainActor
+    fileprivate static func extensions(_ state: OnboardingState) -> StepText {
+        let names = Array(NSOrderedSet(array: state.extensionPermissions.map(\.extensionName))) as? [String] ?? []
+        let subject = names.count == 1 ? names[0] : "your extensions"
+        if state.extensionAccess == .granted {
+            return StepText(title: "Thank you.", body: names.count == 1 ? "\(names[0]) is ready." : "Your extensions are ready.")
+        }
+        let reason = state.extensionPermissions.count == 1
+            ? state.extensionPermissions[0].permission.reason
+            : "They need your OK before they can work. macOS asks for each one."
+        return StepText(title: "Let me unlock \(subject).", body: reason)
     }
 }
 
@@ -206,7 +229,7 @@ private struct StepContent: View {
 
     var body: some View {
         let step = state.step
-        let text = StepText.of(step, permission: state.permission, access: state.access)
+        let text = StepText.of(step, state: state)
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: state.contentTop)
             VStack(alignment: .leading, spacing: 7) {
@@ -221,11 +244,11 @@ private struct StepContent: View {
             }
             .frame(height: OnboardingState.textHeight, alignment: .topLeading)
             demo(step)
-                .frame(height: OnboardingState.demoHeight(step), alignment: .topLeading)
+                .frame(height: state.demoHeight(step), alignment: .topLeading)
         }
         .padding(.horizontal, OnboardingState.inset)
         .frame(width: state.panelOuterWidth, height: state.panelHeight(step), alignment: .topLeading)
-        .id(StepID(step: step, granted: state.access == .granted))
+        .id(StepID(step: step, granted: step == .extensionAccess ? state.extensionAccess == .granted : state.access == .granted))
         .transition(.blurReplace)
     }
 
@@ -235,6 +258,8 @@ private struct StepContent: View {
         case .shelf: ShelfDemo(landed: state.demo >= 1)
         case .music: MusicDemo(playing: state.demo >= 1)
         case .access: AccessDemo(permission: state.permission, access: state.access)
+        case .extensions: ExtensionPicker(state: state)
+        case .extensionAccess: ExtensionAccessDemo(state: state)
         case .done: LoginToggle(isOn: $state.launchAtLogin)
         default: EmptyView()
         }
@@ -261,6 +286,18 @@ private struct StepFooter: View {
             case .guiding: "Waiting for System Settings"
             case .granted: "Continue"
             }
+        case .extensions:
+            switch state.newlyChosenExtensions.count {
+            case 0: "Continue"
+            case 1: "Add \(state.newlyChosenExtensions[0].name)"
+            default: "Add \(state.newlyChosenExtensions.count) Extensions"
+            }
+        case .extensionAccess:
+            switch state.extensionAccess {
+            case .asking: "Allow"
+            case .guiding: "Waiting for macOS"
+            case .granted: "Continue"
+            }
         case .done: "Let's Go"
         default: "Continue"
         }
@@ -269,6 +306,8 @@ private struct StepFooter: View {
     private var secondaryTitle: String? {
         switch state.step {
         case .access: state.access == .asking ? "Not Now" : nil
+        case .extensions: nil
+        case .extensionAccess: state.extensionAccess == .asking ? "Not Now" : nil
         case .done: nil
         default: "Skip Tour"
         }
@@ -277,7 +316,7 @@ private struct StepFooter: View {
     var body: some View {
         HStack(spacing: 14) {
             HStack(spacing: 5) {
-                ForEach(OnboardingState.Step.allCases, id: \.self) { step in
+                ForEach(state.steps, id: \.self) { step in
                     Capsule()
                         .fill(.white.opacity(step == state.step ? 0.9 : 0.22))
                         .frame(width: step == state.step ? 16 : 6, height: 6)
@@ -312,7 +351,8 @@ private struct StepFooter: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(PressScaleStyle(scale: 0.95))
-            .disabled(state.access == .guiding && state.step == .access)
+            .disabled((state.access == .guiding && state.step == .access)
+                || (state.extensionAccess == .guiding && state.step == .extensionAccess))
         }
         .padding(.horizontal, OnboardingState.inset)
         .frame(width: state.panelOuterWidth, height: OnboardingState.footerHeight)
@@ -522,6 +562,87 @@ private struct AccessDemo: View {
         .padding(.horizontal, 12)
         .frame(height: 56)
         .background(RoundedRectangle(cornerRadius: KitStyle.tileCornerRadius, style: .continuous).fill(KitStyle.fill))
+    }
+}
+
+/// Every extension, each a row that toggles between Add and Added.
+private struct ExtensionPicker: View {
+    @ObservedObject var state: OnboardingState
+
+    var body: some View {
+        VStack(spacing: OnboardingState.permissionRowSpacing) {
+            ForEach(state.offeredExtensions, id: \.id) { manifest in
+                let chosen = state.chosenExtensions.contains(manifest.id)
+                Button {
+                    withAnimation(KitMotion.press) {
+                        if chosen { state.chosenExtensions.remove(manifest.id) } else { state.chosenExtensions.insert(manifest.id) }
+                    }
+                    Haptics.tap()
+                } label: {
+                    HStack(spacing: 12) {
+                        SettingsIcon(symbol: manifest.symbol, color: manifest.tint.flatMap { Color(hex: $0) } ?? .gray, size: 38)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(manifest.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(KitStyle.primaryText)
+                            Text(manifest.summary).font(.system(size: 11)).foregroundStyle(KitStyle.tertiaryText).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        HStack(spacing: 5) {
+                            Image(systemName: chosen ? "checkmark" : "plus")
+                                .contentTransition(.symbolEffect(.replace))
+                            Text(chosen ? "Added" : "Add")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(chosen ? .black : KitStyle.primaryText)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(Capsule().fill(chosen ? Color.white : KitStyle.hoverFill))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: OnboardingState.permissionRowHeight)
+                    .background(RoundedRectangle(cornerRadius: KitStyle.tileCornerRadius, style: .continuous)
+                        .fill(.white.opacity(chosen ? 0.1 : 0.06)))
+                    .contentShape(RoundedRectangle(cornerRadius: KitStyle.tileCornerRadius, style: .continuous))
+                }
+                .buttonStyle(PressScaleStyle(scale: 0.98))
+                .accessibilityAddTraits(chosen ? .isSelected : [])
+                .accessibilityHint(manifest.summary)
+            }
+        }
+    }
+}
+
+/// One row per permission an extension asks for, styled like Full Disk Access's.
+private struct ExtensionAccessDemo: View {
+    @ObservedObject var state: OnboardingState
+
+    var body: some View {
+        VStack(spacing: OnboardingState.permissionRowSpacing) {
+            ForEach(state.extensionPermissions, id: \.key) { pending in
+                let granted = state.isGranted(pending)
+                let permission = pending.permission
+                HStack(spacing: 12) {
+                    SettingsIcon(symbol: permission.symbol, color: permission.tint.flatMap { Color(hex: $0) } ?? .gray, size: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(permission.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(KitStyle.primaryText)
+                        Text(permission.detail).font(.system(size: 11)).foregroundStyle(KitStyle.tertiaryText)
+                    }
+                    Spacer(minLength: 0)
+                    HStack(spacing: 5) {
+                        Image(systemName: granted ? "checkmark.circle.fill" : "lock.fill")
+                            .contentTransition(.symbolEffect(.replace))
+                        Text(granted ? "On" : "Off")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(granted ? KitStyle.green : KitStyle.secondaryText)
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .background(Capsule().fill(granted ? KitStyle.green.opacity(0.14) : KitStyle.fill))
+                }
+                .padding(.horizontal, 12)
+                .frame(height: OnboardingState.permissionRowHeight)
+                .background(RoundedRectangle(cornerRadius: KitStyle.tileCornerRadius, style: .continuous).fill(KitStyle.fill))
+            }
+        }
     }
 }
 

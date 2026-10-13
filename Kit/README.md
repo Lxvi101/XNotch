@@ -16,7 +16,7 @@ An extension is a SwiftPM package with:
 scripts/build_extension.sh path/to/MyExtension --install
 ```
 
-`--install` copies the bundle to `~/Library/Application Support/XNotch/Extensions`. Restart XNotch to load it. Extensions inside the app's `Contents/PlugIns` are listed as built in.
+`--install` copies the bundle to `~/Library/Application Support/XNotch/Extensions`. Restart XNotch to load it. Extensions inside the app's `Contents/PlugIns` are listed as built in. Every extension starts switched off, built-in or not: users add it in the welcome tour or under Settings → Extensions.
 
 ## Package.swift
 
@@ -97,6 +97,7 @@ final class WeatherExtension: XNotchExtension, NotchPageProviding {
 | `NotchPageProviding` | One or more pages in the open notch. Each gets a destination pill under the closed notch and a segment in the header switcher. |
 | `NotchKeyHandling` | Key presses while your page is open and the notch has keyboard focus (after a click into it). Return `true` to consume. Escape and ⌘, are XNotch's. |
 | `SettingsPaneProviding` | A page under Extensions in Settings. Return a `Form { … }.formStyle(.grouped)` to match. |
+| `PermissionRequesting` | Permissions XNotch asks for in its welcome tour, right after its own (API 1.2.0). List what's missing without prompting; show macOS's prompt only in `requestPermission(_:)`. |
 
 A page's content area is `NotchPageContext.contentWidth` (400 pt) wide and `NotchPageDescriptor.contentHeight` tall (98 pt by default, the shelf's height). XNotch draws the notch row above it and reveals your view with the same blur-to-focus spring as its own pages.
 

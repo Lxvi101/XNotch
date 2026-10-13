@@ -75,6 +75,45 @@ public protocol SettingsPaneProviding {
     func makeSettingsPane() -> AnyView
 }
 
+// MARK: Permissions
+
+/// Something an extension can't do until the user allows it, like reading
+/// another app's login from the Keychain. XNotch offers it in the welcome tour.
+public struct ExtensionPermission: Identifiable, Hashable, Sendable {
+    /// Unique within the extension.
+    public var id: String
+    /// What it unlocks, in a few words: "Claude Code limits".
+    public var title: String
+    /// Where macOS will ask, in a word or two: "Keychain".
+    public var detail: String
+    /// A sentence or two for the tour: why, and what macOS will show.
+    public var reason: String
+    public var symbol: String
+    /// Hex colour of the symbol's tile, e.g. "#D97757".
+    public var tint: String?
+
+    public init(id: String, title: String, detail: String, reason: String, symbol: String, tint: String? = nil) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.reason = reason
+        self.symbol = symbol
+        self.tint = tint
+    }
+}
+
+/// Permissions XNotch asks for on the extension's behalf in its welcome tour,
+/// right after its own.
+@MainActor
+public protocol PermissionRequesting {
+    /// Permissions still missing. Must not show any prompt to find out.
+    var pendingPermissions: [ExtensionPermission] { get }
+
+    /// Called when the user clicks Allow. Show macOS's prompt now and return
+    /// whether the permission is granted for good, not just this once.
+    func requestPermission(_ id: String) async -> Bool
+}
+
 // MARK: Pointer
 
 /// The pointer, published by XNotch in `KitSpace.canvas` coordinates while it

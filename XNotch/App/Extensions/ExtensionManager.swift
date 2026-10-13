@@ -45,7 +45,13 @@ final class ExtensionManager: ObservableObject {
             .appendingPathComponent("XNotch", isDirectory: true)
     }
 
-    func loadAll() {
+    private var hasDiscovered = false
+
+    /// Reads every extension's manifest without running its code. Extensions seen for the first time
+    /// start switched off, for the user to add from the welcome tour or Settings.
+    func discover() {
+        guard !hasDiscovered else { return }
+        hasDiscovered = true
         try? FileManager.default.createDirectory(at: Self.userDirectory, withIntermediateDirectories: true)
         var candidates: [(URL, Bool)] = []
         if let plugIns = Bundle.main.builtInPlugInsURL {
@@ -55,9 +61,23 @@ final class ExtensionManager: ObservableObject {
         for (url, isBuiltIn) in candidates {
             register(url, isBuiltIn: isBuiltIn)
         }
+        let new = Set(entries.map(\.id)).subtracting(preferences.knownExtensions)
+        if !new.isEmpty {
+            preferences.disabledExtensions.formUnion(new)
+            preferences.knownExtensions.formUnion(new)
+        }
+    }
+
+    func loadAll() {
+        discover()
         for entry in entries where entry.failure == nil && !preferences.disabledExtensions.contains(entry.id) {
             activate(entry.id)
         }
+    }
+
+    /// Extensions that can run, for the welcome tour to offer.
+    var offerable: [ExtensionManifest] {
+        entries.filter { $0.failure == nil }.map(\.manifest)
     }
 
     func isEnabled(_ id: ExtensionID) -> Bool { !preferences.disabledExtensions.contains(id) }
@@ -76,6 +96,25 @@ final class ExtensionManager: ObservableObject {
         entries.compactMap { entry in
             guard entry.isActive, let provider = entry.instance as? NotchPageProviding else { return nil }
             return (entry.id, provider)
+        }
+    }
+
+    struct PendingPermission {
+        let extensionID: ExtensionID
+        let extensionName: String
+        let requester: PermissionRequesting
+        let permission: ExtensionPermission
+
+        var key: String { "\(extensionID)/\(permission.id)" }
+    }
+
+    /// Permissions active extensions still need, for the welcome tour.
+    var pendingPermissions: [PendingPermission] {
+        entries.flatMap { entry -> [PendingPermission] in
+            guard entry.isActive, let requester = entry.instance as? PermissionRequesting else { return [] }
+            return requester.pendingPermissions.map {
+                PendingPermission(extensionID: entry.id, extensionName: entry.manifest.name, requester: requester, permission: $0)
+            }
         }
     }
 

@@ -1,0 +1,10 @@
+{
+  "available_count": 2,
+  "credits": [
+    { "id": "rc_redacted_1", "reset_type": "weekly", "status": "available", "granted_at": "2026-09-01T00:00:00Z",
+      "expires_at": "2026-10-10T00:00:00Z" },
+    { "id": "rc_redacted_2", "reset_type": "weekly", "status": "available", "granted_at": "2026-09-01T00:00:00Z",
+      "expires_at": null },
+    { "id": "rc_redacted_3", "reset_type": "weekly", "status": "redeemed", "granted_at": "2026-08-01T00:00:00Z" }
+  ]
+}

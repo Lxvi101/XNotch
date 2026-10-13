@@ -1,0 +1,27 @@
+{
+  "five_hour": { "utilization": 37.5, "resets_at": "2026-09-21T18:00:00.000Z" },
+  "seven_day": { "utilization": 61, "resets_at": "2026-09-25T09:00:00Z" },
+  "seven_day_sonnet": { "utilization": 12, "resets_at": "2026-09-25T09:00:00Z" },
+  "seven_day_opus": null,
+  "seven_day_routines": { "utilization": 3, "resets_at": "2026-09-25T09:00:00Z" },
+  "limits": [
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 44, "resets_at": "2026-09-25T09:00:00Z",
+      "scope": { "model": { "id": "claude-fable", "display_name": "Fable" } }, "is_active": false },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 10,
+      "scope": { "model": { "id": "all-models", "display_name": "All models" } } },
+    { "kind": "session", "group": "session", "percent": 5 },
+    "not an object"
+  ],
+  "extra_usage": { "is_enabled": true, "monthly_limit": 5000, "used_credits": 1234, "utilization": 24.68, "currency": "USD" },
+  "cedar_ember": {
+    "eligible": true,
+    "grants": [
+      { "id": "grant_redacted_1", "resets_left": 1, "resets_total": 1, "starts_at": "2026-09-01T00:00:00Z",
+        "ends_at": "2026-10-01T00:00:00Z", "paused": false },
+      { "id": "grant_redacted_2", "resets_left": 1, "resets_total": 2, "ends_at": null, "paused": false },
+      { "id": "grant_redacted_3", "resets_left": 1, "paused": true },
+      { "id": "grant_redacted_4", "resets_left": 1, "ends_at": "2026-09-01T00:00:00Z", "paused": false },
+      { "id": "grant_redacted_5", "resets_left": "x", "paused": false }
+    ]
+  }
+}

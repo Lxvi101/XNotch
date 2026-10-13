@@ -1,0 +1,20 @@
+{
+  "plan_type": "pro",
+  "rate_limit": {
+    "primary_window": { "used_percent": 42, "reset_at": 1790010000, "limit_window_seconds": 18000 },
+    "secondary_window": { "used_percent": 17, "reset_at": 1790400000, "limit_window_seconds": 604800 }
+  },
+  "code_review_rate_limit": {
+    "primary_window": { "used_percent": 12, "reset_at": 1790400000, "limit_window_seconds": 604800 }, "secondary_window": null },
+  "rate_limit_reset_credits": { "available_count": 1, "applicable_available_count": 1 },
+  "credits": { "has_credits": true, "unlimited": false, "balance": "125.5" },
+  "additional_rate_limits": [
+    { "limit_name": "GPT-5.3-Codex-Spark", "metered_feature": "codex_spark",
+      "rate_limit": {
+        "primary_window": { "used_percent": 9, "reset_at": 1790010000, "limit_window_seconds": 18000 },
+        "secondary_window": { "used_percent": 3, "reset_at": 1790400000, "limit_window_seconds": 604800 } } },
+    { "limit_name": "Research Preview", "metered_feature": "research_preview",
+      "rate_limit": { "primary_window": { "used_percent": 70, "reset_at": 1790100000, "limit_window_seconds": 86400 } } },
+    "garbage"
+  ]
+}

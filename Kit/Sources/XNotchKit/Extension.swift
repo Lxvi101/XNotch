@@ -6,7 +6,7 @@ public enum XNotchKit {
     public static let abi = 2
     /// Semantic version of the API. An extension's manifest names the lowest
     /// version it needs in `kit.minAPI`.
-    public static let apiVersion = "1.1.0"
+    public static let apiVersion = "1.2.0"
 }
 
 public typealias ExtensionID = String

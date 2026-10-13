@@ -16,6 +16,10 @@ final class Preferences: ObservableObject {
     @Published var disabledExtensions: Set<String> {
         didSet { defaults.set(Array(disabledExtensions).sorted(), forKey: Key.disabledExtensions) }
     }
+    /// Extensions XNotch has come across. One it hasn't starts switched off: every extension is opt-in.
+    @Published var knownExtensions: Set<String> {
+        didSet { defaults.set(Array(knownExtensions).sorted(), forKey: Key.knownExtensions) }
+    }
     @Published var hasCompletedOnboarding: Bool { didSet { defaults.set(hasCompletedOnboarding, forKey: Key.onboarding) } }
     @Published private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -26,6 +30,7 @@ final class Preferences: ObservableObject {
         static let media = "showsMediaInNotch"
         static let lockScreen = "lockScreenMediaEnabled"
         static let disabledExtensions = "disabledExtensions"
+        static let knownExtensions = "knownExtensions"
         static let onboarding = "hasCompletedOnboarding"
     }
 
@@ -40,6 +45,9 @@ final class Preferences: ObservableObject {
         lockScreenMediaEnabled = defaults.bool(forKey: Key.lockScreen)
         disabledExtensions = Set(defaults.stringArray(forKey: Key.disabledExtensions) ?? [])
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
+        // Before extensions were opt-in, Folders came switched on; it stays as the user left it.
+        knownExtensions = Set(defaults.stringArray(forKey: Key.knownExtensions)
+            ?? (defaults.bool(forKey: Key.onboarding) ? ["folders"] : []))
     }
 
     func setLaunchesAtLogin(_ enabled: Bool) {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import XNotchKit
 
 /// Everything the onboarding draws. One notch, the "hero", carries the whole
 /// experience: it flies in, snaps into the real notch's place, grows a face,
@@ -7,7 +8,7 @@ import SwiftUI
 @MainActor
 final class OnboardingState: ObservableObject {
     enum Step: Int, CaseIterable {
-        case hello, shelf, music, pills, access, done
+        case hello, shelf, music, pills, access, extensions, extensionAccess, done
     }
 
     enum Access {
@@ -40,6 +41,20 @@ final class OnboardingState: ObservableObject {
     @Published var fileTilt: CGFloat = 0
     @Published var access: Access = .asking
     @Published var launchAtLogin = true
+    /// The tour's steps. Picking extensions joins when there are any; their permissions join once
+    /// the picked ones have loaded.
+    @Published var steps: [Step] = [.hello, .shelf, .music, .pills, .access, .done]
+    @Published var offeredExtensions: [ExtensionManifest] = []
+    @Published var chosenExtensions: Set<ExtensionID> = []
+    /// What was already on when the tour started, so a replay only "adds" what's new.
+    var enabledExtensions: Set<ExtensionID> = []
+
+    var newlyChosenExtensions: [ExtensionManifest] {
+        offeredExtensions.filter { chosenExtensions.contains($0.id) && !enabledExtensions.contains($0.id) }
+    }
+    @Published var extensionPermissions: [ExtensionManager.PendingPermission] = []
+    @Published var grantedPermissions: Set<String> = []
+    @Published var extensionAccess: Access = .asking
 
     let permission = Permission.fullDiskAccess
     let notchSize: CGSize
@@ -60,19 +75,30 @@ final class OnboardingState: ObservableObject {
     var contentTop: CGFloat { notchSize.height + 66 }
     var panelOuterWidth: CGFloat { Self.panelWidth + 2 * Self.panelTopRadius }
 
-    static func demoHeight(_ step: Step) -> CGFloat {
+    static let permissionRowHeight: CGFloat = 56
+    static let permissionRowSpacing: CGFloat = 8
+
+    func demoHeight(_ step: Step) -> CGFloat {
         switch step {
         case .hello: 0
         case .shelf: 82
         case .music: 84
         case .pills: 0
         case .access: 64
+        case .extensions:
+            CGFloat(offeredExtensions.count) * (Self.permissionRowHeight + Self.permissionRowSpacing)
+        case .extensionAccess:
+            CGFloat(extensionPermissions.count) * (Self.permissionRowHeight + Self.permissionRowSpacing)
         case .done: 30
         }
     }
 
     func panelHeight(_ step: Step) -> CGFloat {
-        contentTop + Self.textHeight + Self.demoHeight(step) + Self.footerHeight
+        contentTop + Self.textHeight + demoHeight(step) + Self.footerHeight
+    }
+
+    func isGranted(_ pending: ExtensionManager.PendingPermission) -> Bool {
+        grantedPermissions.contains(pending.key)
     }
 
     var geometry: NotchShellGeometry {
@@ -135,6 +161,14 @@ final class OnboardingController {
     func start(at firstStep: OnboardingState.Step = .hello) {
         guard window == nil, let screen = NotchWindowController.preferredScreen() else { return }
         let state = OnboardingState(notchSize: model.notchSize)
+        // Manifests only: nothing runs until the user adds it.
+        model.extensions.discover()
+        state.offeredExtensions = model.extensions.offerable
+        state.enabledExtensions = Set(state.offeredExtensions.map(\.id).filter(model.extensions.isEnabled))
+        state.chosenExtensions = state.enabledExtensions
+        if !state.offeredExtensions.isEmpty, let done = state.steps.firstIndex(of: .done) {
+            state.steps.insert(.extensions, at: done)
+        }
         let window = OnboardingWindow(screen: screen)
         let actions = OnboardingView.Actions(
             primary: { [weak self] in self?.primaryAction() },
@@ -328,6 +362,10 @@ final class OnboardingController {
             }
         case .access:
             eyes.expression = state.access == .granted ? .happy : .attentive
+        case .extensions:
+            eyes.expression = .curious
+        case .extensionAccess:
+            eyes.expression = state.extensionAccess == .granted ? .happy : .attentive
         case .done:
             eyes.expression = .happy
             settle()
@@ -347,19 +385,31 @@ final class OnboardingController {
             switch state.access {
             case .asking: requestAccess()
             case .guiding: break
+            case .granted: leaveAccess()
+            }
+        case .extensions:
+            addChosenExtensions()
+        case .extensionAccess:
+            switch state.extensionAccess {
+            case .asking: requestExtensionPermissions()
+            case .guiding: break
             case .granted: go(to: .done)
             }
         case .done:
             finish()
         default:
-            if let next = OnboardingState.Step(rawValue: state.step.rawValue + 1) { go(to: next) }
+            if let index = state.steps.firstIndex(of: state.step), index + 1 < state.steps.count {
+                go(to: state.steps[index + 1])
+            }
         }
     }
 
     private func secondaryAction() {
         guard let state, state.form == .panel else { return }
         switch state.step {
-        case .access: go(to: .done)
+        case .access: leaveAccess()
+        case .extensions: break
+        case .extensionAccess: go(to: .done)
         case .done: break
         default: go(to: .access)
         }
@@ -427,6 +477,100 @@ final class OnboardingController {
             state.dim = 1
         }
         guard granted else { return }
+        run { controller in
+            try await controller.pause(1.5)
+            controller.leaveAccess()
+        }
+    }
+
+    /// Full Disk Access is settled, so services and extensions can start; offer extensions next.
+    private func leaveAccess() {
+        guard let state else { return }
+        settle()
+        if state.steps.contains(.extensions) { go(to: .extensions) } else { leaveExtensions() }
+    }
+
+    /// Switches on exactly the extensions the user picked.
+    private func addChosenExtensions() {
+        guard let state else { return }
+        for manifest in state.offeredExtensions {
+            let chosen = state.chosenExtensions.contains(manifest.id)
+            if model.extensions.isEnabled(manifest.id) != chosen { model.extensions.setEnabled(chosen, for: manifest.id) }
+        }
+        if !state.newlyChosenExtensions.isEmpty {
+            absorb(0.8)
+            Haptics.tap()
+        }
+        leaveExtensions()
+    }
+
+    /// Ask for what the added extensions need, if anything.
+    private func leaveExtensions() {
+        guard let state else { return }
+        let pending = model.extensions.pendingPermissions
+        guard !pending.isEmpty else { return go(to: .done) }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
+            state.extensionPermissions = pending
+            state.grantedPermissions = []
+            state.extensionAccess = .asking
+            if !state.steps.contains(.extensionAccess), let done = state.steps.firstIndex(of: .done) {
+                state.steps.insert(.extensionAccess, at: done)
+            }
+        }
+        go(to: .extensionAccess)
+    }
+
+    // MARK: Extension permissions
+
+    /// Like Full Disk Access: the panel folds into a face and steps back so macOS's own prompt is in
+    /// front, and the eyes watch it. Each permission is asked in turn.
+    private func requestExtensionPermissions() {
+        guard let state, let window else { return }
+        script?.cancel()
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+            state.extensionAccess = .guiding
+            state.form = .face
+            state.dim = 0
+        }
+        window.ignoresMouseEvents = true
+        let level = window.level
+        // Keychain prompts come from another process; make sure they aren't under the tour.
+        window.level = .normal
+        eyes.expression = .attentive
+        eyes.focus = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        run { controller in
+            for pending in state.extensionPermissions where !state.isGranted(pending) {
+                if await pending.requester.requestPermission(pending.permission.id) {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        _ = state.grantedPermissions.insert(pending.key)
+                    }
+                }
+            }
+            controller.extensionRequestsEnded(restoring: level)
+        }
+    }
+
+    private func extensionRequestsEnded(restoring level: NSWindow.Level) {
+        guard let state, let window else { return }
+        window.level = level
+        window.ignoresMouseEvents = false
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        eyes.focus = nil
+        let allGranted = state.extensionPermissions.allSatisfy(state.isGranted)
+        if allGranted {
+            absorb(1.3)
+            Haptics.tap()
+            eyes.expression = .happy
+        } else {
+            eyes.expression = .neutral
+        }
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.84)) {
+            state.extensionAccess = allGranted ? .granted : .asking
+            state.form = .panel
+            state.dim = 1
+        }
+        guard allGranted else { return }
         run { controller in
             try await controller.pause(1.5)
             controller.go(to: .done)
