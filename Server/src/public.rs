@@ -1,23 +1,30 @@
 //! Public, unauthenticated routes: drop pages and file downloads.
 
+use axum::Form;
 use axum::Router;
 use axum::body::Body;
-use axum::extract::rejection::PathRejection;
+use axum::extract::rejection::{FormRejection, PathRejection};
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use chrono::Utc;
+use serde::Deserialize;
 
+use crate::model::DropMeta;
 use crate::range::{self, ByteRange};
-use crate::{SharedState, ids, names, pages};
+use crate::{SharedState, ids, names, pages, password};
+
+/// Added to every wrong password, so guessing is slow even within the
+/// concurrency limit on hash checks.
+const WRONG_PASSWORD_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
 
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/", get(home))
         .route("/robots.txt", get(|| async { "User-agent: *\nDisallow: /\n" }))
         .route("/favicon.ico", get(|| async { StatusCode::NOT_FOUND }))
-        .route("/{id}", get(drop_page))
+        .route("/{id}", get(drop_page).post(unlock))
         .route("/{id}/{name}", get(download))
 }
 
@@ -29,11 +36,16 @@ fn harden(headers: &mut HeaderMap) {
 }
 
 fn html(status: StatusCode, render: impl FnOnce(&str) -> String) -> Response {
+    html_page(status, "'none'", render)
+}
+
+/// `form_action` is the CSP source list for forms; only the password page posts one.
+fn html_page(status: StatusCode, form_action: &str, render: impl FnOnce(&str) -> String) -> Response {
     let nonce = ids::generate(22);
     let body = render(&nonce);
     let csp = format!(
         "default-src 'none'; img-src 'self'; style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; \
-         base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+         base-uri 'none'; form-action {form_action}; frame-ancestors 'none'"
     );
     let mut response = (status, body).into_response();
     let headers = response.headers_mut();
@@ -59,17 +71,82 @@ async fn home(State(state): State<SharedState>) -> Response {
     html(StatusCode::OK, |nonce| pages::home_page(&state.config.site_name, nonce))
 }
 
-async fn drop_page(State(state): State<SharedState>, path: Result<Path<String>, PathRejection>) -> Response {
+async fn drop_page(
+    State(state): State<SharedState>,
+    path: Result<Path<String>, PathRejection>,
+    headers: HeaderMap,
+) -> Response {
     let Ok(Path(id)) = path else { return not_found(State(state)).await };
     if !ids::is_valid(&id) {
         return not_found(State(state)).await;
     }
     let now = Utc::now();
     match state.storage.load_active(&id, now).await {
+        Ok(Some(meta)) if !password::is_unlocked(&meta, &headers) => locked(&state, &meta, StatusCode::OK, false),
         Ok(Some(meta)) => html(StatusCode::OK, |nonce| pages::drop_page(&meta, &state.config.site_name, now, nonce)),
         Ok(None) => not_found(State(state)).await,
         Err(e) => internal_error("failed to load drop", e),
     }
+}
+
+fn locked(state: &SharedState, meta: &DropMeta, status: StatusCode, wrong: bool) -> Response {
+    html_page(status, "'self'", |nonce| pages::locked_page(meta, &state.config.site_name, wrong, nonce))
+}
+
+fn see_other(location: &str) -> Response {
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    response.headers_mut().insert(header::LOCATION, HeaderValue::from_str(location).expect("ascii id"));
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+#[derive(Deserialize)]
+struct Unlock {
+    password: String,
+}
+
+/// The password form posts here; a right password sets the unlock cookie.
+async fn unlock(
+    State(state): State<SharedState>,
+    path: Result<Path<String>, PathRejection>,
+    form: Result<Form<Unlock>, FormRejection>,
+) -> Response {
+    let Ok(Path(id)) = path else { return not_found(State(state)).await };
+    if !ids::is_valid(&id) {
+        return not_found(State(state)).await;
+    }
+    let now = Utc::now();
+    let meta = match state.storage.load_active(&id, now).await {
+        Ok(Some(meta)) => meta,
+        Ok(None) => return not_found(State(state)).await,
+        Err(e) => return internal_error("failed to load drop", e),
+    };
+    let (Some(hash), Some(key)) = (meta.password_hash.clone(), meta.unlock_key.clone()) else {
+        return see_other(&format!("/{id}"));
+    };
+
+    let attempt = form.map(|Form(f)| f.password).unwrap_or_default();
+    let right = if attempt.is_empty() || attempt.len() > password::MAX_PASSWORD_BYTES {
+        false
+    } else {
+        let Ok(_permit) = state.password_checks.acquire().await else {
+            return internal_error("password checks closed", "semaphore closed");
+        };
+        match tokio::task::spawn_blocking(move || password::verify(&attempt, &hash)).await {
+            Ok(right) => right,
+            Err(e) => return internal_error("failed to check password", e),
+        }
+    };
+    if !right {
+        tokio::time::sleep(WRONG_PASSWORD_DELAY).await;
+        return locked(&state, &meta, StatusCode::FORBIDDEN, true);
+    }
+
+    let secure = state.config.public_url.starts_with("https://");
+    let cookie = password::unlock_cookie(&meta, &key, (meta.expires_at - now).num_seconds(), secure);
+    let mut response = see_other(&format!("/{id}"));
+    response.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_str(&cookie).expect("ascii cookie"));
+    response
 }
 
 fn wants_inline(query: Option<&str>) -> bool {
@@ -92,6 +169,10 @@ async fn download(
         Ok(None) => return not_found(State(state)).await,
         Err(e) => return internal_error("failed to load drop", e),
     };
+    if !password::is_unlocked(&meta, &headers) {
+        // Not the file's existence, only the drop's: send them to the password page.
+        return see_other(&format!("/{id}"));
+    }
     let Some(file) = meta.file(&name) else { return not_found(State(state)).await };
 
     // Honour a single range unless the client made it conditional (we send no validators).

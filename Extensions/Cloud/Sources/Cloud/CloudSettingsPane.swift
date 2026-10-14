@@ -33,7 +33,7 @@ struct CloudSettingsPane: View {
                     }
                 }
             } footer: {
-                Text("Click the cloud on the shelf to pick a time for each link. Right-click a file for a link with this default.")
+                Text("Click the cloud on the shelf to pick a time for each link, or to lock one with a password. Right-click a file for a link with this default.")
                     .foregroundStyle(.secondary)
             }
 
@@ -89,6 +89,9 @@ private struct LinkRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 HStack(spacing: 4) {
+                    if link.isProtected == true {
+                        Image(systemName: "lock.fill").help("Needs a password")
+                    }
                     Text(link.url.absoluteString)
                     Text("·")
                     Text("expires \(link.expiresAt, format: .relative(presentation: .named))")

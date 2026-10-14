@@ -8,12 +8,16 @@ struct CloudClient: Sendable {
         let maxFileSize: UInt64
         let defaultExpirySeconds: UInt64
         let maxExpirySeconds: UInt64
+        /// Missing on servers from before drop passwords.
+        let passwords: Bool?
     }
 
     struct Drop: Decodable, Sendable {
         let id: String
         let url: URL
         let expiresAt: Date
+        /// Whether the server applied the password; older servers leave it out.
+        let protected: Bool?
     }
 
     enum Failure: LocalizedError {
@@ -61,9 +65,11 @@ struct CloudClient: Sendable {
         try await decode(Info.self, from: request("GET", "api/info"))
     }
 
-    func createDrop(expiresIn: TimeInterval, title: String?) async throws -> Drop {
+    /// With a `password`, visitors must enter it before they see or download anything.
+    func createDrop(expiresIn: TimeInterval, title: String?, password: String? = nil) async throws -> Drop {
         var body: [String: Any] = ["expires_in": Int(expiresIn)]
         if let title { body["title"] = title }
+        if let password, !password.isEmpty { body["password"] = password }
         var request = request("POST", "api/drops")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

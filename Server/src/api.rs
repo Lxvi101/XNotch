@@ -16,7 +16,7 @@ use subtle::ConstantTimeEq;
 use crate::error::ApiError;
 use crate::model::{self, DropMeta, FileMeta};
 use crate::storage::WriteError;
-use crate::{SharedState, ids, names, relay};
+use crate::{SharedState, ids, names, password, relay};
 
 /// Longest stored title, in characters. Longer titles are truncated.
 const MAX_TITLE_CHARS: usize = 200;
@@ -56,6 +56,8 @@ struct Info {
     default_expiry_seconds: u64,
     max_expiry_seconds: u64,
     relay: bool,
+    /// Drops can have a password.
+    passwords: bool,
 }
 
 async fn info(State(state): State<SharedState>) -> Json<Info> {
@@ -67,6 +69,7 @@ async fn info(State(state): State<SharedState>) -> Json<Info> {
         default_expiry_seconds: c.default_expiry,
         max_expiry_seconds: c.max_expiry,
         relay: c.relay.enabled,
+        passwords: true,
     })
 }
 
@@ -75,6 +78,8 @@ struct CreateDrop {
     /// Seconds; fractional values are accepted and truncated.
     expires_in: Option<f64>,
     title: Option<String>,
+    /// Visitors must enter it before they see or download anything. Empty means none.
+    password: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -82,6 +87,8 @@ struct Created {
     id: String,
     url: String,
     expires_at: String,
+    /// Echoed so clients can tell a server that ignored the password.
+    protected: bool,
 }
 
 async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Response, ApiError> {
@@ -100,6 +107,21 @@ async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Re
         model::clamp_expiry(request.expires_in.map(|s| s as i64), config.default_expiry, config.max_expiry);
     let title =
         request.title.map(|t| t.trim().chars().take(MAX_TITLE_CHARS).collect::<String>()).filter(|t| !t.is_empty());
+    let password_hash = match request.password.filter(|p| !p.is_empty()) {
+        None => None,
+        Some(p) if p.len() > password::MAX_PASSWORD_BYTES => {
+            return Err(ApiError::BadRequest(format!(
+                "password must be at most {} bytes",
+                password::MAX_PASSWORD_BYTES
+            )));
+        }
+        Some(p) => Some(
+            tokio::task::spawn_blocking(move || password::hash(&p))
+                .await
+                .map_err(|e| ApiError::internal("failed to hash password", e))?
+                .map_err(|e| ApiError::internal("failed to hash password", e))?,
+        ),
+    };
 
     for _ in 0..8 {
         let id = ids::generate(config.id_length);
@@ -107,11 +129,19 @@ async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Re
         if state.storage.exists(&id).await.map_err(|e| ApiError::internal("failed to check drop id", e))? {
             continue;
         }
-        let meta = DropMeta::new(id, title, Utc::now(), expires_in);
+        let mut meta = DropMeta::new(id, title, Utc::now(), expires_in);
+        if let Some(hash) = password_hash {
+            meta.password_hash = Some(hash);
+            meta.unlock_key = Some(password::new_unlock_key());
+        }
         state.storage.save(&meta).await.map_err(|e| ApiError::internal("failed to create drop", e))?;
-        tracing::info!(drop = %meta.id, expires_in, "drop created");
-        let body =
-            Created { url: state.drop_url(&meta.id), expires_at: model::format_time(&meta.expires_at), id: meta.id };
+        tracing::info!(drop = %meta.id, expires_in, protected = meta.is_protected(), "drop created");
+        let body = Created {
+            url: state.drop_url(&meta.id),
+            expires_at: model::format_time(&meta.expires_at),
+            protected: meta.is_protected(),
+            id: meta.id,
+        };
         return Ok((StatusCode::CREATED, Json(body)).into_response());
     }
     Err(ApiError::Internal("could not allocate a drop id".into()))
@@ -206,6 +236,7 @@ struct DropSummary {
     title: Option<String>,
     created_at: String,
     expires_at: String,
+    protected: bool,
     files: Vec<FileSummary>,
 }
 
@@ -225,6 +256,7 @@ async fn list_drops(State(state): State<SharedState>) -> Result<Json<Vec<DropSum
                 url: state.drop_url(&m.id),
                 created_at: model::format_time(&m.created_at),
                 expires_at: model::format_time(&m.expires_at),
+                protected: m.is_protected(),
                 files: m.files.into_iter().map(|f| FileSummary { name: f.name, size: f.size }).collect(),
                 id: m.id,
                 title: m.title,

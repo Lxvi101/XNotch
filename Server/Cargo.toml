@@ -12,7 +12,8 @@ name = "xnotch-cloud"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "tracing", "ws"] }
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio", "tracing", "ws"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

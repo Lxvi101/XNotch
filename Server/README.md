@@ -9,6 +9,7 @@ like `https://drop.example.com/8122cbAZ`.
   Cloudflare R2, MinIO).
 - Runs on a small VPS or a Raspberry Pi (arm64). Deploys with Dokploy or plain Docker.
 - Uploads are streamed straight to storage, so large files do not use much memory.
+- Optional password per drop: the page and every file stay locked until it is entered.
 - Clean, dark drop page with image previews. Downloads support resuming and video seeking.
 - Expired drops stop working immediately and are deleted within 10 minutes.
 - A WebSocket [relay](#relay) lets the XNotch iPhone app reach the Mac when the two are
@@ -210,16 +211,19 @@ No auth. Returns `200` with the text `ok`.
 curl -H "Authorization: Bearer $TOKEN" $URL/api/info
 ```
 ```json
-{"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000,"relay":true}
+{"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000,"relay":true,"passwords":true}
 ```
-`relay` is `false` when `RELAY=off`.
+`relay` is `false` when `RELAY=off`. `passwords` says the server supports drop passwords.
 
 ### `POST /api/drops`
 
-Body (all fields optional; an empty body is fine): `{"expires_in": 3600, "title": "Holiday photos"}`.
+Body (all fields optional; an empty body is fine):
+`{"expires_in": 3600, "title": "Holiday photos", "password": "correct horse"}`.
 `expires_in` is in seconds, defaults to `DEFAULT_EXPIRY` and is clamped to
 `[60, MAX_EXPIRY]`. The response always carries the effective `expires_at`.
 Titles are trimmed and cut to 200 characters; an empty title counts as none.
+With a `password` (at most 1024 bytes, else `400`; empty means none), visitors must
+enter it before they see the page or download anything. Only an Argon2id hash is stored.
 
 ```sh
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -227,8 +231,10 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 ```
 `201`:
 ```json
-{"id":"8122cbAZ","url":"https://drop.example.com/8122cbAZ","expires_at":"2026-10-14T09:30:00Z"}
+{"id":"8122cbAZ","url":"https://drop.example.com/8122cbAZ","expires_at":"2026-10-14T09:30:00Z","protected":false}
 ```
+`protected` is `true` when the drop has a password. Older servers ignore `password`
+and leave `protected` out, so check it before handing out a link meant to be locked.
 
 ### `PUT /api/drops/{id}/files/{name}`
 
@@ -267,7 +273,7 @@ curl -H "Authorization: Bearer $TOKEN" $URL/api/drops
 ```
 ```json
 [{"id":"8122cbAZ","url":"https://drop.example.com/8122cbAZ","title":"Holiday photos",
-  "created_at":"2026-10-14T08:30:00Z","expires_at":"2026-10-14T09:30:00Z",
+  "created_at":"2026-10-14T08:30:00Z","expires_at":"2026-10-14T09:30:00Z","protected":false,
   "files":[{"name":"Report 1.pdf","size":48213}]}]
 ```
 `title` is `null` when not set.
@@ -310,10 +316,20 @@ websocat "wss://drop.example.com/api/relay/rooms/$ROOM/connect?role=mac"
 ### `GET /{id}`
 
 Public HTML page for the drop. Unknown or expired drops get a styled 404 page.
+For a drop with a password, it is a password form instead that shows nothing about
+the drop (not even its title) until the password is entered.
+
+### `POST /{id}`
+
+The password form (`application/x-www-form-urlencoded`, field `password`). A right
+password answers `303` to `/{id}` with an `HttpOnly`, `SameSite=Lax` cookie scoped to
+`/{id}` that lasts until the drop expires (`Secure` when `PUBLIC_URL` is https). A wrong
+one answers `403` with the form again, after a short delay. Drops without a password
+just redirect.
 
 ### `GET /{id}/{name}`
 
-Streams the file as a download (`Content-Disposition: attachment` with an RFC 5987
+For a locked drop without its unlock cookie, `303` to `/{id}`. Otherwise streams the file as a download (`Content-Disposition: attachment` with an RFC 5987
 `filename*`). With `?inline=1`, raster images, video, audio, PDF and plain text are
 shown inline; everything else (including SVG and HTML) is still an attachment.
 Single `Range: bytes=...` requests return `206`, so videos can seek and downloads
@@ -322,7 +338,8 @@ can resume. Every response carries `X-Content-Type-Options: nosniff`.
 ## Storage layout
 
 ```
-drops/{id}/meta.json        id, title, created_at, expires_at, files [{name, size, content_type}]
+drops/{id}/meta.json        id, title, created_at, expires_at, files [{name, size, content_type}],
+                            and for locked drops password_hash (Argon2id) and unlock_key
 drops/{id}/files/{name}     file contents
 relay/rooms/{room}          {"created_at": "..."} for each registered relay room
 ```
@@ -338,6 +355,11 @@ expects to be the only instance writing to its storage.
 - **Public links are bearer links.** Anyone with a link can download until it
   expires. Ids are 8 random base62 characters (about 47 bits) from a CSPRNG;
   raise `ID_LENGTH` if you want longer ones.
+- **Drop passwords** add a second secret on top of the link. They are hashed with
+  Argon2id; at most 4 hashes are checked at once and every wrong guess waits 750 ms,
+  which slows guessing but does not stop it, so use more than a short word. Unlocking
+  sets a cookie holding a random per-drop key (not the password); deleting the drop
+  revokes it. Direct file links of a locked drop lead to the password form.
 - **Expiry is enforced on every read**, so an expired link is dead immediately.
   A sweeper runs at startup and every 10 minutes and deletes expired drops.
 - Pages are served with a strict `Content-Security-Policy`, `Referrer-Policy: no-referrer`,
@@ -360,7 +382,7 @@ cargo fmt --check
 ```
 
 Code map: `config` (environment), `ids` (drop ids), `names` (file name rules,
-encoding, content types), `range` (Range header), `model` (metadata), `storage`
+encoding, content types), `password` (drop passwords and unlock cookies), `range` (Range header), `model` (metadata), `storage`
 (object_store backends, sweeper), `api` (JSON API), `relay` (WebSocket relay),
 `public` and `pages` (drop page and downloads). Tests: `tests/api.rs` drives the
 router directly; `tests/relay.rs` runs a real listener with WebSocket clients.

@@ -21,10 +21,16 @@ final class CloudClientTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(drop.id, "a1B2c3D4")
         XCTAssertEqual(drop.expiresAt.timeIntervalSince1970, 1_792_000_800)
+        XCTAssertNil(drop.protected)
+        let locked = try CloudClient.decoder.decode(CloudClient.Drop.self, from: Data("""
+        {"id":"a1B2c3D4","url":"https://drop.example.com/a1B2c3D4","expires_at":"2026-10-14T18:00:00Z","protected":true}
+        """.utf8))
+        XCTAssertEqual(locked.protected, true)
         let info = try CloudClient.decoder.decode(CloudClient.Info.self, from: Data("""
         {"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000}
         """.utf8))
         XCTAssertEqual(info.maxExpirySeconds, 2_592_000)
+        XCTAssertNil(info.passwords)
     }
 }
 

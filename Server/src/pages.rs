@@ -41,6 +41,11 @@ h1{font-size:clamp(34px,7.5vw,54px);line-height:1.06;font-weight:700;letter-spac
 .pill{flex:none;padding:8px 16px;border-radius:999px;background:var(--blue);color:#fff;font-size:14px;font-weight:600;text-decoration:none;transition:background .15s}
 .pill:hover{background:#409cff}
 .pill:focus-visible,.preview:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.lock{margin-top:36px;display:flex;gap:10px}
+.lock input{flex:1;min-width:0;padding:12px 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit;font-size:16px}
+.lock input:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:transparent}
+.lock .pill{border:0;font:inherit;font-weight:600;cursor:pointer}
+.error{margin-top:12px;color:#ff6961;font-size:14px}
 .empty{margin-top:36px;padding:28px;border:1px dashed rgba(255,255,255,.12);border-radius:18px;color:var(--muted);text-align:center}
 footer{padding:28px 20px calc(36px + env(safe-area-inset-bottom));text-align:center;color:var(--faint);font-size:13px}
 @media (max-width:440px){.row{gap:12px;padding:12px}.pill{padding:7px 13px}.sub{font-size:16px}}
@@ -225,6 +230,24 @@ pub fn drop_page(meta: &DropMeta, site_name: &str, now: DateTime<Utc>, nonce: &s
     }
 
     layout(&title, site_name, nonce, &body, true)
+}
+
+/// Asks for the password of a protected drop. Shows nothing about the drop
+/// except how long it lasts: even its title waits for the password.
+pub fn locked_page(meta: &DropMeta, site_name: &str, wrong: bool, nonce: &str) -> String {
+    let error = if wrong { r#"<p class="error" role="alert">That password isn't right.</p>"# } else { "" };
+    let body = format!(
+        r#"<h1>Password required</h1>
+<p class="sub">Enter the password to see these files. <span id="exp" data-expires="{expires}"></span></p>
+<form class="lock" method="post" action="/{id}">
+<input type="password" name="password" aria-label="Password" placeholder="Password" autocomplete="current-password" required autofocus>
+<button class="pill" type="submit">Unlock</button>
+</form>
+{error}"#,
+        expires = meta.expires_at.timestamp(),
+        id = meta.id,
+    );
+    layout("Password required", site_name, nonce, &body, true)
 }
 
 pub fn not_found_page(site_name: &str, nonce: &str) -> String {

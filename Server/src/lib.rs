@@ -7,6 +7,7 @@ pub mod ids;
 pub mod model;
 pub mod names;
 pub mod pages;
+pub mod password;
 pub mod public;
 pub mod range;
 pub mod relay;
@@ -30,10 +31,15 @@ use crate::storage::Storage;
 /// How often expired drops are swept from storage.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
+/// Password hashes checked at once. Each Argon2 run takes about 19 MiB and a
+/// few tens of milliseconds, so this bounds memory and CPU under guessing.
+pub const PASSWORD_CHECKS: usize = 4;
+
 pub struct AppState {
     pub config: Config,
     pub storage: Storage,
     pub relay: Relay,
+    pub password_checks: tokio::sync::Semaphore,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -41,7 +47,7 @@ pub type SharedState = Arc<AppState>;
 impl AppState {
     pub fn new(config: Config, storage: Storage) -> Self {
         let relay = Relay::new(config.relay.clone());
-        Self { config, storage, relay }
+        Self { config, storage, relay, password_checks: tokio::sync::Semaphore::new(PASSWORD_CHECKS) }
     }
 
     pub fn drop_url(&self, id: &str) -> String {

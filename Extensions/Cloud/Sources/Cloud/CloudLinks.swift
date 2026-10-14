@@ -13,6 +13,8 @@ final class CloudLinks: ObservableObject {
         let fileCount: Int
         let createdAt: Date
         let expiresAt: Date
+        /// `nil` for links saved before passwords existed.
+        let isProtected: Bool?
 
         var isExpired: Bool { expiresAt <= Date() }
     }
@@ -95,8 +97,9 @@ final class CloudLinks: ObservableObject {
 
     // MARK: Sharing
 
-    /// Uploads the files into one drop and copies its link.
-    func share(_ urls: [URL], expiresIn: TimeInterval) {
+    /// Uploads the files into one drop and copies its link. With a
+    /// `password`, the link asks for it before showing anything.
+    func share(_ urls: [URL], expiresIn: TimeInterval, password: String? = nil) {
         guard !urls.isEmpty, !isUploading else { return }
         guard let client else { return setTransfer(.failed(CloudClient.Failure.notConfigured.localizedDescription)) }
         generation += 1
@@ -113,8 +116,12 @@ final class CloudLinks: ObservableObject {
                 if let tooBig = zip(urls, sizes).first(where: { UInt64($0.1) > info.maxFileSize }) {
                     throw TooLarge(name: tooBig.0.lastPathComponent, limit: info.maxFileSize)
                 }
-                let drop = try await client.createDrop(expiresIn: expiresIn, title: title)
+                let protect = password.map { !$0.isEmpty } ?? false
+                if protect, info.passwords != true { throw PasswordsUnsupported() }
+                let drop = try await client.createDrop(expiresIn: expiresIn, title: title, password: password)
                 do {
+                    // Never hand out an open link that was meant to be locked.
+                    if protect, drop.protected != true { throw PasswordsUnsupported() }
                     var done: Int64 = 0
                     for (url, size) in zip(urls, sizes) {
                         let prepared = try await PreparedFile.make(for: url)
@@ -139,7 +146,7 @@ final class CloudLinks: ObservableObject {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(drop.url.absoluteString, forType: .string)
                 remember(SharedLink(id: drop.id, url: drop.url, title: title, fileCount: urls.count,
-                                    createdAt: Date(), expiresAt: drop.expiresAt))
+                                    createdAt: Date(), expiresAt: drop.expiresAt, isProtected: protect))
                 setTransfer(.copied)
                 onCopied?()
             } catch {
@@ -147,6 +154,13 @@ final class CloudLinks: ObservableObject {
                 setTransfer(.failed(error.localizedDescription))
             }
         }
+    }
+
+    /// Asks for a password and lifetime first.
+    func shareWithPassword(_ urls: [URL]) {
+        guard !urls.isEmpty, !isUploading,
+              let choice = PasswordPrompt.run(expiries: availableExpiries, defaultExpiry: defaultExpiry) else { return }
+        share(urls, expiresIn: choice.expiresIn, password: choice.password)
     }
 
     func copy(_ link: SharedLink) {
@@ -285,6 +299,12 @@ struct PreparedFile {
 
     func cleanUp() {
         if let temporary { try? FileManager.default.removeItem(at: temporary) }
+    }
+}
+
+struct PasswordsUnsupported: LocalizedError {
+    var errorDescription: String? {
+        "Your server doesn't support passwords yet. Update it from the Server folder."
     }
 }
 

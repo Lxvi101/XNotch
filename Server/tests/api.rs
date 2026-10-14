@@ -85,6 +85,16 @@ impl Harness {
         self.send(request.body(Body::empty()).unwrap()).await
     }
 
+    async fn post_form(&self, uri: &str, body: &str) -> Reply {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_owned()))
+            .unwrap();
+        self.send(request).await
+    }
+
     async fn create(&self, body: Value) -> String {
         let reply = self.api(Method::POST, "/api/drops", body.to_string()).await;
         assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.text());
@@ -113,7 +123,8 @@ async fn full_drop_lifecycle() {
             "max_file_size": 5u64 * 1024 * 1024 * 1024,
             "default_expiry_seconds": 86400,
             "max_expiry_seconds": 2592000,
-            "relay": true
+            "relay": true,
+            "passwords": true
         })
     );
 
@@ -387,4 +398,73 @@ async fn validates_input() {
     assert_eq!(h.get("/nope", &[]).await.status, StatusCode::NOT_FOUND);
     assert_eq!(h.get("/a/b/c", &[]).await.status, StatusCode::NOT_FOUND);
     assert_eq!(h.get("/", &[]).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn password_protected_drop() {
+    let h = harness(&[]);
+    let created = h
+        .api(Method::POST, "/api/drops", json!({"title": "Secret plans", "password": "hunter2 hunter2"}).to_string())
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    assert_eq!(created.json()["protected"], true);
+    let id = created.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(h.upload(&id, "plan.txt", "attack at dawn").await.status, StatusCode::CREATED);
+
+    // The hash is stored, never the password.
+    let meta = std::fs::read_to_string(h.dir.path().join(format!("drops/{id}/meta.json"))).unwrap();
+    assert!(meta.contains("$argon2id$") && !meta.contains("hunter2"), "{meta}");
+
+    let list = h.api(Method::GET, "/api/drops", Body::empty()).await.json();
+    assert_eq!(list[0]["protected"], true);
+
+    // Locked: the page asks for the password and reveals nothing else.
+    let page = h.get(&format!("/{id}"), &[]).await;
+    assert_eq!(page.status, StatusCode::OK);
+    let html = page.text();
+    assert!(html.contains("Password required"));
+    assert!(!html.contains("Secret plans") && !html.contains("plan.txt"));
+    assert!(page.header("content-security-policy").contains("form-action 'self'"));
+
+    let file = h.get(&format!("/{id}/plan.txt"), &[]).await;
+    assert_eq!(file.status, StatusCode::SEE_OTHER);
+    assert_eq!(file.header("location"), format!("/{id}"));
+    let missing = h.get(&format!("/{id}/nope.txt"), &[]).await;
+    assert_eq!(missing.status, StatusCode::SEE_OTHER);
+
+    // Wrong password, and an empty or malformed form.
+    for body in ["password=wrong", "password=", "nothing"] {
+        let reply = h.post_form(&format!("/{id}"), body).await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{body}");
+        assert!(reply.text().contains("isn&#39;t right") || reply.text().contains("isn't right"));
+        assert!(!reply.headers.contains_key(header::SET_COOKIE));
+    }
+
+    // Right password: a cookie scoped to this drop, then everything works.
+    let reply = h.post_form(&format!("/{id}"), "password=hunter2+hunter2").await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.header("location"), format!("/{id}"));
+    let set_cookie = reply.header("set-cookie").to_owned();
+    assert!(set_cookie.contains(&format!("Path=/{id};")), "{set_cookie}");
+    assert!(set_cookie.contains("HttpOnly") && set_cookie.contains("Secure") && set_cookie.contains("SameSite=Lax"));
+    let cookie = set_cookie.split(';').next().unwrap().to_owned();
+
+    let page = h.get(&format!("/{id}"), &[("cookie", &cookie)]).await;
+    assert!(page.text().contains("Secret plans") && page.text().contains("plan.txt"));
+    let file = h.get(&format!("/{id}/plan.txt"), &[("cookie", &cookie)]).await;
+    assert_eq!((file.status, file.text().as_str()), (StatusCode::OK, "attack at dawn"));
+
+    // The cookie of one drop does not open another.
+    let other = h.create(json!({"password": "hunter2 hunter2"})).await;
+    let forged = cookie.replace(&id, &other);
+    assert!(h.get(&format!("/{other}"), &[("cookie", &forged)]).await.text().contains("Password required"));
+
+    // Drops without a password ignore the form.
+    let open = h.create(json!({"password": ""})).await;
+    assert_eq!(h.post_form(&format!("/{open}"), "password=x").await.status, StatusCode::SEE_OTHER);
+    assert!(!h.get(&format!("/{open}"), &[]).await.text().contains("Password required"));
+
+    let long = "x".repeat(1025);
+    let reply = h.api(Method::POST, "/api/drops", json!({"password": long}).to_string()).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
 }

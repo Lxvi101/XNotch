@@ -15,6 +15,12 @@ pub struct DropMeta {
     pub expires_at: DateTime<Utc>,
     #[serde(default)]
     pub files: Vec<FileMeta>,
+    /// Argon2id PHC string when the drop needs a password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
+    /// Random key a browser gets as a cookie once it knows the password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlock_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -27,7 +33,19 @@ pub struct FileMeta {
 impl DropMeta {
     pub fn new(id: String, title: Option<String>, now: DateTime<Utc>, expires_in: u64) -> Self {
         let created_at = now.trunc_subsecs(0);
-        Self { id, title, created_at, expires_at: created_at + Duration::seconds(expires_in as i64), files: Vec::new() }
+        Self {
+            id,
+            title,
+            created_at,
+            expires_at: created_at + Duration::seconds(expires_in as i64),
+            files: Vec::new(),
+            password_hash: None,
+            unlock_key: None,
+        }
+    }
+
+    pub fn is_protected(&self) -> bool {
+        self.password_hash.is_some()
     }
 
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {

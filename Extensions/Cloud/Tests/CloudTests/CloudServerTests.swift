@@ -43,6 +43,22 @@ final class CloudServerTests: XCTestCase {
         try await client.delete(drop: drop.id) // already gone: not an error
     }
 
+    func testPasswordLocksThePageAndFiles() async throws {
+        let info = try await client.info()
+        guard info.passwords == true else { throw XCTSkip("The server predates drop passwords") }
+        let drop = try await client.createDrop(expiresIn: 3600, title: "Locked", password: "open sesame")
+        XCTAssertEqual(drop.protected, true)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("locked-\(UUID().uuidString).txt")
+        try Data("secret".utf8).write(to: file)
+        try await client.upload(file, name: "secret.txt", to: drop.id) { _ in }
+
+        let (page, _) = try await URLSession.shared.data(from: drop.url)
+        let html = String(decoding: page, as: UTF8.self)
+        XCTAssertTrue(html.contains("Password required"))
+        XCTAssertFalse(html.contains("secret.txt"))
+        try await client.delete(drop: drop.id)
+    }
+
     func testWrongTokenIsExplained() async throws {
         let wrong = CloudClient(server: client.baseURL.absoluteString, token: "wrong-token-000000")!
         do {

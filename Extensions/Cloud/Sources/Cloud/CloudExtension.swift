@@ -40,9 +40,12 @@ final class CloudExtension: XNotchExtension, SettingsPaneProviding, ShelfAccesso
 
     func shelfMenuItems(for files: [URL]) -> [NotchMenuItem] {
         guard let links, links.isConfigured, !links.isUploading else { return [] }
-        return [.action("Copy Cloud Link (\(CloudLinks.title(for: links.defaultExpiry)))", symbol: "link") {
-            links.share(files, expiresIn: links.defaultExpiry)
-        }]
+        return [
+            .action("Copy Cloud Link (\(CloudLinks.title(for: links.defaultExpiry)))", symbol: "link") {
+                links.share(files, expiresIn: links.defaultExpiry)
+            },
+            .action("Copy Cloud Link with Password…", symbol: "lock") { links.shareWithPassword(files) }
+        ]
     }
 }
 
@@ -70,6 +73,7 @@ struct CloudButton: View {
                 links.share(context.targets, expiresIn: choice.seconds)
             }
         }
+        items.append(.action("Link with Password…", symbol: "lock") { links.shareWithPassword(context.targets) })
         items.append(.separator)
         items.append(.action("Cloud Links Settings…", symbol: "gearshape", handler: openSettings))
         return items
