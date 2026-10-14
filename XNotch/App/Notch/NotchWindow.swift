@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Borderless, non-activating panel that sits above the menu bar on every
-/// space. Mouse events pass through except while the pointer is over the shell.
+/// space except fullscreen ones, where it stays out of the way. Mouse events
+/// pass through except while the pointer is over the shell.
 final class NotchWindow: NSPanel {
     init(contentRect: NSRect) {
         super.init(
@@ -15,7 +16,7 @@ final class NotchWindow: NSPanel {
         backgroundColor = .clear
         hasShadow = false
         level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         isMovable = false
         isReleasedWhenClosed = false
         acceptsMouseMovedEvents = true

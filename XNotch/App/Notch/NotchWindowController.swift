@@ -15,6 +15,9 @@ final class NotchWindowController {
     private var monitors: [Any] = []
     private var cancellables: Set<AnyCancellable> = []
     private var pointerWasFar = false
+    /// The window stays off fullscreen spaces; the global monitors still fire
+    /// there, so input is ignored until a regular space is active again.
+    private var isOnFullscreenSpace = false
 
     /// Proximity radius over which the closed shell starts reaching for the pointer.
     private let pointerRadius: CGFloat = 80
@@ -54,6 +57,13 @@ final class NotchWindowController {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screenParametersChanged() }
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.activeSpaceChanged() }
+        }
     }
 
     static func preferredScreen() -> NSScreen? {
@@ -72,6 +82,18 @@ final class NotchWindowController {
         window.setFrame(Self.canvasFrame(on: next), display: true)
         model.updateNotchSize(NotchMetrics.physicalNotchSize(on: next))
         model.eyes.anchor = Self.eyesAnchor(on: next, notch: model.notchSize)
+    }
+
+    private func activeSpaceChanged() {
+        isOnFullscreenSpace = !window.isOnActiveSpace
+        guard isOnFullscreenSpace else {
+            syncPointer(NSEvent.mouseLocation)
+            return
+        }
+        model.exitDropZone()
+        model.close()
+        model.pointerExited()
+        window.ignoresMouseEvents = true
     }
 
     private static func eyesAnchor(on screen: NSScreen, notch: CGSize) -> CGPoint {
@@ -193,7 +215,7 @@ final class NotchWindowController {
 
     private func handle(_ event: NSEvent, isLocal: Bool) {
         // File drags are driven by the drag detector and the drop target.
-        guard !dragDetector.isContentDragging else { return }
+        guard !dragDetector.isContentDragging, !isOnFullscreenSpace else { return }
         let point = NSEvent.mouseLocation
         if model.showsEyes || model.isPresentingOnboarding { model.eyes.pointer = point }
         guard !model.isPresentingOnboarding else {
@@ -232,7 +254,7 @@ final class NotchWindowController {
     }
 
     private func syncPointer(_ point: NSPoint) {
-        guard !model.isPresentingOnboarding else {
+        guard !model.isPresentingOnboarding, !isOnFullscreenSpace else {
             window.ignoresMouseEvents = true
             return
         }
@@ -263,7 +285,10 @@ final class NotchWindowController {
 
     private func installDragDetector() {
         dragDetector.onDragBegan = { [weak self] in
-            MainActor.assumeIsolated { self?.model.fileDragBegan() }
+            MainActor.assumeIsolated {
+                guard let self, !self.isOnFullscreenSpace else { return }
+                self.model.fileDragBegan()
+            }
         }
         dragDetector.onDragMoved = { [weak self] point in
             MainActor.assumeIsolated { self?.fileDragMoved(to: point) }
@@ -279,6 +304,7 @@ final class NotchWindowController {
     }
 
     private func fileDragMoved(to point: NSPoint) {
+        guard !isOnFullscreenSpace else { return }
         if model.showsEyes || model.isPresentingOnboarding { model.eyes.pointer = point }
         guard !model.isPresentingOnboarding else { return }
         switch model.surface {
