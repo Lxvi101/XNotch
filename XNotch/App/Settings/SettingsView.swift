@@ -46,9 +46,9 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 210, max: 240)
         } detail: {
             detail
-                .frame(minWidth: 460, minHeight: 440)
+                .frame(minWidth: 460)
         }
-        .frame(minWidth: 680, minHeight: 460)
+        .frame(minWidth: 680, maxWidth: .infinity, minHeight: 460, maxHeight: .infinity)
     }
 
     private func row(_ pane: SettingsPane, _ title: String, _ symbol: String, _ color: Color) -> some View {

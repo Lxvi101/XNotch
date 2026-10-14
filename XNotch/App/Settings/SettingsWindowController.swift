@@ -38,14 +38,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 500),
                               styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
-        window.contentViewController = NSHostingController(rootView: view)
+        let hosting = NSHostingController(rootView: view)
+        // The split view has a minimum height of its own (the sidebar, plus the
+        // toolbar). In a window shorter than that it overflowed and left a strip
+        // under the sidebar, so the window takes its minimum size from SwiftUI.
+        hosting.sizingOptions = [.minSize]
+        window.contentViewController = hosting
         window.title = "XNotch Settings"
-        window.titlebarAppearsTransparent = true
+        // An opaque titlebar, so the toolbar keeps its material and the title
+        // never sits on top of a pane scrolled beneath it.
         window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
         window.setContentSize(NSSize(width: 720, height: 500))
         window.center()
         window.setFrameAutosaveName("XNotchSettings")
+        // A size saved before the minimum existed may be too short.
+        let minimum = hosting.sizeThatFits(in: NSSize(width: 720, height: 1))
+        if window.frame.height < minimum.height {
+            window.setContentSize(NSSize(width: max(window.frame.width, minimum.width), height: minimum.height))
+        }
         window.delegate = self
         return window
     }
