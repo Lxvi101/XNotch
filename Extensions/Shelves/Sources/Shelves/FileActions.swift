@@ -1,0 +1,220 @@
+import AppKit
+import Quartz
+import QuickLookThumbnailing
+import UniformTypeIdentifiers
+
+/// Turns whatever is dragged or copied into files: file URLs as they are,
+/// file promises (Mail, Photos, browsers) received into storage, and images
+/// or text written out as files.
+@MainActor
+enum PasteboardReader {
+    static let promiseTypes = NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+    static let readableTypes: [NSPasteboard.PasteboardType] =
+        [.fileURL] + promiseTypes + [.png, .tiff, .string, .URL]
+
+    static func canRead(_ pasteboard: NSPasteboard) -> Bool {
+        pasteboard.types?.contains(where: readableTypes.contains) ?? false
+    }
+
+    /// Calls back with the files and which of them were made here.
+    static func read(_ pasteboard: NSPasteboard, into directory: URL,
+                     completion: @escaping @MainActor (_ urls: [URL], _ owned: Set<URL>) -> Void) {
+        let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if !files.isEmpty { return completion(files, []) }
+
+        let promises = (pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver]) ?? []
+        if !promises.isEmpty {
+            let destination = freshFolder(in: directory)
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var received: [URL] = []
+            for promise in promises {
+                group.enter()
+                promise.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: .init()) { url, error in
+                    if error == nil {
+                        lock.lock()
+                        received.append(url)
+                        lock.unlock()
+                    }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                MainActor.assumeIsolated { completion(received, Set(received)) }
+            }
+            return
+        }
+
+        if let image = NSImage(pasteboard: pasteboard), pasteboard.availableType(from: [.png, .tiff]) != nil,
+           let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            let url = freshFolder(in: directory).appendingPathComponent("Image.png")
+            if (try? png.write(to: url)) != nil { return completion([url], [url]) }
+        }
+
+        if let text = pasteboard.string(forType: .string) ?? pasteboard.string(forType: .URL),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let url = freshFolder(in: directory).appendingPathComponent(textFileName(for: text))
+            if (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil { return completion([url], [url]) }
+        }
+        completion([], [])
+    }
+
+    /// The first few words, as a file name.
+    static func textFileName(for text: String) -> String {
+        let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).prefix(5).joined(separator: " ")
+        let cleaned = words.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let base = cleaned.isEmpty ? "Text" : String(cleaned.prefix(40))
+        return base + ".txt"
+    }
+
+    private static func freshFolder(in directory: URL) -> URL {
+        let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+}
+
+@MainActor
+enum FileActions {
+    static func open(_ urls: [URL]) {
+        urls.forEach { NSWorkspace.shared.open($0) }
+    }
+
+    static func open(_ urls: [URL], with app: URL) {
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    static func reveal(_ urls: [URL]) {
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    static func copyToPasteboard(_ urls: [URL]) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects(urls.map { $0 as NSURL })
+    }
+
+    static func copyPaths(_ urls: [URL]) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+    }
+
+    /// Apps that open every one of the files, the default first.
+    static func applications(toOpen urls: [URL]) -> [URL] {
+        guard let first = urls.first else { return [] }
+        var apps = NSWorkspace.shared.urlsForApplications(toOpen: first)
+        for url in urls.dropFirst() {
+            let others = Set(NSWorkspace.shared.urlsForApplications(toOpen: url))
+            apps = apps.filter(others.contains)
+        }
+        var seen = Set<String>()
+        return apps.filter { seen.insert($0.lastPathComponent).inserted }
+    }
+
+    static func chooseFolder(prompt: String) -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = prompt
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    /// Copies or moves files into a folder, numbering names that are taken.
+    /// Returns where each one ended up.
+    static func transfer(_ urls: [URL], to folder: URL, move: Bool) -> [URL: URL] {
+        var result: [URL: URL] = [:]
+        for url in urls {
+            let destination = available(folder.appendingPathComponent(url.lastPathComponent))
+            do {
+                if move {
+                    try FileManager.default.moveItem(at: url, to: destination)
+                } else {
+                    try FileManager.default.copyItem(at: url, to: destination)
+                }
+                result[url] = destination
+            } catch {
+                NSSound.beep()
+            }
+        }
+        return result
+    }
+
+    private static func available(_ url: URL) -> URL {
+        guard FileManager.default.fileExists(atPath: url.path) else { return url }
+        let base = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension
+        for n in 2... {
+            let name = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
+            let candidate = url.deletingLastPathComponent().appendingPathComponent(name)
+            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return url
+    }
+}
+
+/// Finder icons and Quick Look thumbnails, cached by path.
+@MainActor
+enum Thumbnails {
+    private static var icons: [String: NSImage] = [:]
+    private static var thumbnails: [String: NSImage] = [:]
+    private static var pending: Set<String> = []
+
+    static func icon(for path: String) -> NSImage {
+        if let icon = icons[path] { return icon }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icons[path] = icon
+        return icon
+    }
+
+    /// The best image there is right now: the thumbnail once made, else the icon.
+    static func image(for path: String) -> NSImage {
+        thumbnails[path] ?? icon(for: path)
+    }
+
+    static func cachedThumbnail(for path: String) -> NSImage? { thumbnails[path] }
+
+    static func thumbnail(for path: String) async -> NSImage? {
+        if let image = thumbnails[path] { return image }
+        guard pending.insert(path).inserted else { return nil }
+        defer { pending.remove(path) }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let request = QLThumbnailGenerator.Request(fileAt: URL(fileURLWithPath: path), size: CGSize(width: 128, height: 128),
+                                                   scale: scale, representationTypes: .all)
+        request.iconMode = true
+        guard let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) else { return nil }
+        let image = representation.nsImage
+        thumbnails[path] = image
+        return image
+    }
+
+    static func forget(_ paths: [String]) {
+        paths.forEach { icons[$0] = nil; thumbnails[$0] = nil }
+    }
+}
+
+/// Drives the shared Quick Look panel directly, since a shelf panel never
+/// becomes part of an active responder chain.
+@MainActor
+final class QuickLook: NSObject, QLPreviewPanelDataSource {
+    static let shared = QuickLook()
+    private var urls: [URL] = []
+
+    func show(_ urls: [URL]) {
+        guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
+        self.urls = urls
+        NSApp.activate(ignoringOtherApps: true)
+        panel.dataSource = self
+        panel.reloadData()
+        panel.currentPreviewItemIndex = 0
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        MainActor.assumeIsolated { urls.count }
+    }
+
+    nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        MainActor.assumeIsolated { urls[index] as NSURL }
+    }
+}

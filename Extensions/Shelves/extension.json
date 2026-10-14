@@ -1,0 +1,11 @@
+{
+  "id": "shelves",
+  "name": "Shelves",
+  "version": "1.0.0",
+  "summary": "Shake while dragging files to drop them on a floating shelf, then drag them out wherever you need them.",
+  "symbol": "rectangle.stack.fill",
+  "tint": "#30B85C",
+  "principalClass": "ShelvesPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.3.0" },
+  "creator": { "name": "XNotch" }
+}
