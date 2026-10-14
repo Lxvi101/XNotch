@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Build XNotch and wrap it in an .app bundle (LSUIElement, no Dock icon).
 # usage: scripts/build_app.sh [--run]
-# ARCHITECTURES="arm64 x86_64" (default); CODE_SIGN_IDENTITY for Developer ID builds.
+# ARCHITECTURES="arm64 x86_64" (default); CODE_SIGN_IDENTITY to choose the signing identity
+# (default: the keychain's Developer ID Application identity, else ad-hoc; "-" forces ad-hoc).
 set -euo pipefail
 ROOT=${0:A:h:h}
 cd "$ROOT"
@@ -82,14 +83,28 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-SIGN_FLAGS=(--force --sign "${CODE_SIGN_IDENTITY:--}")
-if [[ "${CODE_SIGN_IDENTITY:--}" != "-" ]]; then SIGN_FLAGS+=(--options runtime --timestamp); fi
+# Local builds sign with the Developer ID identity when the keychain has one.
+# An ad-hoc signature identifies the app by its hash, which changes with every
+# build, so macOS treats each build as a new app: the Keychain asks again for
+# every item and privacy grants stop applying. A real identity keeps the app's
+# designated requirement (bundle ID + team) the same across builds and releases.
+# CODE_SIGN_IDENTITY=- forces ad-hoc.
+TIMESTAMP=(--timestamp)
+if [[ -z "${CODE_SIGN_IDENTITY:-}" ]]; then
+    CODE_SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+        | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)
+    CODE_SIGN_IDENTITY=${CODE_SIGN_IDENTITY:--}
+    # No secure timestamp for local builds, so they build offline.
+    TIMESTAMP=(--timestamp=none)
+fi
+SIGN_FLAGS=(--force --sign "$CODE_SIGN_IDENTITY")
+if [[ "$CODE_SIGN_IDENTITY" != "-" ]]; then SIGN_FLAGS+=(--options runtime "${TIMESTAMP[@]}"); fi
 sign() { codesign "${SIGN_FLAGS[@]}" "$1" >/dev/null; }
 # Sign from the inside out; never use --deep to sign nested code.
 sign "$APP/Contents/Frameworks/libXNotchKit.dylib"
 sign "$APP/Contents/Resources/MediaRemoteAdapter.framework"
 for EXT in "$APP/Contents/PlugIns/"*.xnext(N); do sign "$EXT"; done
-if [[ "${CODE_SIGN_IDENTITY:--}" != "-" ]]; then
+if [[ "$CODE_SIGN_IDENTITY" != "-" ]]; then
     FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
     codesign "${SIGN_FLAGS[@]}" --preserve-metadata=entitlements "$FRAMEWORK/XPCServices/Downloader.xpc" >/dev/null
     sign "$FRAMEWORK/XPCServices/Installer.xpc"
