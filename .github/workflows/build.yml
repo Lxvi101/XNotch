@@ -44,11 +44,12 @@ jobs:
           PY
           )
           sudo xcode-select -s "$XCODE_PATH"
-      - name: Test the link, Cloud Links and iPhone & iPad
+      - name: Test the link, Cloud Links, iPhone & iPad and Vitals
         run: |
           swift test --package-path Shared/XNotchLink
           swift test --package-path Extensions/Cloud
           swift test --package-path Extensions/Companion
+          swift test --package-path Extensions/Vitals
   server:
     runs-on: ubuntu-latest
     defaults:

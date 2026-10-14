@@ -1,0 +1,11 @@
+{
+  "id": "vitals",
+  "name": "Vitals",
+  "version": "1.0.0",
+  "summary": "Your Mac's CPU, memory and network, at a glance.",
+  "symbol": "waveform.path.ecg",
+  "tint": "#FF453A",
+  "principalClass": "VitalsPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.4.0" },
+  "creator": { "name": "XNotch" }
+}
