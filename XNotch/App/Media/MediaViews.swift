@@ -129,54 +129,118 @@ struct MediaPlayerPage: View {
 /// leading edge in the direction of travel is faster — so it stretches
 /// toward the target and contracts as it arrives, passing behind the camera
 /// on its way from one side to the other. Laid out across the whole header.
+///
+/// Drag a segment to rearrange the pages: it lifts and follows the pointer
+/// one to one, the others make way, and it settles where it's let go.
 struct PageSwitcher: View {
     let pages: [PageInfo]
     let page: OpenPage
     let notchSize: CGSize
     let onSelect: (OpenPage) -> Void
+    let onMove: (OpenPage, Int) -> Void
+
+    private struct Drag: Equatable {
+        var page: OpenPage
+        /// The pointer, in header coordinates.
+        var x: CGFloat
+        /// Where in the segment it was picked up.
+        var grab: CGFloat
+    }
 
     @State private var leading: CGFloat = 0
     @State private var trailing: CGFloat = 0
+    @State private var drag: Drag?
 
     static var headerWidth: CGFloat { MediaLayout.openWidth + 2 * NotchMetrics.shelfTopCornerRadius }
+    private static let space = "pageSwitcher"
 
     /// A segment in header coordinates (PillLayout's are from the notch's centre).
     private func frame(of index: Int) -> CGRect {
         PillLayout.segmentFrame(index: index, count: pages.count, notch: notchSize).offsetBy(dx: Self.headerWidth / 2, dy: 0)
     }
 
-    var body: some View {
-        let height = PillLayout.segmentHeight
-        ZStack(alignment: .topLeading) {
-            ForEach(PillLayout.groupFrames(count: pages.count, notch: notchSize), id: \.minX) { group in
-                Capsule()
-                    .fill(.white.opacity(0.06))
-                    .frame(width: group.width, height: group.height)
-                    .offset(x: group.minX + Self.headerWidth / 2, y: group.minY)
-            }
-            Capsule()
-                .fill(.white.opacity(0.15))
-                .frame(width: max(height, trailing - leading), height: height)
-                .offset(x: leading, y: (notchSize.height - height) / 2)
-            ForEach(Array(pages.enumerated()), id: \.element.id) { index, info in
-                let frame = frame(of: index)
-                segmentButton(info)
-                    .frame(width: frame.width, height: frame.height)
-                    .offset(x: frame.minX, y: frame.minY)
-            }
-        }
-        .frame(width: Self.headerWidth, height: notchSize.height, alignment: .topLeading)
-        .onAppear { setEdges(for: page, from: nil) }
-        .onChange(of: page) { old, new in setEdges(for: new, from: old) }
-        .onChange(of: pages.map(\.page)) { _, _ in setEdges(for: page, from: nil) }
+    /// The pages as they'd land if the dragged one were let go now.
+    private var arranged: [PageInfo] {
+        guard let drag, let from = pages.firstIndex(where: { $0.page == drag.page }) else { return pages }
+        var result = pages
+        let moved = result.remove(at: from)
+        result.insert(moved, at: slot(for: draggedFrame(drag).midX))
+        return result
     }
 
-    private func segmentButton(_ info: PageInfo) -> some View {
+    /// The nearest segment to a point, across both sides of the camera.
+    private func slot(for x: CGFloat) -> Int {
+        (0..<pages.count).min { abs(frame(of: $0).midX - x) < abs(frame(of: $1).midX - x) } ?? 0
+    }
+
+    /// The dragged segment under the pointer, kept within the switcher.
+    private func draggedFrame(_ drag: Drag) -> CGRect {
+        let base = frame(of: 0)
+        let lowest = base.minX
+        let highest = frame(of: pages.count - 1).minX
+        return CGRect(x: min(highest, max(lowest, drag.x - drag.grab)), y: base.minY, width: base.width, height: base.height)
+    }
+
+    var body: some View {
+        let arranged = arranged
+        ZStack(alignment: .topLeading) {
+            groups
+            if drag?.page != page { indicator }
+            segments(arranged)
+        }
+        .frame(width: Self.headerWidth, height: notchSize.height, alignment: .topLeading)
+        .coordinateSpace(name: Self.space)
+        .onAppear { setEdges(for: page, from: nil) }
+        .onChange(of: page) { old, new in setEdges(for: new, from: old) }
+        .onChange(of: arranged.map(\.page)) { _, _ in
+            if drag != nil { Haptics.tap() }
+            withAnimation(Motion.content) { setEdges(for: page, from: nil) }
+        }
+    }
+
+    private var groups: some View {
+        ForEach(PillLayout.groupFrames(count: pages.count, notch: notchSize), id: \.minX) { group in
+            Capsule()
+                .fill(.white.opacity(0.06))
+                .frame(width: group.width, height: group.height)
+                .offset(x: group.minX + Self.headerWidth / 2, y: group.minY)
+        }
+    }
+
+    /// Hidden while its page is the one being dragged, which lights itself.
+    private var indicator: some View {
+        let height = PillLayout.segmentHeight
+        return Capsule()
+            .fill(.white.opacity(0.15))
+            .frame(width: max(height, trailing - leading), height: height)
+            .offset(x: leading, y: (notchSize.height - height) / 2)
+    }
+
+    private func segments(_ arranged: [PageInfo]) -> some View {
+        let order = arranged.map(\.page)
+        return ForEach(Array(arranged.enumerated()), id: \.element.id) { index, info in
+            let isDragged = drag?.page == info.page
+            let frame: CGRect = if isDragged, let drag { draggedFrame(drag) } else { frame(of: index) }
+            segmentButton(info, isDragged: isDragged)
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX, y: frame.minY)
+                .zIndex(isDragged ? 1 : 0)
+                // The dragged one sits under the pointer; only the others make way.
+                .animation(isDragged ? nil : Motion.content, value: order)
+        }
+    }
+
+    private func segmentButton(_ info: PageInfo, isDragged: Bool) -> some View {
         Button { onSelect(info.page) } label: {
             Image(systemName: info.symbol)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(page == info.page ? 1 : 0.45))
+                .foregroundStyle(.white.opacity(page == info.page || isDragged ? 1 : 0.45))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    Capsule()
+                        .fill(.white.opacity(isDragged ? (page == info.page ? 0.24 : 0.16) : 0))
+                        .shadow(color: .black.opacity(isDragged ? 0.5 : 0), radius: 6, y: 2)
+                }
                 .overlay(alignment: .topTrailing) {
                     if info.badge > 0 {
                         Text("\(info.badge)")
@@ -189,14 +253,37 @@ struct PageSwitcher: View {
                             .offset(x: 2, y: -3)
                     }
                 }
+                .scaleEffect(isDragged ? 1.18 : 1)
+                .animation(Motion.press, value: isDragged)
                 .contentShape(Rectangle())
                 .animation(Motion.content, value: page)
         }
         .buttonStyle(PressScaleStyle())
+        // Takes over only once the pointer has moved, so a click still switches pages.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 3, coordinateSpace: .named(Self.space))
+                .onChanged { value in
+                    if drag?.page != info.page {
+                        let start = frame(of: pages.firstIndex { $0.page == info.page } ?? 0)
+                        drag = Drag(page: info.page, x: value.location.x, grab: value.startLocation.x - start.minX)
+                        Haptics.tap()
+                    } else {
+                        drag?.x = value.location.x
+                    }
+                }
+                .onEnded { _ in
+                    guard let dropped = drag else { return }
+                    let index = arranged.firstIndex { $0.page == dropped.page } ?? 0
+                    withAnimation(Motion.content) {
+                        drag = nil
+                        onMove(dropped.page, index)
+                    }
+                }
+        )
     }
 
     private func index(of target: OpenPage) -> Int {
-        pages.firstIndex { $0.page == target } ?? 0
+        arranged.firstIndex { $0.page == target } ?? 0
     }
 
     private func setEdges(for target: OpenPage, from old: OpenPage?) {

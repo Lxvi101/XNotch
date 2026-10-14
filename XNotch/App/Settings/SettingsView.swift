@@ -64,7 +64,8 @@ struct SettingsView: View {
     private var detail: some View {
         switch navigation.selection {
         case .general:
-            GeneralPane(preferences: preferences, permissions: .shared, onReplayOnboarding: onReplayOnboarding)
+            GeneralPane(preferences: preferences, permissions: .shared, extensions: extensions,
+                        onReplayOnboarding: onReplayOnboarding)
                 .navigationTitle("General")
         case .music:
             MusicPane(preferences: preferences, media: media).navigationTitle("Music")
@@ -112,7 +113,22 @@ struct SettingsIcon: View {
 private struct GeneralPane: View {
     @ObservedObject var preferences: Preferences
     @ObservedObject var permissions: PermissionCenter
+    @ObservedObject var extensions: ExtensionManager
     let onReplayOnboarding: () -> Void
+
+    /// Every page the notch can show, in the user's order. Music is listed
+    /// whenever it's on, even with nothing playing.
+    private var pages: [PageInfo] {
+        var infos: [PageInfo] = []
+        if preferences.showsMediaInNotch {
+            infos.append(PageInfo(page: .media, title: "Music", symbol: "music.note", badge: 0))
+        }
+        infos.append(PageInfo(page: .shelf, title: "Shelf", symbol: "tray.full.fill", badge: 0))
+        infos += extensions.pageProviders.flatMap { id, provider in
+            provider.pages.map { PageInfo(page: .extensionPage(id, $0.id), title: $0.title, symbol: $0.symbol, badge: 0) }
+        }
+        return PageOrder.sorted(infos, by: preferences.pageOrder)
+    }
 
     var body: some View {
         Form {
@@ -135,6 +151,28 @@ private struct GeneralPane: View {
                 .disabled(!preferences.showsDestinationPills)
             } header: {
                 Text("Notch")
+            }
+            Section {
+                let pages = pages
+                ForEach(pages) { info in
+                    HStack(spacing: 10) {
+                        Image(systemName: info.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(info.title)
+                    }
+                }
+                .onMove { source, destination in
+                    guard let from = source.first else { return }
+                    let to = destination > from ? destination - 1 : destination
+                    preferences.pageOrder = PageOrder.moving(pages[from].page, to: to, among: pages, in: preferences.pageOrder)
+                }
+            } header: {
+                Text("Pages")
+            } footer: {
+                Text("Drag to reorder, or drag the icons in the open notch. The first four sit left of the camera, the rest on its right. Music only shows while something plays.")
+                    .foregroundStyle(.secondary)
             }
             Section {
                 ForEach(Permission.requested) { permission in

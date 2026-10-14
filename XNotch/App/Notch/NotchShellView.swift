@@ -92,7 +92,8 @@ struct NotchShellView: View {
     }
 
     private func openHeader(_ destinations: [PageInfo]) -> some View {
-        PageSwitcher(pages: destinations, page: model.page, notchSize: model.notchSize, onSelect: model.selectPage)
+        PageSwitcher(pages: destinations, page: model.page, notchSize: model.notchSize, onSelect: model.selectPage,
+                     onMove: model.movePage)
     }
 }
 

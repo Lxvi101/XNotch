@@ -23,6 +23,20 @@ struct VitalsPage: View {
     @State private var token = UUID()
     /// The tile that opened last stays on top while it closes again.
     @State private var raised: Metric?
+    /// A tile being dragged to a new place.
+    @State private var drag: TileDrag?
+    /// When a drag last ended: the click that ends it doesn't also open the tile.
+    @State private var droppedAt = Date.distantPast
+
+    private struct TileDrag: Equatable {
+        var metric: Metric
+        /// The pointer, in the tiles' coordinates.
+        var x: CGFloat
+        /// Where in the tile it was picked up.
+        var grab: CGFloat
+    }
+
+    static let space = "vitals.tiles"
 
     /// The canvas is 260 pt tall, notch and padding included: stay inside it.
     static let maxHeight: CGFloat = 208
@@ -72,19 +86,30 @@ struct VitalsPage: View {
                 let area = CGSize(width: size.width - 8,
                                   height: (opened == nil ? Self.tilesHeight : Self.height(for: model)) - 4)
                 let openArea = CGSize(width: area.width, height: Self.openHeight(for: model) - 4)
+                let arranged = arranged(metrics, in: area)
                 ZStack(alignment: .topLeading) {
-                    ForEach(Array(metrics.enumerated()), id: \.element) { index, metric in
-                        let frame = Self.frame(of: index, count: metrics.count, in: area, opened: opened)
+                    ForEach(Array(arranged.enumerated()), id: \.element) { index, metric in
+                        let isDragged = drag?.metric == metric
+                        let frame = isDragged ? draggedFrame(count: metrics.count, in: area)
+                            : Self.frame(of: index, count: metrics.count, in: area, opened: opened)
                         VitalCard(metric: metric, model: model, extension: `extension`,
                                   isOpen: opened == index, isPushedAway: opened != nil && opened != index,
+                                  isDragged: isDragged, canDrag: `extension` != nil && opened == nil,
                                   size: frame.size,
                                   closedSize: Self.frame(of: index, count: metrics.count, in: area, opened: nil).size,
-                                  openSize: openArea)
+                                  openSize: openArea,
+                                  onDrag: { value in dragged(metric, value, metrics: metrics, in: area) },
+                                  onDrop: { drop(arranged) },
+                                  tapAllowed: { drag == nil && Date().timeIntervalSince(droppedAt) > 0.25 })
                             .offset(x: frame.minX, y: frame.minY)
-                            .zIndex(metric == raised ? 1 : 0)
+                            .zIndex(isDragged ? 2 : metric == raised ? 1 : 0)
+                            // The dragged tile sits under the pointer; only the others make way.
+                            .animation(isDragged ? nil : KitMotion.content, value: arranged)
                             .transition(.scale(scale: 0.85).combined(with: .opacity))
                     }
                 }
+                .coordinateSpace(name: Self.space)
+                .onChange(of: arranged) { _, _ in if drag != nil { `extension`?.tick() } }
                 .frame(width: area.width, height: area.height, alignment: .topLeading)
                 .padding(.horizontal, 4)
                 .padding(.bottom, 4)
@@ -97,6 +122,50 @@ struct VitalsPage: View {
         .onChange(of: isActive && isVisible) { _, watching in watch(watching) }
         .onChange(of: model.expanded) { _, metric in
             if let metric { raised = metric }
+        }
+    }
+
+    // MARK: Rearranging
+
+    /// The tiles as they'd land if the dragged one were let go now.
+    private func arranged(_ metrics: [Metric], in area: CGSize) -> [Metric] {
+        guard let drag, let from = metrics.firstIndex(of: drag.metric) else { return metrics }
+        let center = draggedFrame(count: metrics.count, in: area).midX
+        let slot = (0..<metrics.count).min {
+            abs(Self.frame(of: $0, count: metrics.count, in: area, opened: nil).midX - center)
+                < abs(Self.frame(of: $1, count: metrics.count, in: area, opened: nil).midX - center)
+        } ?? from
+        var result = metrics
+        result.remove(at: from)
+        result.insert(drag.metric, at: slot)
+        return result
+    }
+
+    /// The dragged tile under the pointer, kept within the row.
+    private func draggedFrame(count: Int, in area: CGSize) -> CGRect {
+        let first = Self.frame(of: 0, count: count, in: area, opened: nil)
+        let last = Self.frame(of: count - 1, count: count, in: area, opened: nil)
+        let x = (drag?.x ?? 0) - (drag?.grab ?? 0)
+        return CGRect(x: min(last.minX, max(first.minX, x)), y: first.minY, width: first.width, height: first.height)
+    }
+
+    private func dragged(_ metric: Metric, _ value: DragGesture.Value, metrics: [Metric], in area: CGSize) {
+        if drag?.metric == metric {
+            drag?.x = value.location.x
+        } else if let index = metrics.firstIndex(of: metric) {
+            let start = Self.frame(of: index, count: metrics.count, in: area, opened: nil)
+            drag = TileDrag(metric: metric, x: value.location.x, grab: value.startLocation.x - start.minX)
+            `extension`?.tick()
+        }
+    }
+
+    /// Settles the tile where it was let go and keeps the new order.
+    private func drop(_ arranged: [Metric]) {
+        guard drag != nil else { return }
+        droppedAt = Date()
+        withAnimation(KitMotion.content) {
+            drag = nil
+            model.settings.order = arranged + model.settings.order.filter { !arranged.contains($0) }
         }
     }
 
@@ -124,11 +193,17 @@ private struct VitalCard: View {
     let `extension`: VitalsExtension?
     let isOpen: Bool
     let isPushedAway: Bool
+    /// Lifted under the pointer while being dragged to a new place.
+    let isDragged: Bool
+    let canDrag: Bool
     /// The tile's size now. Exact, so the open layout it keeps mounted (wider
     /// than a closed tile) can never stretch it.
     let size: CGSize
     let closedSize: CGSize
     let openSize: CGSize
+    let onDrag: (DragGesture.Value) -> Void
+    let onDrop: () -> Void
+    let tapAllowed: () -> Bool
 
     private var gauge: Gauge { model.gauge(for: metric) }
     private var tint: Color { Color(hex: metric.tintHex) ?? .white }
@@ -171,9 +246,16 @@ private struct VitalCard: View {
             .contentShape(Shape.tile)
             // Open, the rows take the clicks; closed, the whole tile is one button.
             .gesture(TapGesture().onEnded(activate), including: isOpen ? .subviews : .all)
+            // Only once the pointer has moved, so a click still opens the tile.
+            .simultaneousGesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(VitalsPage.space))
+                                    .onChanged(onDrag).onEnded { _ in onDrop() },
+                                 including: canDrag ? .all : .subviews)
             .scaleEffect(lifted ? 1.015 : 1)
             .animation(KitMotion.content, value: lifted)
             .modifier(PushedAway(progress: isPushedAway ? 1 : 0))
+            .scaleEffect(isDragged ? 1.04 : 1)
+            .shadow(color: .black.opacity(isDragged ? 0.55 : 0), radius: 12, y: 5)
+            .animation(KitMotion.press, value: isDragged)
             .allowsHitTesting(!isPushedAway)
         }
         .modifier(TileMenu(extension: `extension`, isOpen: isOpen))
@@ -189,7 +271,7 @@ private struct VitalCard: View {
     }
 
     private func activate() {
-        guard !isOpen else { return }
+        guard !isOpen, tapAllowed() else { return }
         if opensBreakdown {
             withAnimation(KitMotion.shell) { model.expanded = metric }
         } else {

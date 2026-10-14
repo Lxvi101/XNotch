@@ -22,6 +22,9 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(Array(knownExtensions).sorted(), forKey: Key.knownExtensions) }
     }
     @Published var hasCompletedOnboarding: Bool { didSet { defaults.set(hasCompletedOnboarding, forKey: Key.onboarding) } }
+    /// The user's order of the notch's pages, by `OpenPage.id`. Pages not in it
+    /// (new extensions) follow in their usual order.
+    @Published var pageOrder: [String] { didSet { defaults.set(pageOrder, forKey: Key.pageOrder) } }
     @Published private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
     private enum Key {
@@ -34,6 +37,7 @@ final class Preferences: ObservableObject {
         static let disabledExtensions = "disabledExtensions"
         static let knownExtensions = "knownExtensions"
         static let onboarding = "hasCompletedOnboarding"
+        static let pageOrder = "pageOrder"
     }
 
     private init() {
@@ -49,6 +53,7 @@ final class Preferences: ObservableObject {
         showsHeadphonesInNotch = defaults.bool(forKey: Key.headphones)
         disabledExtensions = Set(defaults.stringArray(forKey: Key.disabledExtensions) ?? [])
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
+        pageOrder = defaults.stringArray(forKey: Key.pageOrder) ?? []
         // Before extensions were opt-in, Folders came switched on; it stays as the user left it.
         knownExtensions = Set(defaults.stringArray(forKey: Key.knownExtensions)
             ?? (defaults.bool(forKey: Key.onboarding) ? ["folders"] : []))

@@ -45,6 +45,11 @@ final class VitalsExtension: XNotchExtension {
         host.notch.close()
     }
 
+    /// The trackpad tick, for a tile picked up or passing a slot.
+    func tick() {
+        host?.feedback.tick()
+    }
+
     func customize() {
         host?.notch.openSettings()
     }

@@ -114,6 +114,11 @@ final class NotchViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.headphonesPreferenceChanged() }
             .store(in: &cancellables)
+        // Synchronous, so a dropped icon lands in the same transaction it was let go in.
+        preferences.$pageOrder
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         preferences.$pillsIconOnly
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -199,7 +204,14 @@ final class NotchViewModel: ObservableObject {
         infos += extensionPages.map {
             PageInfo(page: $0.page, title: $0.descriptor.title, symbol: $0.descriptor.symbol, badge: $0.descriptor.badge ?? 0)
         }
-        return infos
+        return PageOrder.sorted(infos, by: preferences.pageOrder)
+    }
+
+    /// Rearranged by dragging an icon in the header, or in Settings.
+    func movePage(_ page: OpenPage, to index: Int) {
+        let order = PageOrder.moving(page, to: index, among: destinationInfos, in: preferences.pageOrder)
+        guard order != preferences.pageOrder else { return }
+        preferences.pageOrder = order
     }
 
     var destinations: [OpenPage] { destinationInfos.map(\.page) }
