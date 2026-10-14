@@ -12,6 +12,7 @@ final class Preferences: ObservableObject {
     @Published var pillsIconOnly: Bool { didSet { defaults.set(pillsIconOnly, forKey: Key.pillsIconOnly) } }
     @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: Key.haptics) } }
     @Published var showsMediaInNotch: Bool { didSet { defaults.set(showsMediaInNotch, forKey: Key.media) } }
+    @Published var showsHeadphonesInNotch: Bool { didSet { defaults.set(showsHeadphonesInNotch, forKey: Key.headphones) } }
     @Published var lockScreenMediaEnabled: Bool { didSet { defaults.set(lockScreenMediaEnabled, forKey: Key.lockScreen) } }
     @Published var disabledExtensions: Set<String> {
         didSet { defaults.set(Array(disabledExtensions).sorted(), forKey: Key.disabledExtensions) }
@@ -29,6 +30,7 @@ final class Preferences: ObservableObject {
         static let haptics = "hapticsEnabled"
         static let media = "showsMediaInNotch"
         static let lockScreen = "lockScreenMediaEnabled"
+        static let headphones = "showsHeadphonesInNotch"
         static let disabledExtensions = "disabledExtensions"
         static let knownExtensions = "knownExtensions"
         static let onboarding = "hasCompletedOnboarding"
@@ -36,13 +38,15 @@ final class Preferences: ObservableObject {
 
     private init() {
         defaults.register(defaults: [
-            Key.pills: true, Key.pillsIconOnly: false, Key.haptics: true, Key.media: true, Key.lockScreen: true
+            Key.pills: true, Key.pillsIconOnly: false, Key.haptics: true, Key.media: true, Key.lockScreen: true,
+            Key.headphones: true
         ])
         showsDestinationPills = defaults.bool(forKey: Key.pills)
         pillsIconOnly = defaults.bool(forKey: Key.pillsIconOnly)
         hapticsEnabled = defaults.bool(forKey: Key.haptics)
         showsMediaInNotch = defaults.bool(forKey: Key.media)
         lockScreenMediaEnabled = defaults.bool(forKey: Key.lockScreen)
+        showsHeadphonesInNotch = defaults.bool(forKey: Key.headphones)
         disabledExtensions = Set(defaults.stringArray(forKey: Key.disabledExtensions) ?? [])
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
         // Before extensions were opt-in, Folders came switched on; it stays as the user left it.

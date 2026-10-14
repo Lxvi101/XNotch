@@ -33,6 +33,7 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var shelfReveal: CGFloat = 0
     @Published private(set) var mediaOpenReveal: CGFloat = 0
     @Published private(set) var trayWingsReveal: CGFloat = 0
+    @Published private(set) var headphonesReveal: CGFloat = 0
     @Published private(set) var mediaWingsReveal: CGFloat = 0
     /// 0 = shared media elements sit in the wings, 1 = in the open layout.
     @Published private(set) var mediaPlacement: CGFloat = 0
@@ -56,6 +57,7 @@ final class NotchViewModel: ObservableObject {
     let extensions = ExtensionManager()
     let preferences = Preferences.shared
     let eyes = NotchEyes()
+    let headphones = HeadphonesMonitor()
     /// Tile frames in canvas coordinates, reported by the shelf layout.
     var tileFrames: [UUID: CGRect] = [:]
     /// Asks the controller to re-read the pointer after AppKit swallowed events (drag sessions).
@@ -66,6 +68,7 @@ final class NotchViewModel: ObservableObject {
     private var isPressed = false
     private var isDraggingOut = false
     private var showsTrayWings = false
+    private var showsHeadphones = false
     /// Who wants the eyes up: the onboarding, a permission guide.
     private var eyesReasons: Set<EyesReason> = []
     /// Media wings stay up while playing and for a moment after pausing.
@@ -74,6 +77,7 @@ final class NotchViewModel: ObservableObject {
     private var pillsWanted = false
     private var collapseWork: DispatchWorkItem?
     private var trayWingsWork: DispatchWorkItem?
+    private var headphonesWork: DispatchWorkItem?
     private var mediaIdleWork: DispatchWorkItem?
     private var mediaGoneWork: DispatchWorkItem?
     private var pillsWork: DispatchWorkItem?
@@ -99,6 +103,12 @@ final class NotchViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.mediaPreferenceChanged() }
             .store(in: &cancellables)
+        headphones.onConnect = { [weak self] _ in self?.showHeadphonesToast() }
+        preferences.$showsHeadphonesInNotch
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.headphonesPreferenceChanged() }
+            .store(in: &cancellables)
         preferences.$pillsIconOnly
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -121,6 +131,7 @@ final class NotchViewModel: ObservableObject {
         shelf.load()
         extensions.loadAll()
         extensionPagesChanged()
+        if preferences.showsHeadphonesInNotch { headphones.start() }
     }
 
     func setPresentingOnboarding(_ presenting: Bool) {
@@ -139,6 +150,7 @@ final class NotchViewModel: ObservableObject {
 
     var restingGeometry: NotchShellGeometry {
         if showsEyes { return NotchMetrics.eyes(notchSize) }
+        if showsHeadphones { return NotchMetrics.headphonesWings(notchSize) }
         if showsTrayWings { return NotchMetrics.wings(notchSize) }
         if showsMediaActivity { return NotchMetrics.mediaWings(notchSize) }
         return NotchMetrics.closed(notchSize)
@@ -158,7 +170,9 @@ final class NotchViewModel: ObservableObject {
     }
 
     /// Whether a click lands on the closed media wings' play/pause glyph.
-    var showsMediaWings: Bool { surface == .closed && !showsEyes && !showsTrayWings && showsMediaActivity }
+    var showsMediaWings: Bool {
+        surface == .closed && !showsEyes && !showsHeadphones && !showsTrayWings && showsMediaActivity
+    }
 
     /// Re-read when an extension reports its pages changed, not per render.
     private(set) var extensionPages: [ExtensionPage] = []
@@ -213,7 +227,8 @@ final class NotchViewModel: ObservableObject {
             extensionReveal = Dictionary(uniqueKeysWithValues: extensionPages.map {
                 ($0.page.id, surface == .open && page == $0.page ? CGFloat(1) : 0)
             })
-            trayWingsReveal = surface == .closed && showsTrayWings && !showsEyes ? 1 : 0
+            headphonesReveal = surface == .closed && showsHeadphones && !showsEyes ? 1 : 0
+            trayWingsReveal = surface == .closed && showsTrayWings && !showsHeadphones && !showsEyes ? 1 : 0
             eyesReveal = surface == .closed && showsEyes ? 1 : 0
             mediaWingsReveal = showsMediaWings ? 1 : 0
             // Elements on their way out fade where they are.
@@ -370,9 +385,12 @@ final class NotchViewModel: ObservableObject {
         cancelCollapse()
         guard surface != .open else { return selectPage(target) }
         cancelTrayWingsTimer()
+        cancelHeadphonesTimer()
         surface = .open
         page = target
         showsTrayWings = false
+        showsHeadphones = false
+        headphones.dismiss()
         pillsWanted = false
         pillsWork?.cancel()
         highlightedPill = nil
@@ -590,6 +608,7 @@ final class NotchViewModel: ObservableObject {
 
     func fileDragBegan() {
         hideTrayWings()
+        hideHeadphones()
     }
 
     func enterDropZone() {
@@ -691,6 +710,65 @@ final class NotchViewModel: ObservableObject {
     private func cancelTrayWingsTimer() {
         trayWingsWork?.cancel()
         trayWingsWork = nil
+    }
+
+    // MARK: Headphones
+
+    /// Headphones or a speaker connected: their wings show for a moment, longer while hovered.
+    private func showHeadphonesToast() {
+        guard surface == .closed, !isPresentingOnboarding else {
+            headphones.dismiss()
+            return
+        }
+        let wasShowing = showsHeadphones
+        showsHeadphones = true
+        if !wasShowing {
+            render(Motion.open)
+            Haptics.tap()
+        }
+        scheduleHeadphonesHide()
+        onPointerSyncNeeded?()
+    }
+
+    private func scheduleHeadphonesHide() {
+        cancelHeadphonesTimer()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if isPointerInside {
+                scheduleHeadphonesHide()
+            } else {
+                hideHeadphones()
+            }
+        }
+        headphonesWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchMetrics.headphonesToastDuration, execute: work)
+    }
+
+    func hideHeadphones() {
+        cancelHeadphonesTimer()
+        guard showsHeadphones else { return }
+        showsHeadphones = false
+        render(Motion.close)
+        onPointerSyncNeeded?()
+        // Keep the device on screen while the wings fold away.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !showsHeadphones else { return }
+            headphones.dismiss()
+        }
+    }
+
+    private func cancelHeadphonesTimer() {
+        headphonesWork?.cancel()
+        headphonesWork = nil
+    }
+
+    private func headphonesPreferenceChanged() {
+        if preferences.showsHeadphonesInNotch {
+            if servicesStarted { headphones.start() }
+        } else {
+            hideHeadphones()
+            headphones.stop()
+        }
     }
 
     // MARK: Collapse

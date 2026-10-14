@@ -210,6 +210,10 @@ private struct MusicPane: View {
                     Text("Show Now Playing in the notch")
                     Text("Artwork and a visualizer sit beside the camera while something plays. Hover the right side for play and pause.")
                 }
+                Toggle(isOn: $preferences.showsHeadphonesInNotch) {
+                    Text("Show headphones when they connect")
+                    Text("AirPods, Beats and other Bluetooth headphones and speakers appear beside the camera for a moment, with their battery.")
+                }
             }
             Section("Now Playing") {
                 if let track = media.track {

@@ -26,6 +26,8 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 cp -R ThirdParty/mediaremote-adapter/MediaRemoteAdapter.framework \
       ThirdParty/mediaremote-adapter/mediaremote-adapter.pl "$APP/Contents/Resources/"
 cp Kit/README.md "$APP/Contents/Resources/XNotchKit.md"
+# Headphones turning in the notch when they connect (from Atoll).
+ditto ThirdParty/Atoll/Headphones "$APP/Contents/Resources/Headphones"
 # The app icon, rendered from the drawing in AppIcon.swift.
 ICON_WORK="$ROOT/build/icon"
 rm -rf "$ICON_WORK"
@@ -69,7 +71,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSLocalNetworkUsageDescription</key><string>XNotch receives files and text from your iPhone and iPad on this network.</string>
     <key>NSBonjourServices</key><array><string>_xnotchlink._tcp</string></array>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-    <key>NSBluetoothAlwaysUsageDescription</key><string>XNotch receives files from your iPhone and iPad over Bluetooth when there's no Wi-Fi.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>XNotch shows your headphones when they connect, and receives files from your iPhone and iPad over Bluetooth when there's no Wi-Fi.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

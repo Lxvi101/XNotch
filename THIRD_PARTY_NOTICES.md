@@ -2,7 +2,7 @@
 
 XNotch is distributed under GPL-3.0-or-later. See LICENSE. Individual files retain their attribution notices.
 
-- **Atoll / boring.notch**: portions of Now Playing handling, shelf interactions, thumbnails and drag detection adapted under GPL-3.0-or-later. Copyright 2024–2026 their contributors. Sources: https://github.com/Ebullioscopic/Atoll and https://github.com/TheBoredTeam/boring.notch.
+- **Atoll / boring.notch**: portions of Now Playing handling, shelf interactions, thumbnails, drag detection and headphone detection adapted under GPL-3.0-or-later. The headphone animations in ThirdParty/Atoll/Headphones come from Atoll. Copyright 2024–2026 their contributors. Sources: https://github.com/Ebullioscopic/Atoll and https://github.com/TheBoredTeam/boring.notch.
 - **mediaremote-adapter**: Copyright 2025 Jonas van den Berg. BSD 3-Clause; the full license is in ThirdParty/mediaremote-adapter/LICENSE. Source: https://github.com/ungive/mediaremote-adapter. The included framework and Perl adapter enable Now Playing on recent macOS versions.
 - **SkyLightWindow**: Copyright 2025 Lakr Aream. The SkyLight space integration is adapted under MIT; its permission notice is retained in XNotch/App/LockScreen/SkyLightSpace.swift.
 
