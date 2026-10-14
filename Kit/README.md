@@ -115,6 +115,7 @@ While your page is fully hidden XNotch removes its view, so `@State` inside it r
 
 - `storage.defaults`: a UserDefaults suite of your own. `storage.directory` is a private folder under Application Support.
 - `notch`: `open(page:)`, `close()`, `isOpen`, `pagesDidChange()` when a page's title or badge changes, and `openSettings()` to show your pane in Settings (API 1.3.0).
+- `notch.showAlert(_:)` (API 1.4.0): a few seconds in the closed notch's wings, as when headphones connect. A symbol and a word on the left, a short value and an optional ring on the right; `page` is what a click opens. Vitals uses it when the disk fills up or memory runs short. Alert only on a change the user would want to know about, not on every reading.
 - `shelf` (API 1.3.0): `files` on the shelf, and `add(_:)` to put files there and open the notch on them, as a drop does. The iPhone & iPad extension uses it for files that arrive from a phone.
 - `workspace`: open and reveal files, and `chooseFolders()` for a picker in front of everything.
 - `feedback.tick()`: the trackpad tick, which respects the user's haptics setting.
@@ -123,7 +124,7 @@ While your page is fully hidden XNotch removes its view, so `@State` inside it r
 ## Looking like XNotch
 
 - `KitStyle` has the notch's text colours, fills and green.
-- `KitMotion` has its content and press springs.
+- `KitMotion` has its content and press springs, and `shell` (API 1.4.0), the spring the notch reshapes with. When a change resizes your page (you call `pagesDidChange()` with a new `contentHeight`), animate it with `KitMotion.shell` and lay the new content out at its final size: the notch grows on the same spring, so the two move as one.
 - `PressScaleStyle` is its button press.
 - **Hover:** the notch panel never becomes key while you hover, so AppKit tracking areas (and `onHover`) are unreliable inside it. Wrap hoverable views in `NotchHoverReader { isHovered in … }`, which follows the pointer XNotch publishes and only rebuilds its content when the hover changes.
 - **Right-click menus:** SwiftUI's `contextMenu` doesn't open in the notch for the same reason. Use `notchContextMenu`, which takes right-clicks and control-clicks and lets ordinary clicks through:

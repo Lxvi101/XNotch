@@ -22,7 +22,8 @@ enum Motion {
 
     /// Shell morphing open into a surface.
     static var open: Animation {
-        reduceMotion ? .easeOut(duration: 0.22) : .spring(response: 0.46, dampingFraction: 0.8)
+        // Shared with extensions, whose pages resize along with it.
+        KitMotion.shell
     }
 
     /// Shell settling back into the notch.

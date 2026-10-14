@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// XNotch's visual language, so extension pages read as part of the notch.
@@ -19,6 +20,14 @@ public enum KitMotion {
     /// Content changes inside a surface: selection, hover, reordering.
     public static let content = Animation.spring(response: 0.34, dampingFraction: 0.86)
     public static let press = Animation.spring(response: 0.18, dampingFraction: 0.9)
+
+    /// The notch changing shape: opening, and resizing to a page's new
+    /// height (API 1.4.0). Animate a change that resizes your page with it,
+    /// so your content and the notch move as one body.
+    public static var shell: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.22) : .spring(response: 0.46, dampingFraction: 0.8)
+    }
 }
 
 /// Presses sink slightly and spring back, the notch's button feel.

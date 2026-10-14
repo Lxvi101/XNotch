@@ -34,6 +34,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var mediaOpenReveal: CGFloat = 0
     @Published private(set) var trayWingsReveal: CGFloat = 0
     @Published private(set) var headphonesReveal: CGFloat = 0
+    @Published private(set) var alertReveal: CGFloat = 0
+    /// The extension alert in the wings, or the one waiting for the notch to close.
+    @Published private(set) var alert: ExtensionAlert?
     @Published private(set) var mediaWingsReveal: CGFloat = 0
     /// 0 = shared media elements sit in the wings, 1 = in the open layout.
     @Published private(set) var mediaPlacement: CGFloat = 0
@@ -69,6 +72,7 @@ final class NotchViewModel: ObservableObject {
     private var isDraggingOut = false
     private var showsTrayWings = false
     private var showsHeadphones = false
+    private var showsAlert = false
     /// Who wants the eyes up: the onboarding, a permission guide.
     private var eyesReasons: Set<EyesReason> = []
     /// Media wings stay up while playing and for a moment after pausing.
@@ -78,6 +82,7 @@ final class NotchViewModel: ObservableObject {
     private var collapseWork: DispatchWorkItem?
     private var trayWingsWork: DispatchWorkItem?
     private var headphonesWork: DispatchWorkItem?
+    private var alertWork: DispatchWorkItem?
     private var mediaIdleWork: DispatchWorkItem?
     private var mediaGoneWork: DispatchWorkItem?
     private var pillsWork: DispatchWorkItem?
@@ -151,6 +156,7 @@ final class NotchViewModel: ObservableObject {
     var restingGeometry: NotchShellGeometry {
         if showsEyes { return NotchMetrics.eyes(notchSize) }
         if showsHeadphones { return NotchMetrics.headphonesWings(notchSize) }
+        if showsAlert { return NotchMetrics.alertWings(notchSize) }
         if showsTrayWings { return NotchMetrics.wings(notchSize) }
         if showsMediaActivity { return NotchMetrics.mediaWings(notchSize) }
         return NotchMetrics.closed(notchSize)
@@ -171,7 +177,7 @@ final class NotchViewModel: ObservableObject {
 
     /// Whether a click lands on the closed media wings' play/pause glyph.
     var showsMediaWings: Bool {
-        surface == .closed && !showsEyes && !showsHeadphones && !showsTrayWings && showsMediaActivity
+        surface == .closed && !showsEyes && !showsHeadphones && !showsAlert && !showsTrayWings && showsMediaActivity
     }
 
     /// Re-read when an extension reports its pages changed, not per render.
@@ -198,6 +204,11 @@ final class NotchViewModel: ObservableObject {
 
     var destinations: [OpenPage] { destinationInfos.map(\.page) }
     var defaultDestination: OpenPage { hasMedia ? .media : .shelf }
+    /// What a click on the notch body opens: the showing alert's page, or the default.
+    var bodyDestination: OpenPage {
+        if showsAlert, let page = alert?.page, destinations.contains(page) { return page }
+        return defaultDestination
+    }
     /// The pills (or their pending appearance) extend the hover region.
     var pillsActive: Bool { surface == .closed && (pillsWanted || pillsReveal > 0) }
 
@@ -228,7 +239,8 @@ final class NotchViewModel: ObservableObject {
                 ($0.page.id, surface == .open && page == $0.page ? CGFloat(1) : 0)
             })
             headphonesReveal = surface == .closed && showsHeadphones && !showsEyes ? 1 : 0
-            trayWingsReveal = surface == .closed && showsTrayWings && !showsHeadphones && !showsEyes ? 1 : 0
+            alertReveal = surface == .closed && showsAlert && !showsHeadphones && !showsEyes ? 1 : 0
+            trayWingsReveal = surface == .closed && showsTrayWings && !showsAlert && !showsHeadphones && !showsEyes ? 1 : 0
             eyesReveal = surface == .closed && showsEyes ? 1 : 0
             mediaWingsReveal = showsMediaWings ? 1 : 0
             // Elements on their way out fade where they are.
@@ -327,7 +339,7 @@ final class NotchViewModel: ObservableObject {
             if let pill {
                 target = pill
             } else if onBody && !onMediaGlyph {
-                target = defaultDestination
+                target = bodyDestination
             }
         }
         guard target != highlightedPill else { return }
@@ -370,7 +382,7 @@ final class NotchViewModel: ObservableObject {
             withAnimation(Motion.press) { deformation.impact = .zero }
             media.togglePlayPause()
         } else if isPointerInside {
-            open(page: pill ?? defaultDestination)
+            open(page: pill ?? bodyDestination)
         } else {
             withAnimation(Motion.press) { deformation.impact = .zero }
         }
@@ -386,11 +398,16 @@ final class NotchViewModel: ObservableObject {
         guard surface != .open else { return selectPage(target) }
         cancelTrayWingsTimer()
         cancelHeadphonesTimer()
+        cancelAlertTimer()
         surface = .open
         page = target
         showsTrayWings = false
         showsHeadphones = false
         headphones.dismiss()
+        if showsAlert {
+            showsAlert = false
+            alert = nil
+        }
         pillsWanted = false
         pillsWork?.cancel()
         highlightedPill = nil
@@ -422,6 +439,9 @@ final class NotchViewModel: ObservableObject {
         if pendingWingsToast {
             pendingWingsToast = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.showTrayWingsToast() }
+        }
+        if alert != nil, !showsAlert {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.presentAlert() }
         }
     }
 
@@ -609,6 +629,7 @@ final class NotchViewModel: ObservableObject {
     func fileDragBegan() {
         hideTrayWings()
         hideHeadphones()
+        hideAlert()
     }
 
     func enterDropZone() {
@@ -771,6 +792,53 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
+    // MARK: Extension alerts
+
+    /// Shown now when the notch is closed and idle, otherwise once it closes.
+    private func presentAlert() {
+        guard alert != nil, surface == .closed, !isPresentingOnboarding else { return }
+        let wasShowing = showsAlert
+        showsAlert = true
+        if !wasShowing {
+            render(Motion.open)
+            Haptics.tap()
+        }
+        scheduleAlertHide()
+        onPointerSyncNeeded?()
+    }
+
+    private func scheduleAlertHide() {
+        cancelAlertTimer()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if isPointerInside {
+                scheduleAlertHide()
+            } else {
+                hideAlert()
+            }
+        }
+        alertWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchMetrics.alertDuration, execute: work)
+    }
+
+    func hideAlert() {
+        cancelAlertTimer()
+        guard showsAlert else { return }
+        showsAlert = false
+        render(Motion.close)
+        onPointerSyncNeeded?()
+        // Keep the alert on screen while the wings fold away.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !showsAlert else { return }
+            alert = nil
+        }
+    }
+
+    private func cancelAlertTimer() {
+        alertWork?.cancel()
+        alertWork = nil
+    }
+
     // MARK: Collapse
 
     private func scheduleCollapse() {
@@ -795,6 +863,12 @@ extension NotchViewModel: ExtensionNotchDriver {
     func openSettings(extension id: ExtensionID) {
         close()
         onOpenSettings?(.extensionPane(id))
+    }
+
+    func showAlert(_ alert: NotchAlert, from id: ExtensionID) {
+        guard servicesStarted else { return }
+        self.alert = ExtensionAlert(alert: alert, extensionID: id)
+        presentAlert()
     }
 
     /// Files an extension brought, say from an iPhone, arrive like a drop.

@@ -12,6 +12,7 @@ protocol ExtensionNotchDriver: AnyObject {
     var shelfFiles: [URL] { get }
     func openSettings(extension id: ExtensionID)
     func addToShelf(_ urls: [URL])
+    func showAlert(_ alert: NotchAlert, from id: ExtensionID)
 }
 
 /// Discovers `.xnext` bundles (built into the app, and in
@@ -82,6 +83,8 @@ final class ExtensionManager: ObservableObject {
     var offerable: [ExtensionManifest] {
         entries.filter { $0.failure == nil }.map(\.manifest)
     }
+
+    func isActive(_ id: ExtensionID) -> Bool { entries.first { $0.id == id }?.isActive ?? false }
 
     func isEnabled(_ id: ExtensionID) -> Bool { !preferences.disabledExtensions.contains(id) }
 
@@ -258,5 +261,11 @@ private final class HostBridge: ExtensionHost, NotchControl, ShelfAccess {
 
     func openSettings() {
         manager?.driver?.openSettings(extension: extensionID)
+    }
+
+    func showAlert(_ alert: NotchAlert) {
+        // Only from an extension that's still on.
+        guard manager?.isActive(extensionID) == true else { return }
+        manager?.driver?.showAlert(alert, from: extensionID)
     }
 }

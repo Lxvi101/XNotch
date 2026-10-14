@@ -26,6 +26,38 @@ public protocol NotchControl: AnyObject {
     func pagesDidChange()
     /// Opens Settings on this extension's pane (API 1.3.0).
     func openSettings()
+    /// Shows an alert in the closed notch's wings for a few seconds, as
+    /// XNotch does when headphones connect (API 1.4.0). An alert that arrives
+    /// while the notch is open waits until it closes; a newer one replaces it.
+    func showAlert(_ alert: NotchAlert)
+}
+
+/// A moment in the closed notch: a symbol and a word or two beside the camera
+/// on the left, a short value (and optionally a ring) on the right. Each side
+/// has room for about ten characters.
+public struct NotchAlert: Sendable, Hashable {
+    public var symbol: String
+    /// Hex colour of the symbol and ring, e.g. "#FF6359"; white when nil.
+    public var tint: String?
+    /// Beside the symbol: "Disk".
+    public var title: String
+    /// On the right: "24 GB".
+    public var value: String
+    /// Fills a ring beside the value, 0…1; nil hides the ring.
+    public var progress: Double?
+    /// The page a click on the notch opens while the alert shows; nil opens
+    /// the notch as usual.
+    public var page: String?
+
+    public init(symbol: String, tint: String? = nil, title: String, value: String, progress: Double? = nil,
+                page: String? = nil) {
+        self.symbol = symbol
+        self.tint = tint
+        self.title = title
+        self.value = value
+        self.progress = progress
+        self.page = page
+    }
 }
 
 /// The shelf, for extensions that bring files to it.

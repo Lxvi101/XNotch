@@ -87,6 +87,7 @@ enum NotchMetrics {
     static let closedBottomRadius: CGFloat = 14
     static let wingWidth: CGFloat = 58
     static let headphonesWingWidth: CGFloat = 66
+    static let alertWingWidth: CGFloat = 92
 
     static let dropZoneSize = CGSize(width: 372, height: 126)
     static let dropZoneTopCornerRadius: CGFloat = 16
@@ -103,6 +104,7 @@ enum NotchMetrics {
     static let autoCollapseDelay: TimeInterval = 0.8
     static let wingsToastDuration: TimeInterval = 2.6
     static let headphonesToastDuration: TimeInterval = 4
+    static let alertDuration: TimeInterval = 5
 
     /// Transparent canvas the shell draws into: room for the largest surface,
     /// its flares, deformation and shadow.
@@ -130,6 +132,11 @@ enum NotchMetrics {
 
     static func headphonesWings(_ notch: CGSize) -> NotchShellGeometry {
         NotchShellGeometry(width: notch.width + 2 * headphonesWingWidth, height: notch.height,
+                           topCornerRadius: closedTopCornerRadius, bottomRadius: closedBottomRadius)
+    }
+
+    static func alertWings(_ notch: CGSize) -> NotchShellGeometry {
+        NotchShellGeometry(width: notch.width + 2 * alertWingWidth, height: notch.height,
                            topCornerRadius: closedTopCornerRadius, bottomRadius: closedBottomRadius)
     }
 

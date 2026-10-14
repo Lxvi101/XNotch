@@ -48,6 +48,12 @@ struct NotchShellView: View {
             HeadphonesWingsView(monitor: model.headphones, notchSize: model.notchSize)
                 .reveal(model.headphonesReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
+            if let alert = model.alert {
+                ExtensionAlertWingsView(alert: alert.alert, notchSize: model.notchSize)
+                    .id(alert)
+                    .reveal(model.alertReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
+                    .allowsHitTesting(false)
+            }
             NotchEyesView(eyes: model.eyes, unit: NotchMetrics.eyesUnit)
                 .frame(width: model.notchSize.width, height: NotchMetrics.eyesStrip)
                 .padding(.top, model.notchSize.height - 4)

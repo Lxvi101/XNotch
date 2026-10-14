@@ -23,6 +23,14 @@ struct PageInfo: Identifiable, Equatable {
     var id: String { page.id }
 }
 
+/// An extension's alert, with where a click on it leads.
+struct ExtensionAlert: Hashable {
+    let alert: NotchAlert
+    let extensionID: ExtensionID
+
+    var page: OpenPage? { alert.page.map { .extensionPage(extensionID, $0) } }
+}
+
 /// An active extension page with what's needed to lay it out and draw it.
 struct ExtensionPage: Identifiable {
     let page: OpenPage
