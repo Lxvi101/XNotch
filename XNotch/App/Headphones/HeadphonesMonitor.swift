@@ -146,26 +146,32 @@ final class HeadphonesMonitor: NSObject, ObservableObject {
         latest = nil
     }
 
-    @objc private func deviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        MainActor.assumeIsolated {
-            guard let address = device.addressString, !connected.contains(address),
-                  let kind = Self.kind(of: device) else { return }
-            track(device)
-            // IOBluetooth also reports devices that were connected before XNotch started.
-            guard Date().timeIntervalSince(startedAt) > 2 else { return }
-            let connection = HeadphonesConnection(address: address, name: device.name ?? "Headphones", kind: kind)
-            latest = connection
-            onConnect?(connection)
-            scheduleBatteryReads()
-        }
+    // IOBluetooth calls these on its own coordinator queue for devices that
+    // also have a Bluetooth LE link, so hop to main rather than assume it.
+    @objc nonisolated private func deviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.handleConnect(device) } }
     }
 
-    @objc private func deviceDisconnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        MainActor.assumeIsolated {
-            guard let address = device.addressString else { return }
-            connected.remove(address)
-            disconnectNotifications.removeValue(forKey: address)?.unregister()
-        }
+    @objc nonisolated private func deviceDisconnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.handleDisconnect(device) } }
+    }
+
+    private func handleConnect(_ device: IOBluetoothDevice) {
+        guard let address = device.addressString, !connected.contains(address),
+              let kind = Self.kind(of: device) else { return }
+        track(device)
+        // IOBluetooth also reports devices that were connected before XNotch started.
+        guard Date().timeIntervalSince(startedAt) > 2 else { return }
+        let connection = HeadphonesConnection(address: address, name: device.name ?? "Headphones", kind: kind)
+        latest = connection
+        onConnect?(connection)
+        scheduleBatteryReads()
+    }
+
+    private func handleDisconnect(_ device: IOBluetoothDevice) {
+        guard let address = device.addressString else { return }
+        connected.remove(address)
+        disconnectNotifications.removeValue(forKey: address)?.unregister()
     }
 
     private func track(_ device: IOBluetoothDevice) {
