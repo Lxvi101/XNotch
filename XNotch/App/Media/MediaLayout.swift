@@ -65,19 +65,35 @@ enum PillLayout {
         }
     }
 
-    /// The switcher has to fit between the header's leading inset and the
-    /// camera housing, so segments narrow as pages are added.
+    /// Pages left of the camera. The rest continue on its right, where they'd
+    /// otherwise have run under the camera housing.
+    static let maxLeading = 4
+
+    static func spillsPastCamera(count: Int) -> Bool { count > maxLeading }
+
+    /// The left group has to fit between the header's leading inset and the
+    /// camera housing, so segments narrow as pages are added, up to four.
     static func segmentWidth(count: Int, notch: CGSize) -> CGFloat {
         let available = -notch.width / 2 - 8 - (switcherMinX + 2) - 2
-        return min(34, max(20, (available / CGFloat(max(count, 1))).rounded(.down)))
+        return min(34, max(20, (available / CGFloat(max(min(count, maxLeading), 1))).rounded(.down)))
     }
 
-    /// Matches `PageSwitcher`'s placement in the open header.
+    /// Matches `PageSwitcher`'s placement in the open header. Past the fourth,
+    /// segments start as far right of the camera as the left group ends left of it.
     static func segmentFrame(index: Int, count: Int, notch: CGSize) -> CGRect {
         let width = segmentWidth(count: count, notch: notch)
-        return CGRect(x: switcherMinX + 2 + CGFloat(index) * width,
-                      y: (notch.height - segmentHeight) / 2,
-                      width: width, height: segmentHeight)
+        let x = index < maxLeading
+            ? switcherMinX + 2 + CGFloat(index) * width
+            : notch.width / 2 + 8 + 2 + CGFloat(index - maxLeading) * width
+        return CGRect(x: x, y: (notch.height - segmentHeight) / 2, width: width, height: segmentHeight)
+    }
+
+    /// The capsules behind the segments: one each side of the camera.
+    static func groupFrames(count: Int, notch: CGSize) -> [CGRect] {
+        let frames = (0..<count).map { segmentFrame(index: $0, count: count, notch: notch) }
+        return [Array(frames.prefix(maxLeading)), Array(frames.dropFirst(maxLeading))]
+            .filter { !$0.isEmpty }
+            .map { $0.dropFirst().reduce($0[0]) { $0.union($1) }.insetBy(dx: -2, dy: -2) }
     }
 }
 

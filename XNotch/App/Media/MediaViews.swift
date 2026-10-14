@@ -124,9 +124,11 @@ struct MediaPlayerPage: View {
     }
 }
 
-/// Segmented switcher beside the camera. The indicator's edges ride
-/// separate springs — the leading edge in the direction of travel is faster —
-/// so it stretches toward the target and contracts as it arrives.
+/// Segmented switcher beside the camera: up to four pages left of it, the
+/// rest on its right. The indicator's edges ride separate springs — the
+/// leading edge in the direction of travel is faster — so it stretches
+/// toward the target and contracts as it arrives, passing behind the camera
+/// on its way from one side to the other. Laid out across the whole header.
 struct PageSwitcher: View {
     let pages: [PageInfo]
     let page: OpenPage
@@ -136,24 +138,34 @@ struct PageSwitcher: View {
     @State private var leading: CGFloat = 0
     @State private var trailing: CGFloat = 0
 
-    private var segment: CGSize {
-        CGSize(width: PillLayout.segmentWidth(count: pages.count, notch: notchSize), height: PillLayout.segmentHeight)
+    static var headerWidth: CGFloat { MediaLayout.openWidth + 2 * NotchMetrics.shelfTopCornerRadius }
+
+    /// A segment in header coordinates (PillLayout's are from the notch's centre).
+    private func frame(of index: Int) -> CGRect {
+        PillLayout.segmentFrame(index: index, count: pages.count, notch: notchSize).offsetBy(dx: Self.headerWidth / 2, dy: 0)
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(pages) { info in
-                segmentButton(info)
+        let height = PillLayout.segmentHeight
+        ZStack(alignment: .topLeading) {
+            ForEach(PillLayout.groupFrames(count: pages.count, notch: notchSize), id: \.minX) { group in
+                Capsule()
+                    .fill(.white.opacity(0.06))
+                    .frame(width: group.width, height: group.height)
+                    .offset(x: group.minX + Self.headerWidth / 2, y: group.minY)
             }
-        }
-        .background(alignment: .leading) {
             Capsule()
                 .fill(.white.opacity(0.15))
-                .frame(width: max(segment.height, trailing - leading), height: segment.height)
-                .offset(x: leading)
+                .frame(width: max(height, trailing - leading), height: height)
+                .offset(x: leading, y: (notchSize.height - height) / 2)
+            ForEach(Array(pages.enumerated()), id: \.element.id) { index, info in
+                let frame = frame(of: index)
+                segmentButton(info)
+                    .frame(width: frame.width, height: frame.height)
+                    .offset(x: frame.minX, y: frame.minY)
+            }
         }
-        .padding(2)
-        .background(Capsule().fill(.white.opacity(0.06)))
+        .frame(width: Self.headerWidth, height: notchSize.height, alignment: .topLeading)
         .onAppear { setEdges(for: page, from: nil) }
         .onChange(of: page) { old, new in setEdges(for: new, from: old) }
         .onChange(of: pages.map(\.page)) { _, _ in setEdges(for: page, from: nil) }
@@ -164,7 +176,7 @@ struct PageSwitcher: View {
             Image(systemName: info.symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(page == info.page ? 1 : 0.45))
-                .frame(width: segment.width, height: segment.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topTrailing) {
                     if info.badge > 0 {
                         Text("\(info.badge)")
@@ -188,8 +200,9 @@ struct PageSwitcher: View {
     }
 
     private func setEdges(for target: OpenPage, from old: OpenPage?) {
-        let minX = CGFloat(index(of: target)) * segment.width
-        let maxX = minX + segment.width
+        let segment = frame(of: index(of: target))
+        let minX = segment.minX
+        let maxX = segment.maxX
         guard let old, old != target else {
             leading = minX
             trailing = maxX

@@ -9,6 +9,9 @@ struct ShelfView: View {
     let notchSize: CGSize
     /// Hidden when the page switcher occupies the header's leading side.
     let showsTitle: Bool
+    /// The page switcher continues right of the camera: the buttons fold
+    /// into one menu to leave it room.
+    let foldsButtons: Bool
     let onDragOut: (Bool) -> Void
 
     var body: some View {
@@ -49,7 +52,12 @@ struct ShelfView: View {
             .font(.system(size: 12, weight: .semibold))
             .opacity(showsTitle ? 1 : 0)
             Spacer(minLength: notchSize.width + 12)
-            if !store.items.isEmpty {
+            if !store.items.isEmpty && foldsButtons {
+                HeaderButton(symbol: "ellipsis") {}
+                    .notchMenu { menuItems }
+                    .environment(\.shelfHeaderButtonSize, 24)
+                    .help("Share or clear the shelf")
+            } else if !store.items.isEmpty {
                 let providers = extensions.shelfAccessoryProviders
                 // Extension buttons make the row tighter, so it stays beside the camera, not under it.
                 HStack(spacing: providers.isEmpty ? 6 : 3) {
@@ -67,6 +75,22 @@ struct ShelfView: View {
             }
         }
         .padding(.top, 2)
+    }
+
+    /// The header's buttons as a menu: what extensions offer for the files,
+    /// then AirDrop and clearing the shelf.
+    private var menuItems: [NotchMenuItem] {
+        let targets = accessoryContext.targets
+        var items = extensions.shelfAccessoryProviders.flatMap { $0.shelfMenuItems(for: targets) }
+        if !items.isEmpty { items.append(.separator) }
+        items.append(.action("AirDrop", symbol: "dot.radiowaves.left.and.right") {
+            ShelfActions.airDrop(store.items.map(\.url))
+        })
+        items.append(.separator)
+        items.append(.action("Clear Shelf", symbol: "trash", isDestructive: true) {
+            withAnimation(Motion.content) { store.removeAll() }
+        })
+        return items
     }
 
     @ViewBuilder

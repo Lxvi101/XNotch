@@ -63,7 +63,9 @@ struct NotchShellView: View {
                 .reveal(model.dropReveal, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
             ShelfView(store: model.shelf, extensions: extensions, notchSize: model.notchSize,
-                      showsTitle: destinations.count == 1, onDragOut: model.setDraggingOut)
+                      showsTitle: destinations.count == 1,
+                      foldsButtons: PillLayout.spillsPastCamera(count: destinations.count),
+                      onDragOut: model.setDraggingOut)
                 .reveal(model.shelfReveal, unmountsWhenHidden: true)
                 .allowsHitTesting(model.surface == .open && model.page == .shelf)
             MediaPlayerPage(track: media.track ?? NowPlayingTrack(), media: media, notchSize: model.notchSize)
@@ -90,12 +92,7 @@ struct NotchShellView: View {
     }
 
     private func openHeader(_ destinations: [PageInfo]) -> some View {
-        HStack {
-            PageSwitcher(pages: destinations, page: model.page, notchSize: model.notchSize, onSelect: model.selectPage)
-            Spacer()
-        }
-        .padding(.leading, NotchMetrics.shelfTopCornerRadius + MediaLayout.inset - 2)
-        .frame(width: MediaLayout.openWidth + 2 * NotchMetrics.shelfTopCornerRadius, height: model.notchSize.height)
+        PageSwitcher(pages: destinations, page: model.page, notchSize: model.notchSize, onSelect: model.selectPage)
     }
 }
 
