@@ -137,6 +137,7 @@ final class OnboardingController {
     private var state: OnboardingState?
     private var script: Task<Void, Never>?
     private var keyMonitor: Any?
+    private var faceMonitors: [Any] = []
 
     /// Set while the permission step is in progress, so a "Quit & Reopen"
     /// from System Settings comes back to it.
@@ -449,15 +450,54 @@ final class OnboardingController {
             state.dim = 0
         }
         window.ignoresMouseEvents = true
-        let face = state.geometry
-        let source = NSRect(x: window.frame.midX - face.outerWidth / 2, y: window.frame.maxY - face.height,
-                            width: face.outerWidth, height: face.height)
-        PermissionCenter.shared.request(state.permission, from: source) { [weak self] granted in
+        watchFace()
+        PermissionCenter.shared.request(state.permission, from: faceFrame) { [weak self] granted in
             self?.accessRequestEnded(granted: granted)
         }
     }
 
+    /// The hero's face on screen, while it waits for System Settings.
+    private var faceFrame: NSRect {
+        guard let state, let window else { return .zero }
+        let face = state.geometry
+        return NSRect(x: window.frame.midX - face.outerWidth / 2, y: window.frame.maxY - face.height,
+                      width: face.outerWidth, height: face.height)
+    }
+
+    /// Clicks go through to System Settings while it's up, except on the face:
+    /// clicking it calls the request off and brings back "Not Now", so changing
+    /// your mind never leaves the tour stuck waiting for a grant.
+    private func watchFace() {
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDown]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            MainActor.assumeIsolated { _ = self?.handleFaceEvent(event) }
+        }) {
+            faceMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            let handled = MainActor.assumeIsolated { self?.handleFaceEvent(event) ?? false }
+            return handled ? nil : event
+        }) {
+            faceMonitors.append(local)
+        }
+    }
+
+    private func unwatchFace() {
+        faceMonitors.forEach(NSEvent.removeMonitor)
+        faceMonitors = []
+    }
+
+    private func handleFaceEvent(_ event: NSEvent) -> Bool {
+        guard let state, let window, state.access == .guiding else { return false }
+        let onFace = faceFrame.contains(NSEvent.mouseLocation)
+        window.ignoresMouseEvents = !onFace
+        guard onFace, event.type == .leftMouseDown else { return false }
+        PermissionCenter.shared.cancel()
+        return true
+    }
+
     private func accessRequestEnded(granted: Bool) {
+        unwatchFace()
         guard let state, let window else { return }
         window.ignoresMouseEvents = false
         NSApp.activate(ignoringOtherApps: true)
@@ -613,6 +653,7 @@ final class OnboardingController {
     private func tearDown() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        unwatchFace()
         window?.orderOut(nil)
         window = nil
         state = nil

@@ -74,6 +74,11 @@ final class PermissionCenter: ObservableObject {
         }
     }
 
+    /// Calls off the request in progress, as if its guide had been closed.
+    func cancel() {
+        guide?.dismiss()
+    }
+
     /// Starts a fresh copy once this one has quit, for grants macOS only
     /// applies at launch.
     static func relaunch() {
