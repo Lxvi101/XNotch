@@ -82,7 +82,7 @@ struct NotchShellView: View {
                                 openReveal: model.mediaOpenReveal, hover: model.mediaHover,
                                 notchSize: model.notchSize, artwork: media.artwork, artworkGlow: media.artworkGlow,
                                 accent: media.accent, isPlaying: media.track?.isPlaying ?? false,
-                                onArtworkTap: model.openMediaApp)
+                                wingIndicator: model.musicWingIndicator, onArtworkTap: model.openMediaApp)
             if destinations.count > 1 {
                 openHeader(destinations)
                     .reveal(model.openReveal, hiddenScale: 0.9, maxBlur: 6, travel: -4, unmountsWhenHidden: true)

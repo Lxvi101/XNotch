@@ -12,6 +12,10 @@ final class Preferences: ObservableObject {
     @Published var pillsIconOnly: Bool { didSet { defaults.set(pillsIconOnly, forKey: Key.pillsIconOnly) } }
     @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: Key.haptics) } }
     @Published var showsMediaInNotch: Bool { didSet { defaults.set(showsMediaInNotch, forKey: Key.media) } }
+    /// What sits right of the camera while music plays.
+    @Published var musicWingIndicator: MusicWingIndicator {
+        didSet { defaults.set(musicWingIndicator.rawValue, forKey: Key.musicWingIndicator) }
+    }
     @Published var showsHeadphonesInNotch: Bool { didSet { defaults.set(showsHeadphonesInNotch, forKey: Key.headphones) } }
     @Published var lockScreenMediaEnabled: Bool { didSet { defaults.set(lockScreenMediaEnabled, forKey: Key.lockScreen) } }
     @Published var disabledExtensions: Set<String> {
@@ -34,6 +38,7 @@ final class Preferences: ObservableObject {
         static let media = "showsMediaInNotch"
         static let lockScreen = "lockScreenMediaEnabled"
         static let headphones = "showsHeadphonesInNotch"
+        static let musicWingIndicator = "musicWingIndicator"
         static let disabledExtensions = "disabledExtensions"
         static let knownExtensions = "knownExtensions"
         static let onboarding = "hasCompletedOnboarding"
@@ -51,6 +56,7 @@ final class Preferences: ObservableObject {
         showsMediaInNotch = defaults.bool(forKey: Key.media)
         lockScreenMediaEnabled = defaults.bool(forKey: Key.lockScreen)
         showsHeadphonesInNotch = defaults.bool(forKey: Key.headphones)
+        musicWingIndicator = defaults.string(forKey: Key.musicWingIndicator).flatMap(MusicWingIndicator.init) ?? .visualizer
         disabledExtensions = Set(defaults.stringArray(forKey: Key.disabledExtensions) ?? [])
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
         pageOrder = defaults.stringArray(forKey: Key.pageOrder) ?? []
@@ -71,4 +77,10 @@ final class Preferences: ObservableObject {
         }
         launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
+}
+
+/// The closed notch's right side while music plays: moving bars, or a still
+/// play/pause symbol for anyone who finds the motion distracting.
+enum MusicWingIndicator: String, CaseIterable {
+    case visualizer, playPause
 }
