@@ -18,6 +18,7 @@ final class ShelfController: NSObject {
     private var draggedFiles: [ShelfFile] = []
     /// Where the drag was last seen, in shelf coordinates.
     private var dragPoint: CGPoint?
+    private var hasReceivedDrop = false
     private(set) var isClosing = false
 
     init(shelf: Shelf, library: ShelfLibrary, preferences: ShelvesPreferences) {
@@ -213,6 +214,7 @@ final class ShelfController: NSObject {
     }
 
     func drop(_ pasteboard: NSPasteboard, at point: CGPoint, isOwn: Bool) -> Bool {
+        hasReceivedDrop = true
         if shelf.showsActions {
             guard let action = shelf.hoveredAction else { return false }
             let wasEmpty = shelf.files.isEmpty
@@ -229,6 +231,18 @@ final class ShelfController: NSObject {
         shelf.lastDrop = point
         add(from: pasteboard)
         return true
+    }
+
+    /// The drag that shook this shelf out let go. Dropped anywhere but here,
+    /// the shelf was a mistake, so it goes away again.
+    func triggeringDragEnded() {
+        // The drop can reach the shelf just after the mouse comes up.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.hasReceivedDrop, !self.shelf.isPinned, self.shelf.files.isEmpty else { return }
+                self.close()
+            }
+        }
     }
 
     func add(from pasteboard: NSPasteboard) {

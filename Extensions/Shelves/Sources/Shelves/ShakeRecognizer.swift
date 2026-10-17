@@ -72,6 +72,8 @@ struct ShakeRecognizer {
 final class DragMonitor {
     /// The pointer, in screen coordinates, when a shelf should appear.
     var onTrigger: ((CGPoint) -> Void)?
+    /// The drag that asked for a shelf has let go, wherever it landed.
+    var onTriggeringDragEnded: (() -> Void)?
 
     private let preferences: ShelvesPreferences
     private var monitors: [Any] = []
@@ -100,6 +102,7 @@ final class DragMonitor {
     func stop() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
+        hasTriggered = false
         mouseUp()
     }
 
@@ -140,6 +143,10 @@ final class DragMonitor {
     }
 
     private func mouseUp() {
+        if hasTriggered {
+            hasTriggered = false
+            onTriggeringDragEnded?()
+        }
         isMouseDown = false
         isDragging = false
         changeCount = -1

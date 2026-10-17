@@ -22,6 +22,8 @@ final class ShelvesExtension: XNotchExtension {
     private var preferences: ShelvesPreferences?
     private var library: ShelfLibrary?
     private var dragMonitor: DragMonitor?
+    /// The shelf the current drag shook out, until that drag lets go.
+    private weak var shakenShelf: ShelfController?
     private let folderMonitor = FolderMonitor()
     private var observers: Set<AnyCancellable> = []
 
@@ -35,9 +37,13 @@ final class ShelvesExtension: XNotchExtension {
         library.load()
 
         let dragMonitor = DragMonitor(preferences: preferences)
-        dragMonitor.onTrigger = { [weak library, weak host] point in
-            library?.newShelf(centeredAt: point)
+        dragMonitor.onTrigger = { [weak self, weak library, weak host] point in
+            self?.shakenShelf = library?.newShelf(centeredAt: point)
             host?.feedback.tick()
+        }
+        dragMonitor.onTriggeringDragEnded = { [weak self] in
+            self?.shakenShelf?.triggeringDragEnded()
+            self?.shakenShelf = nil
         }
         dragMonitor.start()
 
