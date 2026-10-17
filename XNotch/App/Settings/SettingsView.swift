@@ -248,6 +248,14 @@ private struct MusicPane: View {
                     Text("Show Now Playing in the notch")
                     Text("Artwork and a visualizer sit beside the camera while something plays. Hover the right side for play and pause.")
                 }
+                Picker(selection: $preferences.musicWingIndicator) {
+                    Text("Visualizer").tag(MusicWingIndicator.visualizer)
+                    Text("Play/pause symbol").tag(MusicWingIndicator.playPause)
+                } label: {
+                    Text("Right of the camera")
+                    Text("The symbol stays still, for anyone who finds the moving bars distracting.")
+                }
+                .disabled(!preferences.showsMediaInNotch)
                 Toggle(isOn: $preferences.showsHeadphonesInNotch) {
                     Text("Show headphones when they connect")
                     Text("AirPods, Beats and other Bluetooth headphones and speakers appear beside the camera for a moment, with their battery.")

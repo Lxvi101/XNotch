@@ -119,6 +119,11 @@ final class NotchViewModel: ObservableObject {
             .dropFirst()
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        preferences.$musicWingIndicator
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         preferences.$pillsIconOnly
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -152,6 +157,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     var pillsIconOnly: Bool { preferences.pillsIconOnly }
+    var musicWingIndicator: MusicWingIndicator { preferences.musicWingIndicator }
 
     var hasMedia: Bool { media.track != nil && preferences.showsMediaInNotch }
     private var showsMediaActivity: Bool { mediaActive && preferences.showsMediaInNotch }

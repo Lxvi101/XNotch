@@ -15,6 +15,7 @@ struct MediaSharedElements: View, Animatable {
     let artworkGlow: NSImage?
     let accent: Color
     let isPlaying: Bool
+    let wingIndicator: MusicWingIndicator
     let onArtworkTap: () -> Void
 
     var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
@@ -34,7 +35,9 @@ struct MediaSharedElements: View, Animatable {
         let visualizer = MediaLayout.closedVisualizerCenter(notchSize).lerp(to: MediaLayout.openVisualizerCenter(notchSize), p)
         let closedVisualizer = MediaLayout.closedVisualizerCenter(notchSize)
         let visible = (wingsReveal + openReveal).clamped()
-        let glyph = (wingsReveal * hover).clamped()
+        // With the still indicator, the play/pause glyph stays in the wing
+        // instead of waiting for a hover; the bars only appear once it opens.
+        let glyph = (wingsReveal * (wingIndicator == .playPause ? 1 : hover)).clamped()
 
         ZStack(alignment: .topLeading) {
             if visible > 0.001 {
@@ -78,7 +81,8 @@ struct MediaSharedElements: View, Animatable {
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: 13, weight: .bold))
                 .contentTransition(.symbolEffect(.replace))
-                .foregroundStyle(.white)
+                // At rest the still glyph is a little dimmer, brightening on hover as a click target.
+                .foregroundStyle(.white.opacity(wingIndicator == .playPause ? 0.7 + 0.3 * Double(hover.clamped()) : 1))
                 .opacity(Double(glyph.smoothstep))
                 .blur(radius: glyph.revealBlur(6))
                 .scaleEffect(0.8 + 0.2 * glyph)
