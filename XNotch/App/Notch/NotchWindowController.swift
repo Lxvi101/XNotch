@@ -9,6 +9,7 @@ import XNotchKit
 @MainActor
 final class NotchWindowController {
     private let window: NotchWindow
+    private let container: NotchContainerView
     let model: NotchViewModel
     private let dragDetector = DragDetector()
     private var screen: NSScreen
@@ -28,7 +29,7 @@ final class NotchWindowController {
         model = NotchViewModel(notchSize: NotchMetrics.physicalNotchSize(on: screen))
         window = NotchWindow(contentRect: Self.canvasFrame(on: screen))
 
-        let container = NotchContainerView(frame: NSRect(origin: .zero, size: NotchMetrics.canvasSize))
+        container = NotchContainerView(frame: NSRect(origin: .zero, size: NotchMetrics.canvasSize))
         let host = NotchHostingView(rootView: NotchShellView(model: model))
         host.frame = container.bounds
         host.autoresizingMask = [.width, .height]
@@ -39,6 +40,7 @@ final class NotchWindowController {
         container.onDragUpdated = { [weak self] point in self?.updateDropTarget(at: point) }
         container.onDrop = { [weak self] urls, point in self?.drop(urls, at: point) ?? false }
         container.onPromisedFileReceived = { [weak self] url in self?.model.receive([url]) }
+        container.onDragSessionEnded = { [weak self] in self?.model.fileDragEnded() }
         model.onPointerSyncNeeded = { [weak self] in self?.syncPointer(NSEvent.mouseLocation) }
         model.eyes.anchor = Self.eyesAnchor(on: screen, notch: model.notchSize)
 
@@ -296,7 +298,9 @@ final class NotchWindowController {
         dragDetector.onDragEnded = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.model.fileDragEnded()
+                // Over the notch, the drop itself can arrive a second or more after
+                // the mouse is let go; the drag session's end closes the zone instead.
+                if !self.container.isDragDestination { self.model.fileDragEnded() }
                 self.syncPointer(NSEvent.mouseLocation)
             }
         }
@@ -362,6 +366,9 @@ final class NotchContainerView: NSView {
     var onDragUpdated: ((NSPoint) -> Void)?
     var onDrop: (([URL], NSPoint) -> Bool)?
     var onPromisedFileReceived: ((URL) -> Void)?
+    var onDragSessionEnded: (() -> Void)?
+    /// From the drag entering until its session ends, dropped or not.
+    private(set) var isDragDestination = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -373,7 +380,18 @@ final class NotchContainerView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        draggingUpdated(sender)
+        isDragDestination = true
+        return draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        isDragDestination = false
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        guard isDragDestination else { return }
+        isDragDestination = false
+        onDragSessionEnded?()
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
