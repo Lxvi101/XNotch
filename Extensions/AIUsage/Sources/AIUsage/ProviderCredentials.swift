@@ -57,7 +57,37 @@ struct SystemKeychain: KeychainReading, SecretStore {
         let account = ((rows as? [[String: Any]]) ?? [])
             .max { ($0[kSecAttrModificationDate as String] as? Date ?? .distantPast)
                 < ($1[kSecAttrModificationDate as String] as? Date ?? .distantPast) }?[kSecAttrAccount as String] as? String
+        // Claude Code writes its login with /usr/bin/security, and each token refresh resets the item's
+        // access list to that tool, dropping any Always Allow XNotch was given. Reading through the same
+        // tool is always permitted, so it doesn't prompt.
+        if let account, let read = Self.readWithSecurityTool(service: service, account: account) { return read }
         return readData(service: service, account: account, interactive: interactive)
+    }
+
+    /// nil when the tool couldn't read the item, so the caller falls back to the Keychain API.
+    private static func readWithSecurityTool(service: String, account: String) -> KeychainRead? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", service, "-a", account, "-w"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10, execute: timeout)
+        defer { timeout.cancel() }
+        var data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        switch process.terminationStatus {
+        case 0: break
+        case 44: return .notFound  // errSecItemNotFound
+        default: return nil
+        }
+        if data.last == UInt8(ascii: "\n") { data.removeLast() }
+        // `-w` prints the secret as hex when it holds non-ASCII bytes.
+        if data.first != UInt8(ascii: "{"), let decoded = Data(hex: data) { data = decoded }
+        return data.isEmpty ? nil : .found(data)
     }
 
     func read(_ name: String, interactive: Bool) -> KeychainRead {
@@ -143,6 +173,30 @@ struct SystemKeychain: KeychainReading, SecretStore {
         let value = symbol.assumingMemoryBound(to: CFString?.self).pointee
         return (value as String?) ?? "u_AuthUIF"
     }()
+}
+
+private extension Data {
+    /// Decodes ASCII hex digits, or nil if `hex` isn't an even run of them.
+    init?(hex: Data) {
+        guard !hex.isEmpty, hex.count.isMultiple(of: 2) else { return nil }
+        func nibble(_ c: UInt8) -> UInt8? {
+            switch c {
+            case 48...57: return c - 48
+            case 65...70: return c - 55
+            case 97...102: return c - 87
+            default: return nil
+            }
+        }
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(hex.count / 2)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            guard let high = nibble(hex[index]), let low = nibble(hex[index + 1]) else { return nil }
+            bytes.append(high << 4 | low)
+            index += 2
+        }
+        self.init(bytes)
+    }
 }
 
 // MARK: Claude Code
