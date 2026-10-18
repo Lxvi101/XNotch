@@ -22,7 +22,7 @@ final class VitalsExtension: XNotchExtension {
     func activate(host: ExtensionHost) throws {
         self.host = host
         model.load(defaults: host.storage.defaults)
-        model.onAlert = { [weak host] alert in host?.notch.showAlert(alert) }
+        model.onAlert = { [weak self] alert in self?.show(alert) }
         model.onLayoutChange = { [weak self] in self?.pageMayHaveChanged() }
         model.start()
         host.log.info("Vitals activated")
@@ -35,6 +35,16 @@ final class VitalsExtension: XNotchExtension {
         model.expanded = nil
         lastPage = nil
         host = nil
+    }
+
+    /// With eyes when the user picked them, and this XNotch can draw them.
+    private func show(_ alert: NotchAlert) {
+        guard let host else { return }
+        if model.settings.alertsShowEyes, let eyes = host.notch as? NotchEyesAlerting {
+            eyes.showAlert(alert, eyes: alert.tint == AlertMonitor.criticalTint ? .critical : .caution)
+        } else {
+            host.notch.showAlert(alert)
+        }
     }
 
     func openActivityMonitor() {

@@ -54,6 +54,8 @@ enum PageOrder {
 struct ExtensionAlert: Hashable {
     let alert: NotchAlert
     let extensionID: ExtensionID
+    /// Shown with the eyes instead of the value, at this severity.
+    var eyes: NotchAlertSeverity?
 
     var page: OpenPage? { alert.page.map { .extensionPage(extensionID, $0) } }
 }

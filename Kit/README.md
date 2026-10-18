@@ -116,6 +116,7 @@ While your page is fully hidden XNotch removes its view, so `@State` inside it r
 - `storage.defaults`: a UserDefaults suite of your own. `storage.directory` is a private folder under Application Support.
 - `notch`: `open(page:)`, `close()`, `isOpen`, `pagesDidChange()` when a page's title or badge changes, and `openSettings()` to show your pane in Settings (API 1.3.0).
 - `notch.showAlert(_:)` (API 1.4.0): a few seconds in the closed notch's wings, as when headphones connect. A symbol and a word on the left, a short value and an optional ring on the right; `page` is what a click opens. Vitals uses it when the disk fills up or memory runs short. Alert only on a change the user would want to know about, not on every reading.
+- `(notch as? NotchEyesAlerting)?.showAlert(_:eyes:)` (API 1.5.0): the same alert with a warning sign and its title on the left, and the notch's eyes on the right showing how serious it is (`.caution` or `.critical`) in place of the value. Vitals offers it as an alert style.
 - `shelf` (API 1.3.0): `files` on the shelf, and `add(_:)` to put files there and open the notch on them, as a drop does. The iPhone & iPad extension uses it for files that arrive from a phone.
 - `workspace`: open and reveal files, and `chooseFolders()` for a picker in front of everything.
 - `feedback.tick()`: the trackpad tick, which respects the user's haptics setting.

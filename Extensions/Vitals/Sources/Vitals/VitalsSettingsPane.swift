@@ -27,6 +27,10 @@ struct VitalsSettingsPane: View {
             }
 
             Section {
+                Picker("Show as", selection: $model.settings.alertsShowEyes) {
+                    Text("Symbol and value").tag(false)
+                    Text("Warning and eyes").tag(true)
+                }
                 ForEach(VitalAlertKind.allCases) { kind in
                     if kind != .battery || model.hasBattery {
                         AlertRow(kind: kind, model: model)
@@ -36,7 +40,8 @@ struct VitalsSettingsPane: View {
                 Text("Alerts")
             } footer: {
                 Text("Shown beside the camera for a few seconds, like headphones connecting. Click one to open Vitals. "
-                     + "Each comes back at most every half hour, sooner only if things get worse.")
+                     + "Each comes back at most every half hour, sooner only if things get worse. "
+                     + "With eyes, they look worried for a warning and shocked when it's critical.")
                     .foregroundStyle(.secondary)
             }
 
@@ -142,7 +147,7 @@ private struct AlertRow: View {
             Spacer()
             Button("Preview") { model.previewAlert(kind) }
                 .buttonStyle(.borderless)
-                .help("Show this alert in the notch now")
+                .help("Show this alert in the notch now; click again for its critical look")
             Toggle(kind.title, isOn: Binding {
                 isOn
             } set: { on in
