@@ -60,6 +60,22 @@ public struct NotchAlert: Sendable, Hashable {
     }
 }
 
+/// How serious an alert is, for showing it with the notch's eyes (API 1.5.0).
+public enum NotchAlertSeverity: Sendable, Hashable {
+    /// Worth a look: the eyes glance nervously side to side.
+    case caution
+    /// Needs attention now: the eyes grow wide and round, their pupils darting.
+    case critical
+}
+
+/// Shows an alert as a warning sign and its title on the left, with the
+/// notch's eyes reacting on the right instead of the value (API 1.5.0).
+/// XNotch's `NotchControl` adopts it: `host.notch as? NotchEyesAlerting`.
+@MainActor
+public protocol NotchEyesAlerting: AnyObject {
+    func showAlert(_ alert: NotchAlert, eyes severity: NotchAlertSeverity)
+}
+
 /// The shelf, for extensions that bring files to it.
 @MainActor
 public protocol ShelfAccess: AnyObject {

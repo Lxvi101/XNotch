@@ -58,6 +58,8 @@ enum VitalAlertKind: String, CaseIterable, Identifiable, Sendable {
 /// get worse.
 struct AlertMonitor {
     static let quietPeriod: TimeInterval = 30 * 60
+    static let cautionTint = "#FFBD4D"
+    static let criticalTint = "#FF6359"
     /// How long the CPU has to stay busy before it's worth mentioning.
     static let cpuSustain: TimeInterval = 60
 
@@ -150,7 +152,7 @@ struct AlertMonitor {
     /// whatever was last read.
     static func alert(_ kind: VitalAlertKind, level: Gauge.Level, sample: Sample?,
                       thermal: ProcessInfo.ThermalState) -> NotchAlert {
-        let tint = level == .critical ? "#FF6359" : "#FFBD4D"
+        let tint = level == .critical ? criticalTint : cautionTint
         func make(_ title: String, _ value: String, progress: Double? = nil) -> NotchAlert {
             NotchAlert(symbol: kind.symbol, tint: tint, title: title, value: value, progress: progress,
                        page: VitalsExtension.pageID)

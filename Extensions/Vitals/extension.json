@@ -6,6 +6,6 @@
   "symbol": "waveform.path.ecg",
   "tint": "#FF453A",
   "principalClass": "VitalsPrincipal",
-  "kit": { "abi": 3, "minAPI": "1.4.0" },
+  "kit": { "abi": 3, "minAPI": "1.5.0" },
   "creator": { "name": "XNotch" }
 }

@@ -877,9 +877,9 @@ extension NotchViewModel: ExtensionNotchDriver {
         onOpenSettings?(.extensionPane(id))
     }
 
-    func showAlert(_ alert: NotchAlert, from id: ExtensionID) {
+    func showAlert(_ alert: NotchAlert, eyes: NotchAlertSeverity?, from id: ExtensionID) {
         guard servicesStarted else { return }
-        self.alert = ExtensionAlert(alert: alert, extensionID: id)
+        self.alert = ExtensionAlert(alert: alert, extensionID: id, eyes: eyes)
         presentAlert()
     }
 

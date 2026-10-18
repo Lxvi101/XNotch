@@ -75,6 +75,8 @@ struct VitalsSettings: Equatable, Sendable {
     var batteryAlertPercent = 20
     var cpuAlertPercent = 90
     var memoryAlertsOnlyWhenCritical = false
+    /// A warning sign with the notch's eyes showing how serious it is, instead of the symbol and value.
+    var alertsShowEyes = false
 
     /// The tiles in the notch, left to right.
     var visible: [Metric] { Array(order.filter(shown.contains).prefix(Self.maxShown)) }
@@ -111,6 +113,7 @@ struct VitalsSettings: Equatable, Sendable {
         settings.cpuAlertPercent = choice(Keys.cpuAlertPercent, in: VitalAlertKind.cpuChoices, default: settings.cpuAlertPercent)
         settings.memoryAlertsOnlyWhenCritical = defaults.object(forKey: Keys.memoryAlertsOnlyWhenCritical) as? Bool
             ?? settings.memoryAlertsOnlyWhenCritical
+        settings.alertsShowEyes = defaults.object(forKey: Keys.alertsShowEyes) as? Bool ?? settings.alertsShowEyes
         settings.normalize()
         return settings
     }
@@ -126,6 +129,7 @@ struct VitalsSettings: Equatable, Sendable {
         defaults.set(batteryAlertPercent, forKey: Keys.batteryAlertPercent)
         defaults.set(cpuAlertPercent, forKey: Keys.cpuAlertPercent)
         defaults.set(memoryAlertsOnlyWhenCritical, forKey: Keys.memoryAlertsOnlyWhenCritical)
+        defaults.set(alertsShowEyes, forKey: Keys.alertsShowEyes)
     }
 
     /// Every metric exactly once, newer ones at the end.
@@ -145,6 +149,7 @@ struct VitalsSettings: Equatable, Sendable {
         static let batteryAlertPercent = "batteryAlertPercent"
         static let cpuAlertPercent = "cpuAlertPercent"
         static let memoryAlertsOnlyWhenCritical = "memoryAlertsOnlyWhenCritical"
+        static let alertsShowEyes = "alertsShowEyes"
     }
 }
 
@@ -262,9 +267,13 @@ final class VitalsModel: ObservableObject {
     }
 
     /// Shows an alert now, with the latest readings, so its look can be checked from Settings.
+    /// Previews alternate between a caution and a critical one, so both looks can be seen.
     func previewAlert(_ kind: VitalAlertKind) {
-        onAlert?(AlertMonitor.alert(kind, level: .caution, sample: sample, thermal: ProcessInfo.processInfo.thermalState))
+        defer { previewsCritical.toggle() }
+        onAlert?(AlertMonitor.alert(kind, level: previewsCritical ? .critical : .caution, sample: sample,
+                                    thermal: ProcessInfo.processInfo.thermalState))
     }
+    private var previewsCritical = false
 
     var effectiveInterval: TimeInterval {
         let lowPower = settings.slowerOnLowPower && ProcessInfo.processInfo.isLowPowerModeEnabled

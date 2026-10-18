@@ -49,7 +49,7 @@ struct NotchShellView: View {
                 .reveal(model.headphonesReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
             if let alert = model.alert {
-                ExtensionAlertWingsView(alert: alert.alert, notchSize: model.notchSize)
+                ExtensionAlertWingsView(alert: alert.alert, eyes: alert.eyes, notchSize: model.notchSize)
                     .id(alert)
                     .reveal(model.alertReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
                     .allowsHitTesting(false)
