@@ -68,6 +68,11 @@ struct ShakeRecognizer {
 /// Watches file drags in other apps and asks for a shelf when the pointer is
 /// shaken, or a modifier key is held, mid-drag. Drags that start in an
 /// ignored app are left alone.
+///
+/// A file drag shows up as a change to the drag pasteboard, except from the
+/// Dock: dragging out of a stack never touches it, so a drag that starts on
+/// the Dock's window counts once it leaves the Dock's strip. Reordering icons
+/// stays inside the strip, a file pulled out of a stack leaves it.
 @MainActor
 final class DragMonitor {
     /// The pointer, in screen coordinates, when a shelf should appear.
@@ -85,6 +90,10 @@ final class DragMonitor {
     private var isIgnored = false
     private var mouseDownTime: TimeInterval = 0
     private var draggedEvents = 0
+    /// The window under the press, in another app.
+    private var windowNumber = 0
+    /// Set while a drag that started on the Dock is under way.
+    private var dockStrip: CGRect?
     private var recognizer: ShakeRecognizer
 
     init(preferences: ShelvesPreferences) {
@@ -94,7 +103,7 @@ final class DragMonitor {
 
     func start() {
         stop()
-        add(.leftMouseDown) { monitor, _ in monitor.mouseDown() }
+        add(.leftMouseDown) { monitor, event in monitor.mouseDown(event) }
         add(.leftMouseDragged) { monitor, event in monitor.mouseDragged(event) }
         add(.leftMouseUp) { monitor, _ in monitor.mouseUp() }
     }
@@ -106,8 +115,10 @@ final class DragMonitor {
         mouseUp()
     }
 
-    private func mouseDown() {
+    private func mouseDown(_ event: NSEvent) {
         changeCount = dragPasteboard.changeCount
+        windowNumber = event.windowNumber
+        dockStrip = nil
         isMouseDown = true
         isDragging = false
         hasTriggered = false
@@ -125,16 +136,23 @@ final class DragMonitor {
             // pasteboard server, so after the first second, when a file drag
             // would long have begun, only every eighth event looks.
             draggedEvents += 1
-            if event.timestamp - mouseDownTime > 1, draggedEvents % 8 != 0 { return }
-            guard dragPasteboard.changeCount != changeCount, PasteboardReader.canRead(dragPasteboard) else { return }
+            let source: String?
+            if draggedEvents == 1, Self.isDock(windowNumber) {
+                source = Self.dock
+                dockStrip = Self.dockStrip(around: NSEvent.mouseLocation)
+            } else {
+                if event.timestamp - mouseDownTime > 1, draggedEvents % 8 != 0 { return }
+                guard dragPasteboard.changeCount != changeCount, PasteboardReader.canRead(dragPasteboard) else { return }
+                // Read once the drag has begun: by then a click into a
+                // background window has made its app frontmost.
+                source = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            }
             isDragging = true
-            // Read once the drag has begun: by then a click into a background
-            // window has made its app frontmost.
-            let source = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             isIgnored = source.map(preferences.isIgnored) ?? false
             if isIgnored { return }
         }
         let point = NSEvent.mouseLocation
+        if let dockStrip, dockStrip.contains(point) { return }
         let modifier = preferences.modifierEnabled && event.modifierFlags.contains(preferences.modifier.flags)
         let shaken = preferences.shakeEnabled && recognizer.add(point, at: event.timestamp)
         guard modifier || shaken else { return }
@@ -150,6 +168,41 @@ final class DragMonitor {
         isMouseDown = false
         isDragging = false
         changeCount = -1
+    }
+
+    private static let dock = "com.apple.dock"
+
+    /// Whether a window is the Dock's own, the one its icons and open stacks
+    /// draw in. One window server lookup, made once per drag.
+    private static func isDock(_ windowNumber: Int) -> Bool {
+        guard windowNumber > 0,
+              let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowNumber)) as? [[String: Any]],
+              let window = info.first,
+              let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+              let layer = window[kCGWindowLayer as String] as? Int
+        else { return false }
+        return layer == Int(CGWindowLevelForKey(.dockWindow))
+            && NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == dock
+    }
+
+    /// The band along the screen edge that the Dock's icons can cover,
+    /// magnified. Recomputed per drag, since the Dock can move or resize.
+    private static func dockStrip(around point: CGPoint) -> CGRect {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main else { return .null }
+        func value(_ key: String) -> Any? { CFPreferencesCopyAppValue(key as CFString, dock as CFString) }
+        let tile = (value("tilesize") as? NSNumber)?.doubleValue ?? 64
+        let magnified = (value("magnification") as? Bool ?? false) ? (value("largesize") as? NSNumber)?.doubleValue ?? 128 : 0
+        let reach = max(tile, magnified) + 24
+        let frame = screen.frame, visible = screen.visibleFrame
+        switch value("orientation") as? String {
+        case "left":
+            return CGRect(x: frame.minX, y: frame.minY, width: max(visible.minX - frame.minX, reach), height: frame.height)
+        case "right":
+            let depth = max(frame.maxX - visible.maxX, reach)
+            return CGRect(x: frame.maxX - depth, y: frame.minY, width: depth, height: frame.height)
+        default:
+            return CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: max(visible.minY - frame.minY, reach))
+        }
     }
 
     private func add(_ mask: NSEvent.EventTypeMask, handler: @escaping @MainActor (DragMonitor, NSEvent) -> Void) {
