@@ -143,7 +143,7 @@ final class ShelfItemInteractionView: NSView, NSDraggingSource {
             }
         }
         menu.addItem(.separator())
-        let removeTitle = count > 1 ? "Remove \(count) Items" : "Remove from Shelf"
+        let removeTitle = count > 1 ? "Remove \(count) Items" : "Remove from Tray"
         menu.addItem(ClosureMenuItem(removeTitle, symbol: "minus.circle") { [weak store] in
             withAnimation(Motion.content) { store?.remove(Set(items.map(\.id))) }
         })

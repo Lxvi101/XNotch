@@ -110,13 +110,27 @@ enum NotchMetrics {
     /// its flares, deformation and shadow.
     static let canvasSize = CGSize(width: 640, height: 260)
 
-    static func physicalNotchSize(on screen: NSScreen) -> CGSize {
+    /// The camera notch on `screen`, or on a display without one, the notch
+    /// XNotch draws there.
+    @MainActor
+    static func notchSize(on screen: NSScreen, drawnHeight: DrawnNotchHeight) -> CGSize {
+        if let camera = cameraNotchSize(on: screen) { return camera }
+        switch drawnHeight {
+        case .menuBar:
+            // A hidden menu bar, or none (displays sharing one space), leaves no inset to measure.
+            let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
+            return CGSize(width: fallbackNotchSize.width, height: menuBar > 0 ? menuBar : NSStatusBar.system.thickness)
+        case .notch:
+            let real = NSScreen.screens.lazy.compactMap(cameraNotchSize).first
+            return CGSize(width: fallbackNotchSize.width, height: real?.height ?? fallbackNotchSize.height)
+        }
+    }
+
+    static func cameraNotchSize(on screen: NSScreen) -> CGSize? {
         let top = screen.safeAreaInsets.top
         guard top > 0,
               let left = screen.auxiliaryTopLeftArea,
-              let right = screen.auxiliaryTopRightArea else {
-            return fallbackNotchSize
-        }
+              let right = screen.auxiliaryTopRightArea else { return nil }
         return CGSize(width: screen.frame.width - left.width - right.width, height: top)
     }
 

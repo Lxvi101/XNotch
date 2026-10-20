@@ -108,7 +108,7 @@ struct CompanionSettingsPane: View {
                     }
                 }
             } footer: {
-                Text("Received files also land on the shelf. Text goes straight to the clipboard.")
+                Text("Received files also land in the tray. Text goes straight to the clipboard.")
                     .foregroundStyle(.secondary)
             }
 

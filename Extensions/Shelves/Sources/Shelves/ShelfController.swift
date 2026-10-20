@@ -491,7 +491,7 @@ final class ShelfController: NSObject {
             menu.addItem(ClosureMenuItem("Move to…", symbol: "folder.badge.plus") { [weak self] in
                 self?.transfer(files, move: true)
             })
-            menu.addItem(ClosureMenuItem("Send to Notch Shelf", symbol: "rectangle.topthird.inset.filled") { [weak self] in
+            menu.addItem(ClosureMenuItem("Send to Tray", symbol: "rectangle.topthird.inset.filled") { [weak self] in
                 self?.library.sendToNotchShelf(urls)
             })
             if files.count < shelf.files.count {

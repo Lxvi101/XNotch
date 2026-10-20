@@ -2,7 +2,7 @@
   "id": "companion",
   "name": "iPhone & iPad",
   "version": "1.0.0",
-  "summary": "Share files and text from your iPhone or iPad straight onto the shelf.",
+  "summary": "Share files and text from your iPhone or iPad straight into the tray.",
   "symbol": "iphone.gen3",
   "tint": "#5E5CE6",
   "principalClass": "CompanionPrincipal",

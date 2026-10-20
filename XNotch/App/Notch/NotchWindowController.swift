@@ -12,8 +12,9 @@ final class NotchWindowController {
     private let container: NotchContainerView
     let model: NotchViewModel
     private let dragDetector = DragDetector()
-    private var screen: NSScreen
+    private(set) var screen: NSScreen
     private var monitors: [Any] = []
+    private var spaceObserver: NSObjectProtocol?
     private var cancellables: Set<AnyCancellable> = []
     private var pointerWasFar = false
     /// The window stays off fullscreen spaces; the global monitors still fire
@@ -24,9 +25,9 @@ final class NotchWindowController {
     private let pointerRadius: CGFloat = 80
     private let fileDragRadius: CGFloat = 260
 
-    init(screen: NSScreen) {
+    init(screen: NSScreen, services: NotchServices) {
         self.screen = screen
-        model = NotchViewModel(notchSize: NotchMetrics.physicalNotchSize(on: screen))
+        model = NotchViewModel(notchSize: Self.notchSize(on: screen), services: services)
         window = NotchWindow(contentRect: Self.canvasFrame(on: screen))
 
         container = NotchContainerView(frame: NSRect(origin: .zero, size: NotchMetrics.canvasSize))
@@ -52,14 +53,7 @@ final class NotchWindowController {
             .sink { [weak self] _ in self?.window.releaseKeyboard() }
             .store(in: &cancellables)
 
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screenParametersChanged() }
-        }
-        NSWorkspace.shared.notificationCenter.addObserver(
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
             queue: .main
@@ -68,8 +62,8 @@ final class NotchWindowController {
         }
     }
 
-    static func preferredScreen() -> NSScreen? {
-        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
+    private static func notchSize(on screen: NSScreen) -> CGSize {
+        NotchMetrics.notchSize(on: screen, drawnHeight: Preferences.shared.drawnNotchHeight)
     }
 
     private static func canvasFrame(on screen: NSScreen) -> NSRect {
@@ -78,12 +72,27 @@ final class NotchWindowController {
                       width: size.width, height: size.height)
     }
 
-    private func screenParametersChanged() {
-        guard let next = Self.preferredScreen() else { return }
+    /// Follows its display through resolution and arrangement changes, or onto another one.
+    func move(to next: NSScreen) {
+        let frame = Self.canvasFrame(on: next)
+        let size = Self.notchSize(on: next)
         screen = next
-        window.setFrame(Self.canvasFrame(on: next), display: true)
-        model.updateNotchSize(NotchMetrics.physicalNotchSize(on: next))
+        guard frame != window.frame || size != model.notchSize else { return }
+        window.setFrame(frame, display: true)
+        model.updateNotchSize(size)
         model.eyes.anchor = Self.eyesAnchor(on: next, notch: model.notchSize)
+    }
+
+    /// For a display that's gone, or no longer gets a notch.
+    func tearDown() {
+        model.close()
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors.removeAll()
+        dragDetector.stop()
+        if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
+        spaceObserver = nil
+        window.releaseKeyboard()
+        window.orderOut(nil)
     }
 
     private func activeSpaceChanged() {

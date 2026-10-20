@@ -9,7 +9,17 @@ final class Preferences: ObservableObject {
     private let defaults = UserDefaults.standard
 
     @Published var showsDestinationPills: Bool { didSet { defaults.set(showsDestinationPills, forKey: Key.pills) } }
-    @Published var pillsIconOnly: Bool { didSet { defaults.set(pillsIconOnly, forKey: Key.pillsIconOnly) } }
+    /// Whether pills drop their names, as picked in Settings. Nil until the
+    /// user picks, and XNotch decides (see `PillLabels`).
+    @Published var pillsIconOnlyChoice: Bool? {
+        didSet {
+            if let pillsIconOnlyChoice {
+                defaults.set(pillsIconOnlyChoice, forKey: Key.pillsIconOnly)
+            } else {
+                defaults.removeObject(forKey: Key.pillsIconOnly)
+            }
+        }
+    }
     @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: Key.haptics) } }
     @Published var showsMediaInNotch: Bool { didSet { defaults.set(showsMediaInNotch, forKey: Key.media) } }
     /// What sits right of the camera while music plays.
@@ -29,6 +39,15 @@ final class Preferences: ObservableObject {
     /// The user's order of the notch's pages, by `OpenPage.id`. Pages not in it
     /// (new extensions) follow in their usual order.
     @Published var pageOrder: [String] { didSet { defaults.set(pageOrder, forKey: Key.pageOrder) } }
+    /// A notch on every connected display, not just the main one.
+    @Published var showsOnAllDisplays: Bool { didSet { defaults.set(showsOnAllDisplays, forKey: Key.allDisplays) } }
+    /// The display the notch lives on, by `NSScreen.displayID`. Nil picks it
+    /// automatically: the built-in notch, else the display with the menu bar.
+    @Published var notchDisplay: String? { didSet { defaults.set(notchDisplay, forKey: Key.notchDisplay) } }
+    /// How tall the notch XNotch draws on a display without a camera notch is.
+    @Published var drawnNotchHeight: DrawnNotchHeight {
+        didSet { defaults.set(drawnNotchHeight.rawValue, forKey: Key.drawnNotchHeight) }
+    }
     @Published private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
     private enum Key {
@@ -43,15 +62,19 @@ final class Preferences: ObservableObject {
         static let knownExtensions = "knownExtensions"
         static let onboarding = "hasCompletedOnboarding"
         static let pageOrder = "pageOrder"
+        static let allDisplays = "showsOnAllDisplays"
+        static let notchDisplay = "notchDisplay"
+        static let drawnNotchHeight = "drawnNotchHeight"
     }
 
     private init() {
         defaults.register(defaults: [
-            Key.pills: true, Key.pillsIconOnly: false, Key.haptics: true, Key.media: true, Key.lockScreen: true,
+            Key.pills: true, Key.haptics: true, Key.media: true, Key.lockScreen: true,
             Key.headphones: true
         ])
         showsDestinationPills = defaults.bool(forKey: Key.pills)
-        pillsIconOnly = defaults.bool(forKey: Key.pillsIconOnly)
+        // Only ever written by the picker, so it's there only if the user chose.
+        pillsIconOnlyChoice = defaults.object(forKey: Key.pillsIconOnly) as? Bool
         hapticsEnabled = defaults.bool(forKey: Key.haptics)
         showsMediaInNotch = defaults.bool(forKey: Key.media)
         lockScreenMediaEnabled = defaults.bool(forKey: Key.lockScreen)
@@ -60,6 +83,9 @@ final class Preferences: ObservableObject {
         disabledExtensions = Set(defaults.stringArray(forKey: Key.disabledExtensions) ?? [])
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
         pageOrder = defaults.stringArray(forKey: Key.pageOrder) ?? []
+        showsOnAllDisplays = defaults.bool(forKey: Key.allDisplays)
+        notchDisplay = defaults.string(forKey: Key.notchDisplay)
+        drawnNotchHeight = defaults.string(forKey: Key.drawnNotchHeight).flatMap(DrawnNotchHeight.init) ?? .menuBar
         // Before extensions were opt-in, Folders came switched on; it stays as the user left it.
         knownExtensions = Set(defaults.stringArray(forKey: Key.knownExtensions)
             ?? (defaults.bool(forKey: Key.onboarding) ? ["folders"] : []))
@@ -83,4 +109,10 @@ final class Preferences: ObservableObject {
 /// play/pause symbol for anyone who finds the motion distracting.
 enum MusicWingIndicator: String, CaseIterable {
     case visualizer, playPause
+}
+
+/// On a display without a camera notch: sit flush with its menu bar, or
+/// match the height of a real notch.
+enum DrawnNotchHeight: String, CaseIterable {
+    case menuBar, notch
 }

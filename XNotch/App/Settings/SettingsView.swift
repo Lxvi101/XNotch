@@ -29,7 +29,7 @@ struct SettingsView: View {
                     row(.general, "General", "gearshape.fill", .gray)
                     row(.music, "Music", "music.note", .pink)
                     row(.lockScreen, "Lock Screen", "lock.fill", .indigo)
-                    row(.shelf, "Shelf", "tray.full.fill", .green)
+                    row(.shelf, "Tray", "tray.full.fill", .green)
                 }
                 Section("Extensions") {
                     row(.extensions, "All Extensions", "puzzlepiece.extension.fill", .purple)
@@ -73,7 +73,7 @@ struct SettingsView: View {
             LockScreenPane(preferences: preferences, media: media, onPreview: onPreviewLockScreen)
                 .navigationTitle("Lock Screen")
         case .shelf:
-            ShelfPane(shelf: shelf).navigationTitle("Shelf")
+            ShelfPane(shelf: shelf).navigationTitle("Tray")
         case .extensions:
             ExtensionsPane(extensions: extensions, navigation: navigation).navigationTitle("Extensions")
         case .extensionPane(let id):
@@ -115,6 +115,7 @@ private struct GeneralPane: View {
     @ObservedObject var permissions: PermissionCenter
     @ObservedObject var extensions: ExtensionManager
     let onReplayOnboarding: () -> Void
+    @State private var screens = DisplayOption.connected
 
     /// Every page the notch can show, in the user's order. Music is listed
     /// whenever it's on, even with nothing playing.
@@ -123,7 +124,7 @@ private struct GeneralPane: View {
         if preferences.showsMediaInNotch {
             infos.append(PageInfo(page: .media, title: "Music", symbol: "music.note", badge: 0))
         }
-        infos.append(PageInfo(page: .shelf, title: "Shelf", symbol: "tray.full.fill", badge: 0))
+        infos.append(PageInfo(page: .shelf, title: "Tray", symbol: "tray.full.fill", badge: 0))
         infos += extensions.pageProviders.flatMap { id, provider in
             provider.pages.map { PageInfo(page: .extensionPage(id, $0.id), title: $0.title, symbol: $0.symbol, badge: 0) }
         }
@@ -144,13 +145,42 @@ private struct GeneralPane: View {
                     Text("Show destinations on hover")
                     Text("Pills under the notch name where a click will take you. Click one to go straight there.")
                 }
-                Picker("Pills show", selection: $preferences.pillsIconOnly) {
+                Picker("Pills show", selection: Binding(
+                    get: { PillLabels.iconOnly(preferences, extensions) },
+                    set: { preferences.pillsIconOnlyChoice = $0 }
+                )) {
                     Text("Icon and name").tag(false)
                     Text("Icon only").tag(true)
                 }
                 .disabled(!preferences.showsDestinationPills)
             } header: {
                 Text("Notch")
+            }
+            Section {
+                Toggle(isOn: $preferences.showsOnAllDisplays) {
+                    Text("Show on all displays")
+                    Text("Each display gets its own notch. One without a camera notch gets one drawn at the top.")
+                }
+                Picker("Display", selection: $preferences.notchDisplay) {
+                    Text("Automatic").tag(String?.none)
+                    ForEach(screens) { Text($0.name).tag(String?.some($0.id)) }
+                    if let picked = preferences.notchDisplay, !screens.contains(where: { $0.id == picked }) {
+                        Text("Not connected").tag(String?.some(picked))
+                    }
+                }
+                .disabled(preferences.showsOnAllDisplays)
+                Picker("Drawn notch height", selection: $preferences.drawnNotchHeight) {
+                    Text("Match the menu bar").tag(DrawnNotchHeight.menuBar)
+                    Text("Match a real notch").tag(DrawnNotchHeight.notch)
+                }
+            } header: {
+                Text("Displays")
+            } footer: {
+                Text("Automatic puts the notch on the built-in display's notch, else on the display with the menu bar. A display that isn't connected hands it back to Automatic.")
+                    .foregroundStyle(.secondary)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+                screens = DisplayOption.connected
             }
             Section {
                 let pages = pages
@@ -190,7 +220,7 @@ private struct GeneralPane: View {
             Section {
                 LabeledContent("Settings", value: "⌘ ,")
                 LabeledContent("Close the notch", value: "esc")
-                LabeledContent("Shelf: Quick Look, delete", value: "space, ⌫")
+                LabeledContent("Tray: Quick Look, delete", value: "space, ⌫")
             } header: {
                 Text("Keyboard")
             } footer: {
@@ -203,6 +233,15 @@ private struct GeneralPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct DisplayOption: Identifiable {
+    let id: String
+    let name: String
+
+    @MainActor static var connected: [DisplayOption] {
+        NSScreen.screens.compactMap { screen in screen.displayID.map { DisplayOption(id: $0, name: screen.localizedName) } }
     }
 }
 
@@ -342,13 +381,13 @@ private struct ShelfPane: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Items on the shelf", value: "\(shelf.items.count)")
-                Button("Clear Shelf", role: .destructive) {
+                LabeledContent("Items in the tray", value: "\(shelf.items.count)")
+                Button("Clear Tray", role: .destructive) {
                     withAnimation(Motion.content) { shelf.removeAll() }
                 }
                 .disabled(shelf.items.isEmpty)
             } footer: {
-                Text("Drag files onto the notch to keep them on the shelf. Dragging one out moves it to where you drop it.")
+                Text("Drag files onto the notch to keep them in the tray. Dragging one out moves it to where you drop it.")
                     .foregroundStyle(.secondary)
             }
             Section {

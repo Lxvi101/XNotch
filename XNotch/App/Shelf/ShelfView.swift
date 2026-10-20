@@ -41,7 +41,7 @@ struct ShelfView: View {
     private var header: some View {
         HStack(spacing: 6) {
             HStack(spacing: 5) {
-                Text("Shelf")
+                Text("Tray")
                     .foregroundStyle(.white.opacity(0.92))
                 if !store.items.isEmpty {
                     Text("\(store.items.count)")
@@ -56,7 +56,7 @@ struct ShelfView: View {
                 HeaderButton(symbol: "ellipsis") {}
                     .notchMenu { menuItems }
                     .environment(\.shelfHeaderButtonSize, 24)
-                    .help("Share or clear the shelf")
+                    .help("Share or clear the tray")
             } else if !store.items.isEmpty {
                 let providers = extensions.shelfAccessoryProviders
                 // Extension buttons make the row tighter, so it stays beside the camera, not under it.
@@ -87,7 +87,7 @@ struct ShelfView: View {
             ShelfActions.airDrop(store.items.map(\.url))
         })
         items.append(.separator)
-        items.append(.action("Clear Shelf", symbol: "trash", isDestructive: true) {
+        items.append(.action("Clear Tray", symbol: "trash", isDestructive: true) {
             withAnimation(Motion.content) { store.removeAll() }
         })
         return items

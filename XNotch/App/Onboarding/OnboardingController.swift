@@ -160,7 +160,7 @@ final class OnboardingController {
     }
 
     func start(at firstStep: OnboardingState.Step = .hello) {
-        guard window == nil, let screen = NotchWindowController.preferredScreen() else { return }
+        guard window == nil, let screen = NotchDisplays.mainScreen() else { return }
         let state = OnboardingState(notchSize: model.notchSize)
         // Manifests only: nothing runs until the user adds it.
         model.extensions.discover()

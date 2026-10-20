@@ -184,13 +184,13 @@ private struct StepText {
                      body: "I keep files close, play your music and run extensions, right under the camera. Let me show you around.")
         case .shelf:
             StepText(title: "Drop files on me.",
-                     body: "They wait on the shelf until you drag them out to wherever they're going.")
+                     body: "They wait in the tray until you drag them out to wherever they're going.")
         case .music:
             StepText(title: "Your music, by the camera.",
                      body: "Artwork and a live visualizer while something plays. Click me for the full player.")
         case .pills:
             StepText(title: "Hover to see where a click goes.",
-                     body: "Pills drop out under me. Click one to jump straight to music, the shelf or an extension.")
+                     body: "Pills drop out under me. Click one to jump straight to music, the tray or an extension.")
         case .access:
             access == .granted
                 ? StepText(title: "Thank you.", body: "\(permission.title) is on. I can open anything you hand me.")
@@ -365,7 +365,7 @@ private struct StepUnderlay: View {
 
     var body: some View {
         let showing = state.step == .pills && state.showsContent
-        let items: [(String, String)] = [("music.note", "Music"), ("tray.full.fill", "Shelf"), ("folder.fill", "Folders")]
+        let items: [(String, String)] = [("music.note", "Music"), ("tray.full.fill", "Tray"), ("folder.fill", "Folders")]
         HStack(spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 let out = showing && state.demo >= 1

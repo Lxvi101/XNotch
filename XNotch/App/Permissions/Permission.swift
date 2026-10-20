@@ -43,7 +43,7 @@ enum Permission: String, CaseIterable, Identifiable {
     var reason: String {
         switch self {
         case .fullDiskAccess:
-            "Lets the shelf and Folders open, preview and move files anywhere on your Mac, including protected places like Mail, Messages and Safari."
+            "Lets the tray and Folders open, preview and move files anywhere on your Mac, including protected places like Mail, Messages and Safari."
         case .accessibility:
             "Lets XNotch respond to keyboard shortcuts and other apps' windows."
         case .screenRecording:

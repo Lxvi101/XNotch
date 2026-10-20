@@ -2,7 +2,7 @@
   "id": "cloud",
   "name": "Cloud Links",
   "version": "1.0.0",
-  "summary": "Share shelf files as links that expire, from your own server.",
+  "summary": "Share files in the tray as links that expire, from your own server.",
   "symbol": "icloud.and.arrow.up.fill",
   "tint": "#0A84FF",
   "principalClass": "CloudPrincipal",

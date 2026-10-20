@@ -20,7 +20,8 @@ enum MediaLayout {
     }
 
     static func closedArtFrame(_ notch: CGSize) -> CGRect {
-        let side = notch.height - 16
+        // A notch drawn as short as a menu bar keeps the artwork legible.
+        let side = max(notch.height - 16, 16)
         let centerX = -notch.width / 2 - wingWidth / 2
         return CGRect(x: centerX - side / 2, y: (notch.height - side) / 2, width: side, height: side)
     }

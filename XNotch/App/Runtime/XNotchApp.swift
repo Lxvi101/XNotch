@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var notch: NotchWindowController?
+    private var displays: NotchDisplays?
     private var lockScreen: LockScreenController?
     private var settings: SettingsWindowController?
     private var onboarding: OnboardingController?
@@ -12,29 +12,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LegacyMigration.run()
         NSApp.applicationIconImage = AppIcon.image
         updater.start()
-        guard let screen = NotchWindowController.preferredScreen() else { return }
-        let notch = NotchWindowController(screen: screen)
-        let model = notch.model
+        guard let displays = NotchDisplays() else { return }
+        let model = displays.model
         let lockScreen = LockScreenController(media: model.media, preferences: model.preferences)
-        lockScreen.onLock = { [weak model] in model?.close() }
+        lockScreen.onLock = { [weak displays] in displays?.close() }
         let onboarding = OnboardingController(model: model, preferences: model.preferences)
         let settings = SettingsWindowController(model: model, lockScreen: lockScreen, updater: updater,
                                                 onReplayOnboarding: { [weak onboarding] in onboarding?.start() })
-        model.onOpenSettings = { [weak settings] pane in settings?.show(pane: pane) }
+        displays.onOpenSettings = { [weak settings] pane in settings?.show(pane: pane) }
         let permissions = PermissionCenter.shared
-        permissions.onGuideMoved = { [weak model] frame in model?.watchPermissionGuide(frame) }
-        permissions.onGuideFinished = { [weak model] granted in model?.permissionGuideFinished(granted: granted) }
-        self.notch = notch
+        permissions.onGuideMoved = { [weak displays] frame in displays?.models.forEach { $0.watchPermissionGuide(frame) } }
+        permissions.onGuideFinished = { [weak displays] granted in
+            displays?.models.forEach { $0.permissionGuideFinished(granted: granted) }
+        }
+        self.displays = displays
         self.lockScreen = lockScreen
         self.settings = settings
         self.onboarding = onboarding
         if model.preferences.hasCompletedOnboarding {
-            model.startServices()
+            displays.startServices()
         } else {
             // Services that read files wait for the Full Disk Access step.
-            onboarding.onSettled = { [weak model] in model?.startServices() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak onboarding, weak model] in
-                if onboarding?.startIfNeeded() != true { model?.startServices() }
+            onboarding.onSettled = { [weak displays] in displays?.startServices() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak onboarding, weak displays] in
+                if onboarding?.startIfNeeded() != true { displays?.startServices() }
             }
         }
     }
@@ -46,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// xnotch://open/<music|shelf|extension-id[/page-id]>, xnotch://close,
+    /// xnotch://open/<music|tray|extension-id[/page-id]>, xnotch://close,
     /// xnotch://settings[/<pane>], xnotch://lockscreen/preview, xnotch://pills/preview, xnotch://onboarding,
     /// xnotch://permissions/<fullDiskAccess|accessibility|screenRecording>
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -59,10 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let path = url.pathComponents.filter { $0 != "/" }
         switch url.host {
         case "open":
-            guard let model = notch?.model, let target = path.first else { return }
+            guard let model = displays?.activeModel, let target = path.first else { return }
             switch target {
             case "music": model.open(page: .media)
-            case "shelf": model.open(page: .shelf)
+            case "tray", "shelf": model.open(page: .shelf)
             default:
                 let page = model.extensionPages.first {
                     $0.extensionID == target && (path.count < 2 || $0.descriptor.id == path[1])
@@ -70,18 +71,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let page { model.open(page: page.page) }
             }
         case "close":
-            notch?.model.close()
+            displays?.close()
         case "settings":
             let panes: [String: SettingsPane] = [
                 "general": .general, "music": .music, "lockscreen": .lockScreen,
-                "shelf": .shelf, "extensions": .extensions, "changelog": .changelog, "about": .about
+                "tray": .shelf, "shelf": .shelf, "extensions": .extensions, "changelog": .changelog, "about": .about
             ]
             let pane = path.first.map { panes[$0] ?? .extensionPane($0) }
             settings?.show(pane: pane)
         case "lockscreen":
             if path.first == "preview" { lockScreen?.preview() }
         case "pills":
-            if path.first == "preview" { notch?.model.previewPills() }
+            if path.first == "preview" { displays?.activeModel.previewPills() }
         case "onboarding":
             onboarding?.start()
         case "permissions":

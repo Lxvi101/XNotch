@@ -34,7 +34,7 @@ struct ConverterSettingsPane: View {
         } header: {
             Text("Opening the Wheel")
         } footer: {
-            Text("While dragging files, hold the key to open the wheel under the pointer. Without it, drags are left alone. Drop on a format to convert, on the outer ring for tools, or in the middle to cancel. On a shelf whose files are all one kind, Convert in its menu opens the wheel for all of them at once.")
+            Text("While dragging files, hold the key to open the wheel under the pointer. Without it, drags are left alone. Drop on a format to convert, on the outer ring for tools, or in the middle to cancel. When the files in the tray or on a shelf are all one kind, Convert in its menu opens the wheel for all of them at once.")
                 .foregroundStyle(.secondary)
         }
     }

@@ -55,12 +55,13 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var hoveredDropTarget: DropTarget?
     @Published private(set) var notchSize: CGSize
 
-    let shelf = ShelfStore()
-    let media = NowPlayingService()
-    let extensions = ExtensionManager()
+    let services: NotchServices
+    let shelf: ShelfStore
+    let media: NowPlayingService
+    let extensions: ExtensionManager
+    let headphones: HeadphonesMonitor
     let preferences = Preferences.shared
     let eyes = NotchEyes()
-    let headphones = HeadphonesMonitor()
     /// Tile frames in canvas coordinates, reported by the shelf layout.
     var tileFrames: [UUID: CGRect] = [:]
     /// Asks the controller to re-read the pointer after AppKit swallowed events (drag sessions).
@@ -79,6 +80,8 @@ final class NotchViewModel: ObservableObject {
     private(set) var mediaActive = false
     private var pendingWingsToast = false
     private var pillsWanted = false
+    /// Whether this display last fed the shared extension pointer.
+    private var publishesPointer = false
     private var collapseWork: DispatchWorkItem?
     private var trayWingsWork: DispatchWorkItem?
     private var headphonesWork: DispatchWorkItem?
@@ -90,14 +93,19 @@ final class NotchViewModel: ObservableObject {
 
     private let mediaIdleDelay: TimeInterval = 6
 
-    init(notchSize: CGSize) {
+    init(notchSize: CGSize, services: NotchServices) {
         self.notchSize = notchSize
+        self.services = services
+        shelf = services.shelf
+        media = services.media
+        extensions = services.extensions
+        headphones = services.headphones
         geometry = NotchMetrics.closed(notchSize)
+        if services.isStarted { extensionPages = Self.pages(of: extensions) }
         media.$track
             .sink { [weak self] track in self?.mediaChanged(track) }
             .store(in: &cancellables)
 
-        extensions.driver = self
         extensions.$pagesRevision
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -108,7 +116,6 @@ final class NotchViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.mediaPreferenceChanged() }
             .store(in: &cancellables)
-        headphones.onConnect = { [weak self] _ in self?.showHeadphonesToast() }
         preferences.$showsHeadphonesInNotch
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -124,7 +131,7 @@ final class NotchViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
-        preferences.$pillsIconOnly
+        preferences.$pillsIconOnlyChoice
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -134,19 +141,10 @@ final class NotchViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    private var servicesStarted = false
+    private var servicesStarted: Bool { services.isStarted }
 
-    /// Media, the shelf and extensions all read files, some in protected
-    /// folders. On first run they wait until the onboarding has asked for
-    /// Full Disk Access, so macOS doesn't ask folder by folder first.
-    func startServices() {
-        guard !servicesStarted else { return }
-        servicesStarted = true
-        media.start()
-        shelf.load()
-        extensions.loadAll()
+    func servicesDidStart() {
         extensionPagesChanged()
-        if preferences.showsHeadphonesInNotch { headphones.start() }
     }
 
     func setPresentingOnboarding(_ presenting: Bool) {
@@ -156,7 +154,7 @@ final class NotchViewModel: ObservableObject {
         onPointerSyncNeeded?()
     }
 
-    var pillsIconOnly: Bool { preferences.pillsIconOnly }
+    var pillsIconOnly: Bool { PillLabels.iconOnly(preferences, extensions) }
     var musicWingIndicator: MusicWingIndicator { preferences.musicWingIndicator }
 
     var hasMedia: Bool { media.track != nil && preferences.showsMediaInNotch }
@@ -206,7 +204,7 @@ final class NotchViewModel: ObservableObject {
     var destinationInfos: [PageInfo] {
         var infos: [PageInfo] = []
         if hasMedia { infos.append(PageInfo(page: .media, title: "Music", symbol: "music.note", badge: 0)) }
-        infos.append(PageInfo(page: .shelf, title: "Shelf", symbol: "tray.full.fill", badge: shelf.items.count))
+        infos.append(PageInfo(page: .shelf, title: "Tray", symbol: "tray.full.fill", badge: shelf.items.count))
         infos += extensionPages.map {
             PageInfo(page: $0.page, title: $0.descriptor.title, symbol: $0.descriptor.symbol, badge: $0.descriptor.badge ?? 0)
         }
@@ -377,10 +375,13 @@ final class NotchViewModel: ObservableObject {
         if surface == .open, page == .shelf, !isDraggingOut, let point {
             hovered = tileFrames.first { $0.value.contains(point) }?.key
         }
-        if shelf.hoveredID != hovered { shelf.hoveredID = hovered }
+        // The shelf and the pointer are shared by every display's notch; a
+        // closed one leaves them to the display that's open.
+        if shelf.hoveredID != hovered, surface == .open { shelf.hoveredID = hovered }
         // Extension pages and shelf accessories hover through the published pointer.
         let publishes = surface == .open && !isDraggingOut && (page == .shelf || extensionPages.contains { $0.page == page })
-        extensions.pointer.update(publishes ? point : nil)
+        if publishes || publishesPointer { extensions.pointer.update(publishes ? point : nil) }
+        publishesPointer = publishes
     }
 
     /// Pressing a pill leaves the shell alone; pressing the notch squashes it.
@@ -453,6 +454,7 @@ final class NotchViewModel: ObservableObject {
             deformation.impact = .zero
         }
         render(Motion.close)
+        shelf.hoveredID = nil
         shelf.selection.removeAll()
         if pendingWingsToast {
             pendingWingsToast = false
@@ -754,7 +756,7 @@ final class NotchViewModel: ObservableObject {
     // MARK: Headphones
 
     /// Headphones or a speaker connected: their wings show for a moment, longer while hovered.
-    private func showHeadphonesToast() {
+    func showHeadphonesToast() {
         guard surface == .closed, !isPresentingOnboarding else {
             headphones.dismiss()
             return
@@ -802,12 +804,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     private func headphonesPreferenceChanged() {
-        if preferences.showsHeadphonesInNotch {
-            if servicesStarted { headphones.start() }
-        } else {
-            hideHeadphones()
-            headphones.stop()
-        }
+        if !preferences.showsHeadphonesInNotch { hideHeadphones() }
     }
 
     // MARK: Extension alerts
@@ -875,9 +872,9 @@ final class NotchViewModel: ObservableObject {
     }
 }
 
-extension NotchViewModel: ExtensionNotchDriver {
-    var shelfFiles: [URL] { shelf.items.map(\.url) }
-
+/// Extensions reach the notch through `NotchDisplays`, which hands each call
+/// to the display the user is on.
+extension NotchViewModel {
     func openSettings(extension id: ExtensionID) {
         close()
         onOpenSettings?(.extensionPane(id))

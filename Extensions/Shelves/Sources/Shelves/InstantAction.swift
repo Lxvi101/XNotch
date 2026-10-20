@@ -14,7 +14,7 @@ enum InstantAction: String, CaseIterable, Codable, Identifiable, Hashable {
         case .airDrop: "AirDrop"
         case .messages: "Messages"
         case .mail: "Mail"
-        case .notchShelf: "Notch Shelf"
+        case .notchShelf: "Tray"
         case .copy: "Copy"
         case .reveal: "Show in Finder"
         }

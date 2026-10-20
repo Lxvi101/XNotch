@@ -1,6 +1,17 @@
 import SwiftUI
 import XNotchKit
 
+/// Whether the pills show names. The user's pick in Settings always stands;
+/// until they make one, the names go once enough extensions are on that the
+/// row would get crowded.
+enum PillLabels {
+    static let iconOnlyFromExtensions = 4
+
+    @MainActor static func iconOnly(_ preferences: Preferences, _ extensions: ExtensionManager) -> Bool {
+        preferences.pillsIconOnlyChoice ?? (extensions.activeCount >= iconOnlyFromExtensions)
+    }
+}
+
 /// Pills that drop out from under the closed notch on hover and name where a
 /// click goes. On open they fly up into the header and dissolve into the page
 /// switcher, so the destination you picked is where you land.

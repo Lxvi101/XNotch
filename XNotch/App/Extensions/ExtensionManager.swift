@@ -84,6 +84,8 @@ final class ExtensionManager: ObservableObject {
         entries.filter { $0.failure == nil }.map(\.manifest)
     }
 
+    var activeCount: Int { entries.filter(\.isActive).count }
+
     func isActive(_ id: ExtensionID) -> Bool { entries.first { $0.id == id }?.isActive ?? false }
 
     func isEnabled(_ id: ExtensionID) -> Bool { !preferences.disabledExtensions.contains(id) }

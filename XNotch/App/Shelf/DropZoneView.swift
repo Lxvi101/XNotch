@@ -5,7 +5,7 @@ enum DropTarget: Equatable {
 
     var title: String {
         switch self {
-        case .shelf: "Shelf"
+        case .shelf: "Tray"
         case .airDrop: "AirDrop"
         }
     }

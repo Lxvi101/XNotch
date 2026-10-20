@@ -33,7 +33,7 @@ struct CloudSettingsPane: View {
                     }
                 }
             } footer: {
-                Text("Click the cloud on the shelf to pick a time for each link, or to lock one with a password. Right-click a file for a link with this default.")
+                Text("Click the cloud in the tray to pick a time for each link, or to lock one with a password. Right-click a file for a link with this default.")
                     .foregroundStyle(.secondary)
             }
 
