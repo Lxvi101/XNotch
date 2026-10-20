@@ -60,8 +60,10 @@ final class ShelfPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    override func keyDown(with event: NSEvent) {
-        if onKeyDown?(event) != true { super.keyDown(with: event) }
+    /// Keys go to the shelf before the hosting view, which would swallow the space bar.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, onKeyDown?(event) == true { return }
+        super.sendEvent(event)
     }
 }
 

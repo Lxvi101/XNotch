@@ -251,7 +251,16 @@ final class ShelfController: NSObject {
         }
     }
 
-    func add(_ urls: [URL], owned: Set<URL> = []) {
+    /// Waits for the files' thumbnails, so they land as themselves rather than
+    /// as icons that change a moment later.
+    func add(_ urls: [URL], owned: Set<URL> = [], then done: @escaping @MainActor () -> Void = {}) {
+        Thumbnails.prepare(urls.map(\.standardizedFileURL.path)) { [weak self] in
+            self?.insert(urls, owned: owned)
+            done()
+        }
+    }
+
+    private func insert(_ urls: [URL], owned: Set<URL>) {
         let count = withAnimation(ShelfMotion.appear) {
             shelf.add(urls, owned: owned)
         }
@@ -271,7 +280,7 @@ final class ShelfController: NSObject {
         switch preferences.doubleClick {
         case .open: FileActions.open(urls)
         case .reveal: FileActions.reveal(urls)
-        case .quickLook: QuickLook.shared.show(urls)
+        case .quickLook: QuickLook.shared.show(urls, from: panel)
         }
     }
 
@@ -283,13 +292,14 @@ final class ShelfController: NSObject {
                 shelf.selection = shelf.selection == [file.id] ? [] : [file.id]
             }
         }
+        QuickLook.shared.follow(shelf.targets.map(\.url))
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         switch (event.keyCode, modifiers) {
         case (49, []): // space
-            QuickLook.shared.show(shelf.targets.map(\.url))
+            QuickLook.shared.toggle(shelf.targets.map(\.url), from: panel)
         case (53, []): // escape
             if shelf.isExpanded { setExpanded(false) } else { close() }
         case (51, []), (117, []): // delete
@@ -334,7 +344,9 @@ final class ShelfController: NSObject {
             openWith.isEnabled = !apps.items.isEmpty
             menu.addItem(openWith)
             menu.addItem(ClosureMenuItem("Show in Finder", symbol: "folder") { FileActions.reveal(urls) })
-            menu.addItem(ClosureMenuItem("Quick Look", symbol: "eye") { QuickLook.shared.show(urls) })
+            menu.addItem(ClosureMenuItem("Quick Look", symbol: "eye") { [weak self] in
+                QuickLook.shared.show(urls, from: self?.panel)
+            })
             menu.addItem(.separator())
             for action in [InstantAction.airDrop, .mail, .messages] where action.isAvailable {
                 let item = ClosureMenuItem(action.title) { [weak self] in

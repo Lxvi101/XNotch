@@ -78,6 +78,8 @@ final class FileItemView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         mouseDownEvent = event
+        // Takes the keys, without activating XNotch, for the space bar's Quick Look.
+        window?.makeKey()
         guard event.clickCount == 2 else { return }
         mouseDownEvent = nil
         MainActor.assumeIsolated { controller?.doubleClick(targets) }

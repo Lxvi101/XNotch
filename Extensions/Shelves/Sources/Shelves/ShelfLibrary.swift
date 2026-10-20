@@ -84,8 +84,7 @@ final class ShelfLibrary: ObservableObject {
     @discardableResult
     func newShelf(centeredAt point: CGPoint, files: [URL] = []) -> ShelfController {
         let controller = makeController(for: Shelf())
-        controller.add(files)
-        controller.show(centeredAt: point)
+        controller.add(files) { controller.show(centeredAt: point) }
         return controller
     }
 
@@ -125,10 +124,11 @@ final class ShelfLibrary: ObservableObject {
         }
         let controller = makeController(for: Shelf())
         controller.watchedFolderID = folder.id
-        controller.add(urls)
         let visible = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         let size = ShelfGeometry.compact
-        controller.show(at: CGPoint(x: visible.maxX - size.width - 20, y: visible.maxY - size.height - 20))
+        controller.add(urls) {
+            controller.show(at: CGPoint(x: visible.maxX - size.width - 20, y: visible.maxY - size.height - 20))
+        }
     }
 
     private func makeController(for shelf: Shelf) -> ShelfController {

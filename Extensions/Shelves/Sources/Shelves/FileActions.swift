@@ -19,9 +19,8 @@ enum PasteboardReader {
     /// Calls back with the files and which of them were made here.
     static func read(_ pasteboard: NSPasteboard, into directory: URL,
                      completion: @escaping @MainActor (_ urls: [URL], _ owned: Set<URL>) -> Void) {
-        let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
-        if !files.isEmpty { return completion(files, []) }
-
+        // Promises come first: Photos also offers a file URL, but to a small
+        // preview inside its library, while the promise is the original.
         let promises = (pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver]) ?? []
         if !promises.isEmpty {
             let destination = freshFolder(in: directory)
@@ -44,6 +43,9 @@ enum PasteboardReader {
             }
             return
         }
+
+        let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if !files.isEmpty { return completion(files, []) }
 
         if let image = NSImage(pasteboard: pasteboard), pasteboard.availableType(from: [.png, .tiff]) != nil,
            let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
@@ -158,7 +160,7 @@ enum FileActions {
 enum Thumbnails {
     private static var icons: [String: NSImage] = [:]
     private static var thumbnails: [String: NSImage] = [:]
-    private static var pending: Set<String> = []
+    private static var pending: [String: Task<NSImage?, Never>] = [:]
 
     static func icon(for path: String) -> NSImage {
         if let icon = icons[path] { return icon }
@@ -174,18 +176,44 @@ enum Thumbnails {
 
     static func cachedThumbnail(for path: String) -> NSImage? { thumbnails[path] }
 
+    /// Callers asking while one is being made wait for that one.
     static func thumbnail(for path: String) async -> NSImage? {
         if let image = thumbnails[path] { return image }
-        guard pending.insert(path).inserted else { return nil }
-        defer { pending.remove(path) }
+        if let task = pending[path] { return await task.value }
+        let task = Task { await generate(path) }
+        pending[path] = task
+        let image = await task.value
+        pending[path] = nil
+        if let image { thumbnails[path] = image }
+        return image
+    }
+
+    /// Calls back once every file has its thumbnail, or after `limit` seconds
+    /// for slow ones; at once when they're all made already.
+    static func prepare(_ paths: [String], limit: TimeInterval = 0.35, then done: @escaping @MainActor () -> Void) {
+        let missing = paths.filter { thumbnails[$0] == nil }
+        guard !missing.isEmpty else { return done() }
+        var isDone = false
+        let finish = {
+            guard !isDone else { return }
+            isDone = true
+            done()
+        }
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for path in missing { group.addTask { _ = await thumbnail(for: path) != nil } }
+            }
+            finish()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit) { MainActor.assumeIsolated { finish() } }
+    }
+
+    private static func generate(_ path: String) async -> NSImage? {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let request = QLThumbnailGenerator.Request(fileAt: URL(fileURLWithPath: path), size: CGSize(width: 128, height: 128),
                                                    scale: scale, representationTypes: .all)
         request.iconMode = true
-        guard let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) else { return nil }
-        let image = representation.nsImage
-        thumbnails[path] = image
-        return image
+        return try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
     }
 
     static func forget(_ paths: [String]) {
@@ -199,15 +227,57 @@ enum Thumbnails {
 final class QuickLook: NSObject, QLPreviewPanelDataSource {
     static let shared = QuickLook()
     private var urls: [URL] = []
+    /// The shelf that opened the panel, which gets the keys back when it closes.
+    private weak var origin: NSWindow?
+    private var monitor: Any?
 
-    func show(_ urls: [URL]) {
+    private var isShowing: Bool {
+        QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible
+            && QLPreviewPanel.shared().dataSource as AnyObject? === self
+    }
+
+    func show(_ urls: [URL], from window: NSWindow? = nil) {
         guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
         self.urls = urls
+        origin = window
         NSApp.activate(ignoringOtherApps: true)
         panel.dataSource = self
         panel.reloadData()
         panel.currentPreviewItemIndex = 0
         panel.makeKeyAndOrderFront(nil)
+        monitorKeys()
+    }
+
+    /// Space opens and closes the panel, as in Finder.
+    func toggle(_ urls: [URL], from window: NSWindow?) {
+        if isShowing { close() } else { show(urls, from: window) }
+    }
+
+    /// Shows what's selected now, while the panel is open.
+    func follow(_ urls: [URL]) {
+        guard isShowing, !urls.isEmpty, urls != self.urls else { return }
+        self.urls = urls
+        QLPreviewPanel.shared().reloadData()
+        QLPreviewPanel.shared().currentPreviewItemIndex = 0
+    }
+
+    private func close() {
+        QLPreviewPanel.shared().orderOut(nil)
+        origin?.makeKey()
+    }
+
+    /// Space and Escape reach the panel itself while it has the keys.
+    private func monitorKeys() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 49 || event.keyCode == 53 else { return event }
+            let handled = MainActor.assumeIsolated {
+                guard let self, self.isShowing, QLPreviewPanel.shared().isKeyWindow else { return false }
+                self.close()
+                return true
+            }
+            return handled ? nil : event
+        }
     }
 
     nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
