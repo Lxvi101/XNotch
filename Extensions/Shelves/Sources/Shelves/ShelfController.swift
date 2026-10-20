@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import XNotchKit
 
 /// One shelf on screen: its panel, the label above it, drops onto it, drags
 /// out of it and its menu.
@@ -112,8 +113,14 @@ final class ShelfController: NSObject {
     /// Closes the shelf; it stays in Recent Shelves unless it's empty.
     func close(clearing: Bool = false) {
         guard !isClosing else { return }
-        isClosing = true
         if clearing { shelf.remove(Set(shelf.files.map(\.id))) }
+        leave()
+    }
+
+    /// Fades the shelf away, then hands it back to the library. `before` runs
+    /// once it's off screen, so its files can go without being seen to.
+    private func leave(before: @escaping @MainActor () -> Void = {}) {
+        isClosing = true
         hideLabel()
         withAnimation(ShelfMotion.disappear) { shelf.isPresented = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + (ShelfMotion.reduced ? 0.16 : 0.24)) { [weak self] in
@@ -122,9 +129,111 @@ final class ShelfController: NSObject {
                 self.frameSpring.stop()
                 self.panel.orderOut(nil)
                 self.labelPanel.orderOut(nil)
+                before()
                 self.library.didClose(self)
             }
         }
+    }
+
+    // MARK: Moving and merging
+
+    /// The shelf this one will merge into if let go now.
+    private weak var mergeTarget: ShelfController?
+
+    /// The pointer's last position and speed while moving, for the merge to carry on from.
+    private var lastMove: (origin: CGPoint, time: CFTimeInterval)?
+    private var moveVelocity = CGVector.zero
+
+    func beginMove() {
+        frameSpring.stop()
+        lastMove = nil
+        moveVelocity = .zero
+        // Above any shelf it's carried over.
+        panel.orderFrontRegardless()
+    }
+
+    /// Follows the pointer, keeping the shelf's top under the menu bar as a
+    /// system window move would, and looks for a shelf to merge into.
+    func move(to origin: CGPoint) {
+        var origin = origin
+        let mouse = NSEvent.mouseLocation
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
+            origin.y = min(origin.y, screen.visibleFrame.maxY - panel.frame.height + ShelfGeometry.margin)
+        }
+        panel.setFrameOrigin(origin)
+        trackVelocity(origin)
+        let target = shelf.files.isEmpty ? nil : library.shelf(at: mouse, excluding: self)
+        guard target !== mergeTarget else { return }
+        mergeTarget?.setMergeTarget(false)
+        mergeTarget = target
+        target?.setMergeTarget(true)
+        withAnimation(ShelfMotion.hover) { shelf.isOverShelf = target != nil }
+        if target != nil { library.tick() }
+    }
+
+    /// Smoothed, so one uneven event doesn't throw the shelf.
+    private func trackVelocity(_ origin: CGPoint) {
+        let now = CACurrentMediaTime()
+        if let last = lastMove, now - last.time > 0.001 {
+            let dt = now - last.time
+            let instant = CGVector(dx: (origin.x - last.origin.x) / dt, dy: (origin.y - last.origin.y) / dt)
+            let weight = min(dt / 0.05, 1)
+            moveVelocity = CGVector(dx: moveVelocity.dx + (instant.dx - moveVelocity.dx) * weight,
+                                    dy: moveVelocity.dy + (instant.dy - moveVelocity.dy) * weight)
+        }
+        lastMove = (origin, now)
+    }
+
+    func endMove() {
+        guard let target = mergeTarget else { return }
+        mergeTarget = nil
+        target.setMergeTarget(false)
+        guard !target.isClosing else {
+            withAnimation(ShelfMotion.hover) { shelf.isOverShelf = false }
+            return
+        }
+        merge(into: target)
+    }
+
+    /// Lights up under a shelf that's carried over it, with the label saying what letting go will do.
+    private func setMergeTarget(_ on: Bool) {
+        withAnimation(ShelfMotion.hover) { shelf.isDropTarget = on }
+        if on { showLabel("Merge Shelves") } else { hideLabel() }
+    }
+
+    /// Pours this shelf's files into `target` and sinks into it.
+    private func merge(into target: ShelfController) {
+        let frame = shelfFrame
+        target.receive(shelf.files, from: CGPoint(x: frame.midX, y: frame.midY))
+        if shelf.isPinned { target.shelf.isPinned = true }
+        if target.watchedFolderID == nil { target.watchedFolderID = watchedFolderID }
+        let destination = target.shelfFrame
+        shelf.presenceAnchor = .center
+        frameSpring.response = 0.3
+        frameSpring.damping = 1
+        // A pointer that stopped a while before letting go has no speed left to carry.
+        let held = lastMove.map { CACurrentMediaTime() - $0.time > 0.08 } ?? true
+        frameSpring.animate(from: panel.frame,
+                            to: ShelfGeometry.windowFrame(forShelf: CGRect(x: destination.midX - frame.width / 2,
+                                                                          y: destination.midY - frame.height / 2,
+                                                                          width: frame.width, height: frame.height)),
+                            initialVelocity: held ? .zero : moveVelocity,
+                            in: panel.contentView!)
+        // Its files live on in the target, so it leaves nothing in Recent Shelves.
+        leave { [weak self] in self?.shelf.files.removeAll() }
+    }
+
+    /// Takes another shelf's files, flying in from `point` on screen.
+    private func receive(_ files: [ShelfFile], from point: CGPoint) {
+        let frame = shelfFrame
+        shelf.lastDrop = CGPoint(x: point.x - frame.minX, y: frame.maxY - point.y)
+        let count = withAnimation(ShelfMotion.appear) { shelf.merge(files) }
+        if count > 0 { shelf.landings += 1 }
+        shelf.lastDrop = nil
+        // Saved now, not after the usual pause: the merged shelf's own files
+        // must be on record before the library sweeps the closed one's away.
+        library.saveNow(shelf)
+        library.tick()
     }
 
     /// Hides the panel at once, for the extension switching off.
@@ -361,6 +470,16 @@ final class ShelfController: NSObject {
             share.title = "More"
             menu.addItem(share)
             menu.addItem(.separator())
+            // What other extensions make from the files lands back on this shelf.
+            let request = ShelfFileRequest(files: urls) { [weak self] made in self?.add(made) }
+            let shared = library.sharedActions(request)
+            if !shared.isEmpty {
+                NotchContextMenuView.menu(shared).items.forEach { item in
+                    item.menu?.removeItem(item)
+                    menu.addItem(item)
+                }
+                menu.addItem(.separator())
+            }
             let copyTitle = files.count == 1 ? "Copy “\(files[0].name)”" : "Copy \(files.count) Items"
             menu.addItem(ClosureMenuItem(copyTitle, symbol: "doc.on.doc") { FileActions.copyToPasteboard(urls) })
             menu.addItem(ClosureMenuItem(files.count == 1 ? "Copy Path" : "Copy Paths", symbol: "link") {

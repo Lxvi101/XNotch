@@ -34,6 +34,9 @@ final class ShelvesExtension: XNotchExtension {
         library.sendToNotchShelf = { [weak host] urls in host?.shelf.add(urls) }
         library.openSettings = { [weak host] in host?.notch.openSettings() }
         library.tick = { [weak host] in host?.feedback.tick() }
+        library.sharedActions = { [weak host] request in
+            (host?.shelf as? ShelfActionSharing)?.sharedShelfActions(for: request) ?? []
+        }
         library.load()
 
         let dragMonitor = DragMonitor(preferences: preferences)

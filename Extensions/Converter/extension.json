@@ -1,0 +1,11 @@
+{
+  "id": "converter",
+  "name": "Converter",
+  "version": "1.0.0",
+  "summary": "Hold ⌘ while dragging files and a wheel opens under the pointer. Drop on a format to convert, or on a tool to compress, cut out the subject and more. Works on whole shelves too.",
+  "symbol": "arrow.triangle.2.circlepath",
+  "tint": "#FF7A2F",
+  "principalClass": "ConverterPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.6.0" },
+  "creator": { "name": "XNotch" }
+}

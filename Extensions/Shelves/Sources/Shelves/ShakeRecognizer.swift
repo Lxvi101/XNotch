@@ -1,4 +1,5 @@
 import AppKit
+import XNotchKit
 
 /// Recognizes a side-to-side shake of the pointer: enough horizontal
 /// direction changes, each after a long enough stroke, in a short time.
@@ -154,7 +155,10 @@ final class DragMonitor {
         let point = NSEvent.mouseLocation
         if let dockStrip, dockStrip.contains(point) { return }
         let modifier = preferences.modifierEnabled && event.modifierFlags.contains(preferences.modifier.flags)
-        let shaken = preferences.shakeEnabled && recognizer.add(point, at: event.timestamp)
+        // A shake with a key another extension took for drags, like the
+        // Converter's wheel key, is that extension's.
+        let claimed = !event.modifierFlags.intersection(DragModifierClaims.claimed(excluding: ShelvesExtension.id)).isEmpty
+        let shaken = preferences.shakeEnabled && !claimed && recognizer.add(point, at: event.timestamp)
         guard modifier || shaken else { return }
         hasTriggered = true
         onTrigger?(point)

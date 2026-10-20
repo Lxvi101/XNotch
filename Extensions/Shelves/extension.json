@@ -6,6 +6,6 @@
   "symbol": "rectangle.stack.fill",
   "tint": "#30B85C",
   "principalClass": "ShelvesPrincipal",
-  "kit": { "abi": 3, "minAPI": "1.3.0" },
+  "kit": { "abi": 3, "minAPI": "1.6.0" },
   "creator": { "name": "XNotch" }
 }

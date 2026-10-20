@@ -85,6 +85,17 @@ final class ShelfSummaryTests: XCTestCase {
         XCTAssertNotNil(ShelfSummary.size(for: [file("a", .other, size: 2048), file("f", .folder, size: nil)]))
     }
 
+    @MainActor func testMergeKeepsFilesAndSkipsDuplicates() {
+        let shared = file("shared.png", .image)
+        var owned = file("owned.txt", .document)
+        owned.isOwned = true
+        let target = Shelf(record: ShelfRecord(files: [shared]))
+        XCTAssertEqual(target.merge([shared, owned]), 1)
+        XCTAssertEqual(target.files.map(\.path), [shared.path, owned.path])
+        XCTAssertEqual(target.files.last, owned)
+        XCTAssertEqual(target.merge([owned]), 0)
+    }
+
     @MainActor func testTextFileName() {
         XCTAssertEqual(PasteboardReaderNames.name("  hello there: a/b  "), "hello there- a-b.txt")
         XCTAssertEqual(PasteboardReaderNames.name("   "), "Text.txt")

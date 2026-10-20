@@ -26,7 +26,7 @@ struct ShelfView: View {
         .frame(width: NotchMetrics.shelf.outerWidth, height: NotchMetrics.shelf.height)
         .environmentObject(extensions.pointer)
         .environment(\.shelfExtensionMenuItems) { [weak extensions] files in
-            extensions?.shelfAccessoryProviders.flatMap { $0.shelfMenuItems(for: files) } ?? []
+            extensions?.notchShelfMenuItems(for: files) ?? []
         }
     }
 
@@ -81,7 +81,7 @@ struct ShelfView: View {
     /// then AirDrop and clearing the shelf.
     private var menuItems: [NotchMenuItem] {
         let targets = accessoryContext.targets
-        var items = extensions.shelfAccessoryProviders.flatMap { $0.shelfMenuItems(for: targets) }
+        var items = extensions.notchShelfMenuItems(for: targets)
         if !items.isEmpty { items.append(.separator) }
         items.append(.action("AirDrop", symbol: "dot.radiowaves.left.and.right") {
             ShelfActions.airDrop(store.items.map(\.url))

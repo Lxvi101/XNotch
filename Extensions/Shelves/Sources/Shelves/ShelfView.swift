@@ -42,6 +42,9 @@ private struct Presence: ViewModifier {
         let reduced = ShelfMotion.reduced
         let scale: CGFloat = presented ? (shelf.isDropTarget && !shelf.showsActions ? 1.025 : 1) : (reduced ? 1 : 0.35)
         content
+            // Carried over another shelf, it draws in, ready to go inside.
+            .scaleEffect(shelf.isOverShelf && !reduced ? 0.9 : 1)
+            .opacity(shelf.isOverShelf ? 0.92 : 1)
             .scaleEffect(scale, anchor: shelf.presenceAnchor)
             .opacity(presented ? 1 : 0)
             .keyframeAnimator(initialValue: CGFloat(1), trigger: shelf.landings) { content, squash in

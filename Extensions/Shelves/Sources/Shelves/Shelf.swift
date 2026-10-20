@@ -143,6 +143,8 @@ final class Shelf: Identifiable {
     /// A drag of any kind, including this shelf's own files, is over it.
     var isDragInside = false
     var isHovered = false
+    /// Being moved over another shelf, to merge into it on release.
+    var isOverShelf = false
     /// The shelf has turned into its instant actions.
     var showsActions = false
     var hoveredAction: InstantAction?
@@ -192,6 +194,18 @@ final class Shelf: Identifiable {
             guard let file = ShelfFile(url: url, isOwned: owned.contains(url)), known.insert(file.path).inserted else { return nil }
             return file
         }
+        guard !added.isEmpty else { return 0 }
+        files += added
+        updatedAt = Date()
+        return added.count
+    }
+
+    /// Takes another shelf's files, keeping what they know (ownership, bookmarks),
+    /// skipping ones already here; returns how many were added.
+    @discardableResult
+    func merge(_ incoming: [ShelfFile]) -> Int {
+        var known = Set(files.map(\.path))
+        let added = incoming.filter { known.insert($0.path).inserted }
         guard !added.isEmpty else { return 0 }
         files += added
         updatedAt = Date()

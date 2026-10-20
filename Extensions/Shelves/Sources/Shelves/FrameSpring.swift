@@ -39,11 +39,12 @@ final class FrameSpring: NSObject {
     private var lastTime: CFTimeInterval?
 
     /// Springs to `rect` from `current`, unless already moving, in which
-    /// case it re-targets from the frame on screen.
-    func animate(from current: CGRect, to rect: CGRect, in view: NSView) {
+    /// case it re-targets from the frame on screen. `initialVelocity`, in
+    /// points per second, carries a hand-off from the pointer.
+    func animate(from current: CGRect, to rect: CGRect, initialVelocity: CGVector = .zero, in view: NSView) {
         if !isAnimating {
             position = Self.vector(current)
-            velocity = .zero
+            velocity = SIMD4(initialVelocity.dx, initialVelocity.dy, 0, 0)
         }
         target = Self.vector(rect)
         guard !ShelfMotion.reduced else {

@@ -19,6 +19,11 @@ struct BackgroundArea: NSViewRepresentable {
 
 final class BackgroundAreaView: NSView {
     weak var controller: ShelfController?
+    /// The pointer and the window where the move began, in screen coordinates.
+    /// Moved by hand rather than with `performDrag`, so the shelf can see
+    /// another one under it on the way.
+    private var moveStart: (mouse: CGPoint, origin: CGPoint)?
+    private var hasMoved = false
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -28,9 +33,34 @@ final class BackgroundAreaView: NSView {
             if event.clickCount == 2, !controller.shelf.files.isEmpty {
                 return controller.setExpanded(!controller.shelf.isExpanded)
             }
-            let before = window.frame.origin
-            window.performDrag(with: event)
-            if window.frame.origin == before, !controller.shelf.selection.isEmpty {
+            moveStart = (NSEvent.mouseLocation, window.frame.origin)
+            hasMoved = false
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = moveStart else { return }
+        let mouse = NSEvent.mouseLocation
+        let delta = CGPoint(x: mouse.x - start.mouse.x, y: mouse.y - start.mouse.y)
+        MainActor.assumeIsolated {
+            guard let controller else { return }
+            if !hasMoved {
+                guard hypot(delta.x, delta.y) > 2 else { return }
+                hasMoved = true
+                controller.beginMove()
+            }
+            controller.move(to: CGPoint(x: start.origin.x + delta.x, y: start.origin.y + delta.y))
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { moveStart = nil }
+        guard moveStart != nil else { return }
+        MainActor.assumeIsolated {
+            guard let controller else { return }
+            if hasMoved {
+                controller.endMove()
+            } else if !controller.shelf.selection.isEmpty {
                 withAnimation(ShelfMotion.hover) { controller.shelf.selection.removeAll() }
             }
         }

@@ -99,6 +99,7 @@ final class WeatherExtension: XNotchExtension, NotchPageProviding {
 | `SettingsPaneProviding` | A page under Extensions in Settings. Return a `Form { … }.formStyle(.grouped)` to match. |
 | `PermissionRequesting` | Permissions XNotch asks for in its welcome tour, right after its own (API 1.2.0). List what's missing without prompting; show macOS's prompt only in `requestPermission(_:)`. |
 | `ShelfAccessoryProviding` | A button in the shelf header and entries in a shelf file's right-click menu (API 1.3.0). `ShelfContext.targets` is the selection, or every file when nothing is selected; read it when the button is used. Draw the button with `ShelfHeaderButton` so it matches the header and shrinks with it. |
+| `ShelfFileActing` | Menu entries for shelf files that make new files, which land back on the shelf they came from: call `ShelfFileRequest.deliver(_:)` with them (API 1.6.0). They show on the notch shelf and on floating shelves. The Converter's "Convert 12 Images…" is one. |
 
 A page's content area is `NotchPageContext.contentWidth` (400 pt) wide and `NotchPageDescriptor.contentHeight` tall (98 pt by default, the shelf's height). XNotch draws the notch row above it and reveals your view with the same blur-to-focus spring as its own pages.
 
@@ -118,6 +119,8 @@ While your page is fully hidden XNotch removes its view, so `@State` inside it r
 - `notch.showAlert(_:)` (API 1.4.0): a few seconds in the closed notch's wings, as when headphones connect. A symbol and a word on the left, a short value and an optional ring on the right; `page` is what a click opens. Vitals uses it when the disk fills up or memory runs short. Alert only on a change the user would want to know about, not on every reading.
 - `(notch as? NotchEyesAlerting)?.showAlert(_:eyes:)` (API 1.5.0): the same alert with a warning sign and its title on the left, and the notch's eyes on the right showing how serious it is (`.caution` or `.critical`) in place of the value. Vitals offers it as an alert style.
 - `shelf` (API 1.3.0): `files` on the shelf, and `add(_:)` to put files there and open the notch on them, as a drop does. The iPhone & iPad extension uses it for files that arrive from a phone.
+- `(shelf as? ShelfActionSharing)?.sharedShelfActions(for:)` (API 1.6.0): other extensions' `ShelfFileActing` entries, for an extension with shelves of its own. Floating shelves add them to their menu, delivering the new files to themselves.
+- `DragModifierClaims` (API 1.6.0): if a gesture made while dragging files belongs to you when a key is held, `set` the key, and `claimed(excluding:)` before answering a drag yourself, so two extensions never answer the same drag. The Converter claims its wheel key; Shelves leaves shakes made with it held alone.
 - `workspace`: open and reveal files, and `chooseFolders()` for a picker in front of everything.
 - `feedback.tick()`: the trackpad tick, which respects the user's haptics setting.
 - `log`: an `os.Logger` under `dev.levi.XNotch.extension`.

@@ -132,6 +132,22 @@ final class ExtensionManager: ObservableObject {
         }
     }
 
+    /// Active extensions' actions on shelf files, in load order (API 1.6.0).
+    var shelfFileActors: [(id: ExtensionID, actor: ShelfFileActing)] {
+        entries.compactMap { entry in
+            guard entry.isActive, let actor = entry.instance as? ShelfFileActing else { return nil }
+            return (entry.id, actor)
+        }
+    }
+
+    /// What extensions offer for files on the notch shelf: their plain menu
+    /// entries, then the actions whose new files land back on the shelf.
+    func notchShelfMenuItems(for files: [URL]) -> [NotchMenuItem] {
+        let request = ShelfFileRequest(files: files) { [weak self] urls in self?.driver?.addToShelf(urls) }
+        return shelfAccessoryProviders.flatMap { $0.shelfMenuItems(for: files) }
+            + shelfFileActors.flatMap { $0.actor.shelfActions(for: request) }
+    }
+
     func settingsPane(for id: ExtensionID) -> AnyView? {
         guard let entry = entries.first(where: { $0.id == id }), entry.isActive,
               let provider = entry.instance as? SettingsPaneProviding else { return nil }
@@ -221,7 +237,7 @@ final class ExtensionManager: ObservableObject {
 
 /// One extension's view of the host.
 @MainActor
-private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, ShelfAccess {
+private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, ShelfAccess, ShelfActionSharing {
     let extensionID: ExtensionID
     let storage: ExtensionStorage
     let workspace = ExtensionWorkspace()
@@ -243,6 +259,11 @@ private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, 
 
     func add(_ urls: [URL]) {
         manager?.driver?.addToShelf(urls)
+    }
+
+    func sharedShelfActions(for request: ShelfFileRequest) -> [NotchMenuItem] {
+        guard let manager, manager.isActive(extensionID) else { return [] }
+        return manager.shelfFileActors.filter { $0.id != extensionID }.flatMap { $0.actor.shelfActions(for: request) }
     }
 
     var isOpen: Bool { manager?.driver?.isOpen ?? false }

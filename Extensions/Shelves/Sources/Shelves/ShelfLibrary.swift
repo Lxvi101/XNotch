@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import XNotchKit
 
 /// Every shelf: the ones on screen, and recent ones that can be opened again.
 /// Saved to shelves.json in the extension's storage.
@@ -15,6 +16,8 @@ final class ShelfLibrary: ObservableObject {
     var sendToNotchShelf: ([URL]) -> Void = { _ in }
     var openSettings: () -> Void = {}
     var tick: () -> Void = {}
+    /// Other extensions' actions on a shelf's files, such as Convert.
+    var sharedActions: (ShelfFileRequest) -> [NotchMenuItem] = { _ in [] }
 
     private let preferences: ShelvesPreferences
     private let fileURL: URL
@@ -168,6 +171,19 @@ final class ShelfLibrary: ObservableObject {
         }
         pendingSaves[shelf.id] = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
+    }
+
+    /// Saves a shelf at once, dropping any save already waiting.
+    func saveNow(_ shelf: Shelf) {
+        pendingSaves.removeValue(forKey: shelf.id)?.cancel()
+        update(shelf)
+    }
+
+    /// The frontmost other shelf under a point on screen, for merging into.
+    func shelf(at point: CGPoint, excluding excluded: ShelfController) -> ShelfController? {
+        open.filter { $0 !== excluded && !$0.isClosing && $0.panel.isVisible
+                && ShelfGeometry.shelfFrame(inWindow: $0.panel.frame).contains(point) }
+            .min { $0.panel.orderedIndex < $1.panel.orderedIndex }
     }
 
     func didClose(_ controller: ShelfController) {

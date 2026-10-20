@@ -102,6 +102,40 @@ public protocol ShelfAccessoryProviding {
     func shelfMenuItems(for files: [URL]) -> [NotchMenuItem]
 }
 
+/// Files on a shelf, for an action that can make new ones (API 1.6.0).
+@MainActor
+public struct ShelfFileRequest {
+    /// The files the action is for: the selection, or the whole shelf.
+    public let files: [URL]
+    private let deliverFiles: @MainActor ([URL]) -> Void
+
+    public init(files: [URL], deliver: @escaping @MainActor ([URL]) -> Void) {
+        self.files = files
+        deliverFiles = deliver
+    }
+
+    /// Puts files the action made on the shelf the request came from.
+    public func deliver(_ urls: [URL]) { deliverFiles(urls) }
+}
+
+/// Menu entries for shelf files that can hand new files back to the shelf
+/// they came from (API 1.6.0). XNotch shows them on the notch shelf; an
+/// extension with shelves of its own shows them through `ShelfActionSharing`.
+@MainActor
+public protocol ShelfFileActing {
+    /// Entries for these files; none when nothing applies.
+    func shelfActions(for request: ShelfFileRequest) -> [NotchMenuItem]
+}
+
+/// Other extensions' `ShelfFileActing` entries, for an extension that keeps
+/// shelves of its own, like Shelves (API 1.6.0). XNotch's `ShelfAccess`
+/// adopts it: `host.shelf as? ShelfActionSharing`.
+@MainActor
+public protocol ShelfActionSharing: AnyObject {
+    /// Every other active extension's entries for the request's files.
+    func sharedShelfActions(for request: ShelfFileRequest) -> [NotchMenuItem]
+}
+
 /// The shelf header's round button. `label` is drawn at 10.5 pt in the
 /// header's colours; pass a symbol name for the common case.
 public struct ShelfHeaderButton<Label: View>: View {
