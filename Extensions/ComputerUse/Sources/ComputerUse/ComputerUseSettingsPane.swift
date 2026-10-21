@@ -1,13 +1,16 @@
 import SwiftUI
+import XNotchKit
 
 struct ComputerUseSettingsPane: View {
     @ObservedObject var sessions: AgentSessions
     @ObservedObject var preferences: ComputerUsePreferences
     @ObservedObject var installer: WinkInstaller
+    let guide: PermissionGuiding?
 
     var body: some View {
         Form {
             server
+            if installer.isInstalled { permissions }
             apps
             eyes
             now
@@ -24,7 +27,7 @@ struct ComputerUseSettingsPane: View {
                 } else if installer.isInstalled {
                     Button("Remove", role: .destructive) { Task { await installer.uninstall() } }
                 } else {
-                    Button("Install") { Task { await installer.install() } }
+                    Button("Install") { Task { await installer.install(guide: guide) } }
                         .buttonStyle(.borderedProminent)
                         .disabled(installer.bundled == nil)
                 }
@@ -37,8 +40,48 @@ struct ComputerUseSettingsPane: View {
                 Text(error).foregroundStyle(.red)
             }
         } footer: {
-            Text("Install adds it to every app below that's on this Mac. Remove takes it out of them all again. Allow Accessibility and Screen Recording for each app when macOS asks: the agent works through it.")
+            Text("Install adds it to every app below that's on this Mac, then asks for Wink's permissions. Remove takes it out of them all again.")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var permissions: some View {
+        Section {
+            ForEach(GuidedPermission.allCases, id: \.self) { permission in
+                let info = ComputerUseExtension.describe(permission)
+                LabeledContent {
+                    if installer.guiding == permission {
+                        ProgressView().controlSize(.small)
+                    } else if let grants = installer.grants, grants.has(permission) {
+                        Label("Allowed", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else if installer.grants != nil {
+                        Button("Allow…") {
+                            guard let guide else { return }
+                            Task { _ = await installer.request(permission, guide: guide) }
+                        }
+                        .disabled(guide == nil || installer.guiding != nil)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                } label: {
+                    Label {
+                        Text(info.title.replacingOccurrences(of: "Wink: ", with: ""))
+                        Text(info.reason)
+                    } icon: {
+                        Image(systemName: info.symbol)
+                    }
+                }
+            }
+        } header: {
+            Text("Wink's Permissions")
+        } footer: {
+            Text("Wink asks for these once, for itself, whichever app runs the agent. If an agent needs one that's off, XNotch shows you where to switch it on.")
+                .foregroundStyle(.secondary)
+        }
+        .task {
+            // Catch a grant made in System Settings while the pane was closed.
+            await installer.refreshGrants()
         }
     }
 

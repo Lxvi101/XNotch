@@ -14,14 +14,16 @@ public final class ComputerUsePrincipal: NSObject, XNotchExtensionPrincipal {
 /// eyes open and follow its cursor; when the agent is done they squint
 /// happily and close.
 @MainActor
-final class ComputerUseExtension: XNotchExtension, SettingsPaneProviding {
+final class ComputerUseExtension: XNotchExtension, SettingsPaneProviding, PermissionRequesting {
     static let id: ExtensionID = "computer-use"
 
     private var host: ExtensionHost?
     private let sessions = AgentSessions()
     private var preferences: ComputerUsePreferences?
     private let installer = WinkInstaller(bundled: Bundle(for: ComputerUseExtension.self)
-        .url(forResource: "wink-cua", withExtension: nil))
+        .url(forResource: "Wink", withExtension: "app"))
+    /// When an agent last asked for each permission, so a busy agent doesn't keep reopening the guide.
+    private var lastPermissionAsk: [GuidedPermission: Date] = [:]
     private var sink: DistributedSink?
     private var pruneTimer: Timer?
     private var isWatching = false
@@ -36,10 +38,14 @@ final class ComputerUseExtension: XNotchExtension, SettingsPaneProviding {
         self.preferences = preferences
         // Also brings an installed server up to date with the one this XNotch ships.
         Task { await installer.refresh() }
-        sink = DistributedSink(names: [AgentSessions.startName, AgentSessions.actionName, AgentSessions.endName]) {
-            [weak self] name, info in
+        sink = DistributedSink(names: [AgentSessions.startName, AgentSessions.actionName, AgentSessions.endName,
+                                       Self.permissionNeededName]) { [weak self] name, info in
             self?.host?.log.debug("\(name.rawValue, privacy: .public) \(info.count) keys")
-            self?.sessions.handle(name, info)
+            if name == Self.permissionNeededName {
+                self?.agentNeeds(info["permission"] as? String)
+            } else {
+                self?.sessions.handle(name, info)
+            }
         }
         sessions.$sessions.dropFirst().sink { [weak self] _ in
             // @Published fires before the change lands.
@@ -65,7 +71,48 @@ final class ComputerUseExtension: XNotchExtension, SettingsPaneProviding {
 
     func makeSettingsPane() -> AnyView {
         guard let preferences else { return AnyView(EmptyView()) }
-        return AnyView(ComputerUseSettingsPane(sessions: sessions, preferences: preferences, installer: installer))
+        return AnyView(ComputerUseSettingsPane(sessions: sessions, preferences: preferences, installer: installer,
+                                               guide: host as? PermissionGuiding))
+    }
+
+    // MARK: Permissions
+
+    static let permissionNeededName = Notification.Name("dev.wink.cua.permission.needed")
+
+    var pendingPermissions: [ExtensionPermission] {
+        installer.missingPermissions.map(Self.describe)
+    }
+
+    func requestPermission(_ id: String) async -> Bool {
+        guard let permission = GuidedPermission(rawValue: id), let guide = host as? PermissionGuiding else { return false }
+        return await installer.request(permission, guide: guide)
+    }
+
+    static func describe(_ permission: GuidedPermission) -> ExtensionPermission {
+        switch permission {
+        case .accessibility:
+            ExtensionPermission(id: permission.rawValue, title: "Wink: Accessibility", detail: "System Settings",
+                                reason: "Lets AI agents read and use other apps' windows through Wink, without taking over your mouse or keyboard.",
+                                symbol: "accessibility", tint: "#3A82F7")
+        case .screenRecording:
+            ExtensionPermission(id: permission.rawValue, title: "Wink: Screen Recording", detail: "System Settings",
+                                reason: "Lets agents see the windows they work in, so they can check what they did.",
+                                symbol: "rectangle.dashed.badge.record", tint: "#FF453A")
+        }
+    }
+
+    /// An agent hit a permission Wink doesn't have: show the guide, at most every few minutes.
+    private func agentNeeds(_ name: String?) {
+        guard let name, let permission = GuidedPermission(rawValue: name), let guide = host as? PermissionGuiding,
+              installer.isInstalled, installer.guiding == nil else { return }
+        if let last = lastPermissionAsk[permission], Date().timeIntervalSince(last) < 5 * 60 { return }
+        lastPermissionAsk[permission] = Date()
+        host?.log.info("An agent needs \(name, privacy: .public)")
+        Task {
+            await installer.refreshGrants()
+            guard installer.missingPermissions.contains(permission) else { return }
+            _ = await installer.request(permission, guide: guide)
+        }
     }
 
     private func update() {

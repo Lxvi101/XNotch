@@ -242,8 +242,8 @@ final class ExtensionManager: ObservableObject {
 
 /// One extension's view of the host.
 @MainActor
-private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, NotchEyesWatching, ShelfAccess,
-    ShelfActionSharing {
+private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, NotchEyesWatching, PermissionGuiding,
+    ShelfAccess, ShelfActionSharing {
     let extensionID: ExtensionID
     let storage: ExtensionStorage
     let workspace = ExtensionWorkspace()
@@ -305,6 +305,16 @@ private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, 
 
     func stopWatching(farewell: NotchEyesMood?) {
         manager?.driver?.stopWatching(farewell: farewell, from: extensionID)
+    }
+
+    func guide(_ permission: GuidedPermission, for app: URL,
+               isGranted: @escaping @Sendable () async -> Bool) async -> Bool {
+        guard manager?.isActive(extensionID) == true else { return false }
+        let permission: Permission = switch permission {
+        case .accessibility: .accessibility
+        case .screenRecording: .screenRecording
+        }
+        return await PermissionCenter.shared.request(permission, for: app, isGranted: isGranted)
     }
 
     private func present(_ alert: NotchAlert, eyes: NotchAlertSeverity?) {

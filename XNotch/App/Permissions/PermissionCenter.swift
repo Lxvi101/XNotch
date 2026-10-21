@@ -40,12 +40,33 @@ final class PermissionCenter: ObservableObject {
             completion?(true)
             return
         }
+        guide(permission, subject: .xnotch, from: source, isGranted: { permission.isGranted }) { [weak self] granted in
+            self?.refresh()
+            completion?(granted)
+        }
+    }
+
+    /// The same guide for another app, which has to answer for its own grants.
+    func request(_ permission: Permission, for app: URL, from source: NSRect? = nil,
+                 isGranted: @escaping @Sendable () async -> Bool) async -> Bool {
+        if await isGranted() { return true }
+        return await withCheckedContinuation { continuation in
+            guide(permission, subject: .app(at: app), from: source, isGranted: isGranted) { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
+    private func guide(_ permission: Permission, subject: PermissionSubject, from source: NSRect?,
+                       isGranted: @escaping @Sendable () async -> Bool, completion: @escaping (Bool) -> Void) {
         guide?.dismiss()
         let pointer = NSEvent.mouseLocation
         let guide = PermissionGuideController(
             permission: permission,
+            subject: subject,
             source: source ?? NSRect(x: pointer.x - 20, y: pointer.y - 20, width: 40, height: 40)
         )
+        var wasGranted = false
         guide.onMove = { [weak self] frame in self?.onGuideMoved?(frame) }
         guide.onFinish = { [weak self, weak guide] _ in
             guard let self, let guide, self.guide === guide else { return }
@@ -53,23 +74,30 @@ final class PermissionCenter: ObservableObject {
             activeRequest = nil
             pollTimer?.invalidate()
             pollTimer = nil
-            refresh()
             onGuideMoved?(nil)
-            onGuideFinished?(granted.contains(permission))
-            completion?(granted.contains(permission))
+            onGuideFinished?(wasGranted)
+            completion(wasGranted)
         }
         self.guide = guide
         activeRequest = permission
         guide.start()
 
         pollTimer?.invalidate()
+        var checking = false
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, permission.isGranted else { return }
-                self.pollTimer?.invalidate()
-                self.pollTimer = nil
-                self.refresh()
-                self.guide?.markGranted()
+                guard !checking else { return }
+                checking = true
+                Task { @MainActor [weak self, weak guide] in
+                    let granted = await isGranted()
+                    checking = false
+                    guard granted, let self, let guide, self.guide === guide else { return }
+                    wasGranted = true
+                    self.pollTimer?.invalidate()
+                    self.pollTimer = nil
+                    self.refresh()
+                    guide.markGranted()
+                }
             }
         }
     }

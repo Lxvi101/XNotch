@@ -223,6 +223,26 @@ public protocol PermissionRequesting {
     func requestPermission(_ id: String) async -> Bool
 }
 
+/// A privacy permission another app needs, asked for with XNotch's guide (API 1.8.0).
+public enum GuidedPermission: String, Sendable, Hashable, CaseIterable {
+    case accessibility
+    case screenRecording
+}
+
+/// XNotch's permission guide for an app other than XNotch: it opens the
+/// permission's list in System Settings and docks a card under it with the
+/// app's icon to drag in, then watches for the grant (API 1.8.0). The host
+/// adopts it: `host as? PermissionGuiding`.
+@MainActor
+public protocol PermissionGuiding: AnyObject {
+    /// `app` is the bundle to drag into the list. `isGranted` is asked about
+    /// twice a second while the guide is up; the app's own process has to
+    /// answer it, since XNotch can't see another app's grants. Returns whether
+    /// the permission ended up granted.
+    func guide(_ permission: GuidedPermission, for app: URL,
+               isGranted: @escaping @Sendable () async -> Bool) async -> Bool
+}
+
 // MARK: Pointer
 
 /// The pointer, published by XNotch in `KitSpace.canvas` coordinates while it

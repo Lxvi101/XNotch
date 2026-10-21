@@ -10,6 +10,7 @@ final class PermissionGuideState: ObservableObject {
     }
 
     let permission: Permission
+    let subject: PermissionSubject
     @Published var side: Side = .below
     @Published var arrived = false
     @Published var departing = false
@@ -18,8 +19,9 @@ final class PermissionGuideState: ObservableObject {
     @Published var settingsFrontmost = true
     @Published var showsRelaunch = false
 
-    init(permission: Permission) {
+    init(permission: Permission, subject: PermissionSubject) {
         self.permission = permission
+        self.subject = subject
     }
 }
 
@@ -46,14 +48,15 @@ final class PermissionGuideController {
     static let cardWidth: CGFloat = 440
     private static let panelSize = CGSize(width: cardWidth + 2 * margin, height: 210)
 
-    init(permission: Permission, source: NSRect) {
+    init(permission: Permission, subject: PermissionSubject, source: NSRect) {
         self.source = source
-        state = PermissionGuideState(permission: permission)
+        state = PermissionGuideState(permission: permission, subject: subject)
         panel = PermissionGuidePanel(size: Self.panelSize)
+        let relaunch: (() -> Void)? = subject.isSelf ? { PermissionCenter.relaunch() } : nil
         let actions = PermissionGuideView.Actions(
             close: { [weak self] in self?.dismiss() },
             reopenSettings: { NSWorkspace.shared.open(permission.settingsURL) },
-            relaunch: PermissionCenter.relaunch,
+            relaunch: relaunch,
             dragChanged: { [weak self] dragging in
                 self?.state.isDragging = dragging
                 self?.panel.ignoresMouseEvents = dragging
@@ -299,7 +302,8 @@ struct PermissionGuideView: View {
     struct Actions {
         let close: () -> Void
         let reopenSettings: () -> Void
-        let relaunch: () -> Void
+        /// nil for another app, which picks the grant up next time it starts.
+        let relaunch: (() -> Void)?
         let dragChanged: (Bool) -> Void
     }
 
@@ -307,7 +311,7 @@ struct PermissionGuideView: View {
     let actions: Actions
 
     private var appName: String {
-        AppIcon.name
+        state.subject.name
     }
 
     var body: some View {
@@ -317,11 +321,11 @@ struct PermissionGuideView: View {
                 grantedRow
                     .transition(.blurReplace)
             } else {
-                AppDragTile(onDragChanged: actions.dragChanged)
+                AppDragTile(subject: state.subject, onDragChanged: actions.dragChanged)
                     .frame(height: 52)
                     .transition(.blurReplace)
             }
-            if let advice = AppLocation.advice, !state.isGranted {
+            if state.subject.isSelf, let advice = AppLocation.advice, !state.isGranted {
                 locationRow(advice)
             }
             if state.showsRelaunch && !state.isGranted {
@@ -380,7 +384,7 @@ struct PermissionGuideView: View {
 
     private var grantedRow: some View {
         HStack(spacing: 10) {
-            Image(nsImage: AppIcon.image)
+            Image(nsImage: state.subject.icon)
                 .resizable()
                 .frame(width: 32, height: 32)
             Text(appName).font(.system(size: 13, weight: .semibold))
@@ -415,12 +419,16 @@ struct PermissionGuideView: View {
 
     private var relaunchRow: some View {
         HStack(spacing: 10) {
-            Text("Already switched on? macOS applies it once \(appName) restarts.")
+            Text(actions.relaunch == nil
+                 ? "Already switched on? macOS applies it the next time \(appName) starts."
+                 : "Already switched on? macOS applies it once \(appName) restarts.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            Button("Relaunch", action: actions.relaunch)
-                .controlSize(.small)
+            if let relaunch = actions.relaunch {
+                Button("Relaunch", action: relaunch)
+                    .controlSize(.small)
+            }
         }
     }
 
@@ -472,13 +480,14 @@ private struct GuideArrow: View {
     }
 }
 
-/// XNotch's icon as a real file drag of the app bundle: what System Settings'
+/// The app's icon as a real file drag of its bundle: what System Settings'
 /// permission lists accept, exactly like dragging the app in from Finder.
 private struct AppDragTile: NSViewRepresentable {
+    let subject: PermissionSubject
     let onDragChanged: (Bool) -> Void
 
     func makeNSView(context: Context) -> AppDragSourceView {
-        let view = AppDragSourceView()
+        let view = AppDragSourceView(subject: subject)
         view.onDragChanged = onDragChanged
         return view
     }
@@ -492,10 +501,12 @@ private final class AppDragSourceView: NSView, NSDraggingSource {
     var onDragChanged: ((Bool) -> Void)?
     private var mouseDownPoint: NSPoint?
     private let state = AppDragTileState()
+    private let subject: PermissionSubject
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        let host = NSHostingView(rootView: AppDragTileContent(state: state).allowsHitTesting(false))
+    init(subject: PermissionSubject) {
+        self.subject = subject
+        super.init(frame: .zero)
+        let host = NSHostingView(rootView: AppDragTileContent(state: state, subject: subject).allowsHitTesting(false))
         host.translatesAutoresizingMaskIntoConstraints = false
         addSubview(host)
         NSLayoutConstraint.activate([
@@ -544,9 +555,8 @@ private final class AppDragSourceView: NSView, NSDraggingSource {
         guard hypot(point.x - start.x, point.y - start.y) > 3 else { return }
         mouseDownPoint = nil
 
-        let url = Bundle.main.bundleURL
-        let item = NSDraggingItem(pasteboardWriter: AppBundlePasteboardWriter(url: url))
-        item.setDraggingFrame(NSRect(x: point.x - 32, y: point.y - 32, width: 64, height: 64), contents: AppIcon.image)
+        let item = NSDraggingItem(pasteboardWriter: AppBundlePasteboardWriter(url: subject.bundleURL))
+        item.setDraggingFrame(NSRect(x: point.x - 32, y: point.y - 32, width: 64, height: 64), contents: subject.icon)
         let session = beginDraggingSession(with: [item], event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
         session.draggingFormation = .none
@@ -604,16 +614,17 @@ private final class AppDragTileState: ObservableObject {
 
 private struct AppDragTileContent: View {
     @ObservedObject var state: AppDragTileState
+    let subject: PermissionSubject
     @State private var nudge = false
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(nsImage: AppIcon.image)
+            Image(nsImage: subject.icon)
                 .resizable()
                 .frame(width: 34, height: 34)
                 .offset(y: nudge && !state.isDragging ? -3 : 0)
                 .opacity(state.isDragging ? 0.35 : 1)
-            Text(AppIcon.name)
+            Text(subject.name)
                 .font(.system(size: 13, weight: .semibold))
             Spacer(minLength: 0)
             VStack(spacing: 1) {

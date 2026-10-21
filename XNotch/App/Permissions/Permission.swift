@@ -89,3 +89,24 @@ enum Permission: String, CaseIterable, Identifiable {
         }
     }
 }
+
+/// Whose permission a guide asks for: XNotch's own, or another app's, such as
+/// a helper an extension installs.
+struct PermissionSubject {
+    let bundleURL: URL
+    let name: String
+    let icon: NSImage
+    /// XNotch itself: the guide checks where it runs from and offers to relaunch it.
+    let isSelf: Bool
+
+    @MainActor static var xnotch: PermissionSubject {
+        PermissionSubject(bundleURL: Bundle.main.bundleURL, name: AppIcon.name, icon: AppIcon.image, isSelf: true)
+    }
+
+    static func app(at url: URL) -> PermissionSubject {
+        let info = Bundle(url: url)?.infoDictionary
+        let name = info?["CFBundleDisplayName"] as? String ?? info?["CFBundleName"] as? String
+            ?? url.deletingPathExtension().lastPathComponent
+        return PermissionSubject(bundleURL: url, name: name, icon: NSWorkspace.shared.icon(forFile: url.path), isSelf: false)
+    }
+}

@@ -8,7 +8,7 @@
   "principalClass": "ComputerUsePrincipal",
   "kit": {
     "abi": 3,
-    "minAPI": "1.7.0"
+    "minAPI": "1.8.0"
   },
   "creator": {
     "name": "XNotch"
