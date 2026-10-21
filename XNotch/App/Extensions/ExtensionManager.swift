@@ -13,6 +13,8 @@ protocol ExtensionNotchDriver: AnyObject {
     func openSettings(extension id: ExtensionID)
     func addToShelf(_ urls: [URL])
     func showAlert(_ alert: NotchAlert, eyes: NotchAlertSeverity?, from id: ExtensionID)
+    func watch(_ point: CGPoint?, mood: NotchEyesMood, from id: ExtensionID)
+    func stopWatching(farewell: NotchEyesMood?, from id: ExtensionID)
 }
 
 /// Discovers `.xnext` bundles (built into the app, and in
@@ -212,6 +214,7 @@ final class ExtensionManager: ObservableObject {
         guard let index = entries.firstIndex(where: { $0.id == id }), entries[index].isActive else { return }
         entries[index].instance?.deactivate()
         entries[index].isActive = false
+        driver?.stopWatching(farewell: nil, from: id)
         hosts[id] = nil
         pagesDidChange()
     }
@@ -239,7 +242,8 @@ final class ExtensionManager: ObservableObject {
 
 /// One extension's view of the host.
 @MainActor
-private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, ShelfAccess, ShelfActionSharing {
+private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, NotchEyesWatching, ShelfAccess,
+    ShelfActionSharing {
     let extensionID: ExtensionID
     let storage: ExtensionStorage
     let workspace = ExtensionWorkspace()
@@ -292,6 +296,15 @@ private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, 
 
     func showAlert(_ alert: NotchAlert, eyes severity: NotchAlertSeverity) {
         present(alert, eyes: severity)
+    }
+
+    func watch(_ point: CGPoint?, mood: NotchEyesMood) {
+        guard manager?.isActive(extensionID) == true else { return }
+        manager?.driver?.watch(point, mood: mood, from: extensionID)
+    }
+
+    func stopWatching(farewell: NotchEyesMood?) {
+        manager?.driver?.stopWatching(farewell: farewell, from: extensionID)
     }
 
     private func present(_ alert: NotchAlert, eyes: NotchAlertSeverity?) {

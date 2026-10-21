@@ -163,6 +163,30 @@ extension NotchDisplays: ExtensionNotchDriver {
     func showAlert(_ alert: NotchAlert, eyes: NotchAlertSeverity?, from id: ExtensionID) {
         activeModel.showAlert(alert, eyes: eyes, from: id)
     }
+
+    /// The eyes open on the active display; one that stopped being active closes its own.
+    func watch(_ point: CGPoint?, mood: NotchEyesMood, from id: ExtensionID) {
+        let active = activeModel
+        for model in models where model !== active { model.stopWatching(farewell: nil, from: id) }
+        active.watch(point, mood: NotchEyes.Expression(mood), from: id)
+    }
+
+    func stopWatching(farewell: NotchEyesMood?, from id: ExtensionID) {
+        for model in models { model.stopWatching(farewell: farewell.map(NotchEyes.Expression.init), from: id) }
+    }
+}
+
+extension NotchEyes.Expression {
+    init(_ mood: NotchEyesMood) {
+        switch mood {
+        case .attentive: self = .attentive
+        case .curious: self = .curious
+        case .happy: self = .happy
+        case .excited: self = .excited
+        case .sleepy: self = .sleepy
+        case .worried: self = .worried
+        }
+    }
 }
 
 extension NSScreen {

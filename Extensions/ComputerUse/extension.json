@@ -1,0 +1,16 @@
+{
+  "id": "computer-use",
+  "name": "Computer Use",
+  "version": "1.0.0",
+  "summary": "Let AI agents use your Mac. Installs Wink's computer-use server and adds it to Claude Code, Codex, Cursor, Antigravity and more, then the notch's eyes follow the agent's cursor while it works.",
+  "symbol": "cursorarrow.motionlines",
+  "tint": "#A78BFA",
+  "principalClass": "ComputerUsePrincipal",
+  "kit": {
+    "abi": 3,
+    "minAPI": "1.7.0"
+  },
+  "creator": {
+    "name": "XNotch"
+  }
+}

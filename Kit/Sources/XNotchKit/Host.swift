@@ -76,6 +76,38 @@ public protocol NotchEyesAlerting: AnyObject {
     func showAlert(_ alert: NotchAlert, eyes severity: NotchAlertSeverity)
 }
 
+/// How the notch's eyes feel while they watch (API 1.7.0).
+public enum NotchEyesMood: Sendable, Hashable {
+    /// Wide awake and following along.
+    case attentive
+    /// Head tilted, reading something.
+    case curious
+    /// Squinting with joy: a job done.
+    case happy
+    case excited
+    /// Lids drooping: nothing came of it.
+    case sleepy
+    /// Glancing nervously side to side.
+    case worried
+}
+
+/// Opens the notch's eyes under the closed notch and points them at something
+/// on screen, as the welcome tour does while a permission guide is up
+/// (API 1.7.0). XNotch's `NotchControl` adopts it:
+/// `host.notch as? NotchEyesWatching`. The eyes stay until you stop watching,
+/// or the extension is switched off.
+@MainActor
+public protocol NotchEyesWatching: AnyObject {
+    /// Shows the eyes if they aren't up, and looks at `point`, in screen
+    /// coordinates (AppKit's, origin at the bottom left of the main display);
+    /// nil follows the pointer. Call it again as the point moves: the eyes
+    /// glide to it.
+    func watch(_ point: CGPoint?, mood: NotchEyesMood)
+    /// Ends the watch. `farewell` shows for a moment before the eyes close,
+    /// `.happy` for a job done; nil closes them straight away.
+    func stopWatching(farewell: NotchEyesMood?)
+}
+
 /// The shelf, for extensions that bring files to it.
 @MainActor
 public protocol ShelfAccess: AnyObject {

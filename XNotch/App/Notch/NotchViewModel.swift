@@ -74,8 +74,10 @@ final class NotchViewModel: ObservableObject {
     private var showsTrayWings = false
     private var showsHeadphones = false
     private var showsAlert = false
-    /// Who wants the eyes up: the onboarding, a permission guide.
+    /// Who wants the eyes up: the onboarding, a permission guide, an extension.
     private var eyesReasons: Set<EyesReason> = []
+    /// Extensions' eyes on their way out, after a farewell.
+    private var watchEndWork: [ExtensionID: DispatchWorkItem] = [:]
     /// Media wings stay up while playing and for a moment after pausing.
     private(set) var mediaActive = false
     private var pendingWingsToast = false
@@ -550,8 +552,9 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: Eyes
 
-    enum EyesReason {
+    enum EyesReason: Hashable {
         case onboarding, permissionGuide
+        case extensionWatch(ExtensionID)
     }
 
     func setEyesVisible(_ visible: Bool, for reason: EyesReason) {
@@ -590,6 +593,36 @@ final class NotchViewModel: ObservableObject {
             guard PermissionCenter.shared.activeRequest == nil else { return }
             self?.setEyesVisible(false, for: .permissionGuide)
         }
+    }
+
+    /// An extension points the eyes at something on screen, opening them if
+    /// they're closed. The onboarding and a permission guide come first.
+    func watch(_ point: CGPoint?, mood: NotchEyes.Expression, from id: ExtensionID) {
+        watchEndWork.removeValue(forKey: id)?.cancel()
+        guard !isPresentingOnboarding else { return }
+        let reason = EyesReason.extensionWatch(id)
+        if !eyesReasons.contains(reason) { setEyesVisible(true, for: reason) }
+        guard !eyesReasons.contains(.permissionGuide) else { return }
+        eyes.focus = point
+        eyes.expression = mood
+    }
+
+    func stopWatching(farewell: NotchEyes.Expression?, from id: ExtensionID) {
+        let reason = EyesReason.extensionWatch(id)
+        guard eyesReasons.contains(reason), watchEndWork[id] == nil else { return }
+        let others = eyesReasons.subtracting([reason])
+        guard let farewell, others.isEmpty else {
+            setEyesVisible(false, for: reason)
+            return
+        }
+        eyes.focus = nil
+        eyes.flash(farewell, for: 1.2, then: farewell)
+        let work = DispatchWorkItem { [weak self] in
+            self?.watchEndWork[id] = nil
+            self?.setEyesVisible(false, for: reason)
+        }
+        watchEndWork[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)
     }
 
     // MARK: Keyboard
