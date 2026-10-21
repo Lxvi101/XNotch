@@ -49,7 +49,7 @@ let package = Package(
 }
 ```
 
-`id` must match your extension's `static let id`; XNotch refuses the bundle otherwise. `symbol` and `tint` draw its icon in Settings. XNotch reads the manifest without running your code, so a disabled extension is never loaded.
+`id` must match your extension's `static let id`; XNotch refuses the bundle otherwise. `symbol` and `tint` draw its icon in Settings. For the extension store you can add a longer `"description"` and `"previews"`, a list of images in `Resources/` (e.g. `["Previews/1.png", "Previews/2.png"]`, 16:10 looks best); without previews the store draws a card from `symbol` and `tint`. XNotch reads the manifest without running your code, so a disabled extension is never loaded.
 
 ## The code
 

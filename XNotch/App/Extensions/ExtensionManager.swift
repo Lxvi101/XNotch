@@ -32,6 +32,13 @@ final class ExtensionManager: ObservableObject {
         fileprivate(set) var failure: String?
 
         var id: ExtensionID { manifest.id }
+
+        /// The manifest's preview images that exist in the bundle.
+        var previewURLs: [URL] {
+            guard let resources = Bundle(url: bundleURL)?.resourceURL else { return [] }
+            return (manifest.previews ?? []).map { resources.appendingPathComponent($0) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+        }
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -91,6 +98,11 @@ final class ExtensionManager: ObservableObject {
     func isActive(_ id: ExtensionID) -> Bool { entries.first { $0.id == id }?.isActive ?? false }
 
     func isEnabled(_ id: ExtensionID) -> Bool { !preferences.disabledExtensions.contains(id) }
+
+    /// Extensions the user has added, the ones Settings lists in its sidebar.
+    /// Adding one switches it on, removing it switches it off; the bundle stays
+    /// in the store either way.
+    var installed: [Entry] { entries.filter { isEnabled($0.id) } }
 
     func setEnabled(_ enabled: Bool, for id: ExtensionID) {
         if enabled {

@@ -54,6 +54,11 @@ public struct ExtensionManifest: Codable, Hashable, Sendable {
     public var symbol: String
     /// Hex colour of the symbol's tile, e.g. "#3A82F7".
     public var tint: String?
+    /// Longer text for the extension's page in the store. Falls back to `summary`.
+    public var description: String?
+    /// Image files in the bundle's Resources, shown as previews in the store,
+    /// e.g. `["Previews/1.png"]`. 16:10 looks best.
+    public var previews: [String]?
     public var kit: Kit
     public var creator: Creator?
     /// The `@objc` name of the `XNotchExtensionPrincipal` class; the packaging

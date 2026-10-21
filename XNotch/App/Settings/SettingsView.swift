@@ -35,8 +35,8 @@ struct SettingsView: View {
                     row(.shelf, "Tray", "tray.full.fill", .green)
                 }
                 Section("Extensions") {
-                    row(.extensions, "All Extensions", "puzzlepiece.extension.fill", .purple)
-                    ForEach(extensions.entries.filter { $0.isActive && extensions.settingsPane(for: $0.id) != nil }) { entry in
+                    row(.extensions, "Extension Store", "puzzlepiece.extension.fill", .purple)
+                    ForEach(extensions.installed) { entry in
                         row(.extensionPane(entry.id), entry.manifest.name, entry.manifest.symbol,
                             entry.manifest.tint.flatMap(Color.init(hex:)) ?? .blue)
                     }
@@ -79,10 +79,15 @@ struct SettingsView: View {
         case .shelf:
             ShelfPane(shelf: shelf).navigationTitle("Tray")
         case .extensions:
-            ExtensionsPane(extensions: extensions, navigation: navigation).navigationTitle("Extensions")
+            ExtensionStorePane(extensions: extensions, navigation: navigation).navigationTitle("Extension Store")
         case .extensionPane(let id):
-            if let entry = extensions.entries.first(where: { $0.id == id }), let pane = extensions.settingsPane(for: id) {
-                pane.navigationTitle(entry.manifest.name)
+            if let entry = extensions.entries.first(where: { $0.id == id }) {
+                // An extension without settings, or one that can't run, shows its store page.
+                if let pane = extensions.settingsPane(for: id) {
+                    pane.navigationTitle(entry.manifest.name)
+                } else {
+                    ExtensionDetailView(entry: entry, extensions: extensions, navigation: navigation)
+                }
             } else {
                 ContentUnavailableView("Extension unavailable", systemImage: "puzzlepiece.extension")
             }
@@ -448,89 +453,6 @@ private struct ShelfPane: View {
             }
         }
         .formStyle(.grouped)
-    }
-}
-
-private struct ExtensionsPane: View {
-    @ObservedObject var extensions: ExtensionManager
-    @ObservedObject var navigation: SettingsNavigation
-
-    var body: some View {
-        Form {
-            Section {
-                if extensions.entries.isEmpty {
-                    Text("No extensions installed.").foregroundStyle(.secondary)
-                }
-                ForEach(extensions.entries) { entry in
-                    ExtensionRow(entry: entry, isEnabled: Binding(
-                        get: { extensions.isEnabled(entry.id) },
-                        set: { extensions.setEnabled($0, for: entry.id) }
-                    ), hasSettings: extensions.settingsPane(for: entry.id) != nil) {
-                        navigation.selection = .extensionPane(entry.id)
-                    }
-                }
-            } header: {
-                Text("Installed")
-            }
-            Section {
-                LabeledContent("Extensions folder") {
-                    Button("Show in Finder") { NSWorkspace.shared.open(ExtensionManager.userDirectory) }
-                }
-                LabeledContent("Build your own") {
-                    Button("Open SDK Guide") {
-                        if let guide = Bundle.main.url(forResource: "XNotchKit", withExtension: "md") {
-                            NSWorkspace.shared.open(guide)
-                        }
-                    }
-                }
-            } footer: {
-                Text("Extensions are .xnext bundles built with XNotchKit. Put one in the extensions folder and restart XNotch.")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-private struct ExtensionRow: View {
-    let entry: ExtensionManager.Entry
-    @Binding var isEnabled: Bool
-    let hasSettings: Bool
-    let onOpenSettings: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            SettingsIcon(symbol: entry.manifest.symbol,
-                         color: entry.manifest.tint.flatMap(Color.init(hex:)) ?? .blue, size: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(entry.manifest.name).fontWeight(.medium)
-                    Text(entry.manifest.version).foregroundStyle(.tertiary)
-                    if entry.isBuiltIn {
-                        Text("Built in")
-                            .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(.quaternary))
-                    }
-                }
-                Text(entry.failure ?? entry.manifest.summary)
-                    .font(.callout)
-                    .foregroundStyle(entry.failure == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-                    .lineLimit(2)
-            }
-            Spacer()
-            if hasSettings {
-                Button("Options…", action: onOpenSettings)
-                    .controlSize(.small)
-            }
-            Toggle("", isOn: $isEnabled)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .disabled(entry.failure != nil)
-        }
-        .padding(.vertical, 3)
     }
 }
 
