@@ -16,7 +16,7 @@ use subtle::ConstantTimeEq;
 use crate::error::ApiError;
 use crate::model::{self, DropMeta, FileMeta};
 use crate::storage::WriteError;
-use crate::{SharedState, ids, names, password, relay};
+use crate::{SharedState, e2ee, ids, names, password, relay};
 
 /// Longest stored title, in characters. Longer titles are truncated.
 const MAX_TITLE_CHARS: usize = 200;
@@ -27,6 +27,7 @@ pub fn router(state: SharedState) -> Router<SharedState> {
         .route("/drops", get(list_drops).post(create_drop))
         .route("/drops/{id}", axum::routing::delete(delete_drop))
         .route("/drops/{id}/files/{name}", put(upload_file))
+        .route("/drops/{id}/manifest", put(upload_manifest))
         .route("/relay/rooms/{room}", put(relay::register_room).delete(relay::unregister_room))
         // Explicit catch-all so unknown `/api/...` paths get a JSON 404 instead of
         // falling through to the public `/{id}/{name}` route.
@@ -58,6 +59,9 @@ struct Info {
     relay: bool,
     /// Drops can have a password.
     passwords: bool,
+    /// End-to-end encryption format versions the server can store and serve.
+    /// Clients must not create encrypted drops on servers without this.
+    e2ee: &'static [u8],
 }
 
 async fn info(State(state): State<SharedState>) -> Json<Info> {
@@ -70,6 +74,7 @@ async fn info(State(state): State<SharedState>) -> Json<Info> {
         max_expiry_seconds: c.max_expiry,
         relay: c.relay.enabled,
         passwords: true,
+        e2ee: e2ee::VERSIONS,
     })
 }
 
@@ -80,6 +85,9 @@ struct CreateDrop {
     title: Option<String>,
     /// Visitors must enter it before they see or download anything. Empty means none.
     password: Option<String>,
+    /// Format version for an end-to-end encrypted drop. Its title must then stay
+    /// in the encrypted manifest, never in this request.
+    e2ee: Option<u8>,
 }
 
 #[derive(Serialize)]
@@ -89,6 +97,9 @@ struct Created {
     expires_at: String,
     /// Echoed so clients can tell a server that ignored the password.
     protected: bool,
+    /// Echoed so clients can tell a server that would store plaintext.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    e2ee: Option<u8>,
 }
 
 async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Response, ApiError> {
@@ -100,6 +111,15 @@ async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Re
     };
     if request.expires_in.is_some_and(|s| !s.is_finite()) {
         return Err(ApiError::BadRequest("expires_in must be a number of seconds".into()));
+    }
+
+    if let Some(version) = request.e2ee {
+        if !e2ee::is_supported(version) {
+            return Err(ApiError::BadRequest(format!("unsupported e2ee version {version}")));
+        }
+        if request.title.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+            return Err(ApiError::BadRequest("encrypted drops keep their title in the encrypted manifest".into()));
+        }
     }
 
     let config = &state.config;
@@ -133,12 +153,20 @@ async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Re
             meta.password_hash = Some(hash);
             meta.unlock_key = Some(password::new_unlock_key());
         }
+        meta.e2ee = request.e2ee;
         state.storage.save(&meta).await.map_err(|e| ApiError::internal("failed to create drop", e))?;
-        tracing::info!(drop = %meta.id, expires_in, protected = meta.is_protected(), "drop created");
+        tracing::info!(
+            drop = %meta.id,
+            expires_in,
+            protected = meta.is_protected(),
+            encrypted = meta.is_encrypted(),
+            "drop created"
+        );
         let body = Created {
             url: state.drop_url(&meta.id),
             expires_at: model::format_time(&meta.expires_at),
             protected: meta.is_protected(),
+            e2ee: meta.e2ee,
             id: meta.id,
         };
         return Ok((StatusCode::CREATED, Json(body)).into_response());
@@ -174,8 +202,14 @@ async fn upload_file(
 
     let storage = &state.storage;
     let now = Utc::now();
-    if storage.load_active(&id, now).await.map_err(|e| ApiError::internal("failed to load drop", e))?.is_none() {
+    let Some(meta) = storage.load_active(&id, now).await.map_err(|e| ApiError::internal("failed to load drop", e))?
+    else {
         return Err(ApiError::NotFound("drop"));
+    };
+    // A readable name in an encrypted drop would leak what the manifest hides.
+    let encrypted = meta.is_encrypted();
+    if encrypted && !e2ee::is_object_name(&name) {
+        return Err(ApiError::BadRequest("files of an encrypted drop need a 32-character hex object name".into()));
     }
 
     let size = match storage.write_file(&id, &name, body.into_data_stream(), max).await {
@@ -186,7 +220,9 @@ async fn upload_file(
     };
 
     let declared_type = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
-    let file = FileMeta { name: name.clone(), size, content_type: names::guess_content_type(&name, declared_type) };
+    let content_type =
+        if encrypted { "application/octet-stream".to_owned() } else { names::guess_content_type(&name, declared_type) };
+    let file = FileMeta { name: name.clone(), size, content_type };
 
     {
         let _guard = storage.lock(&id).await;
@@ -204,6 +240,62 @@ async fn upload_file(
     tracing::info!(drop = %id, size, "file uploaded");
     let body = Uploaded { url: format!("{}/{}", state.drop_url(&id), names::encode_segment(&name)), name, size };
     Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+#[derive(Serialize)]
+struct ManifestUploaded {
+    size: u64,
+}
+
+/// The encrypted manifest (names, sizes and title) of an end-to-end encrypted drop.
+/// Clients upload it after the files; the drop page shows nothing until it exists.
+async fn upload_manifest(
+    State(state): State<SharedState>,
+    path: Result<Path<String>, PathRejection>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, ApiError> {
+    let Path(id) = path.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    if !ids::is_valid(&id) {
+        return Err(ApiError::NotFound("drop"));
+    }
+    let max = e2ee::MAX_MANIFEST_BYTES;
+    let declared_len =
+        headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
+    if declared_len.is_some_and(|len| len > max) {
+        return Err(ApiError::PayloadTooLarge(max));
+    }
+
+    let storage = &state.storage;
+    let Some(meta) =
+        storage.load_active(&id, Utc::now()).await.map_err(|e| ApiError::internal("failed to load drop", e))?
+    else {
+        return Err(ApiError::NotFound("drop"));
+    };
+    if !meta.is_encrypted() {
+        return Err(ApiError::BadRequest("only encrypted drops have a manifest".into()));
+    }
+
+    let size = match storage.write_manifest(&id, body.into_data_stream(), max).await {
+        Ok(size) => size,
+        Err(WriteError::TooLarge) => return Err(ApiError::PayloadTooLarge(max)),
+        Err(WriteError::Body(e)) => return Err(ApiError::BadRequest(format!("failed to read request body: {e}"))),
+        Err(WriteError::Storage(e)) => return Err(ApiError::internal("failed to store manifest", e)),
+    };
+
+    {
+        let _guard = storage.lock(&id).await;
+        let meta = storage.load(&id).await.map_err(|e| ApiError::internal("failed to load drop", e))?;
+        let Some(mut meta) = meta.filter(|m| !m.is_expired(Utc::now())) else {
+            // The sweeper removes the orphaned object with the rest of the drop.
+            return Err(ApiError::NotFound("drop"));
+        };
+        meta.manifest_size = Some(size);
+        storage.save(&meta).await.map_err(|e| ApiError::internal("failed to update drop", e))?;
+    }
+
+    tracing::info!(drop = %id, size, "manifest uploaded");
+    Ok((StatusCode::CREATED, Json(ManifestUploaded { size })).into_response())
 }
 
 async fn delete_drop(
@@ -236,6 +328,8 @@ struct DropSummary {
     created_at: String,
     expires_at: String,
     protected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    e2ee: Option<u8>,
     files: Vec<FileSummary>,
 }
 
@@ -256,6 +350,7 @@ async fn list_drops(State(state): State<SharedState>) -> Result<Json<Vec<DropSum
                 created_at: model::format_time(&m.created_at),
                 expires_at: model::format_time(&m.expires_at),
                 protected: m.is_protected(),
+                e2ee: m.e2ee,
                 files: m.files.into_iter().map(|f| FileSummary { name: f.name, size: f.size }).collect(),
                 id: m.id,
                 title: m.title,

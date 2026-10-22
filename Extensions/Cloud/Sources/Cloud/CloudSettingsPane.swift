@@ -32,8 +32,13 @@ struct CloudSettingsPane: View {
                         Text(choice.title).tag(choice.seconds)
                     }
                 }
+                Toggle("End-to-end encrypt links", isOn: $links.encryptLinks)
+                if !links.encryptLinks {
+                    Label("New links are stored readable on your server.", systemImage: "lock.open")
+                        .foregroundStyle(.orange)
+                }
             } footer: {
-                Text("Click the cloud in the tray to pick a time for each link, or to lock one with a password. Right-click a file for a link with this default.")
+                Text("Click the cloud in the tray to choose a lifetime or password. Encrypted links keep files, names and titles private in storage. Keep the complete link: it contains the decryption key. Recipients still need to trust the server's download page.")
                     .foregroundStyle(.secondary)
             }
 
@@ -92,7 +97,11 @@ private struct LinkRow: View {
                     if link.isProtected == true {
                         Image(systemName: "lock.fill").help("Needs a password")
                     }
-                    Text(link.url.absoluteString)
+                    if link.isEncrypted == true {
+                        Image(systemName: "lock.shield.fill").help("End-to-end encrypted")
+                    }
+                    // Without the key: the full link is a secret, not a label.
+                    Text(link.url.absoluteString.split(separator: "#").first.map(String.init) ?? "")
                     Text("·")
                     Text("expires \(link.expiresAt, format: .relative(presentation: .named))")
                 }

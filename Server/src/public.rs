@@ -26,6 +26,8 @@ pub fn router() -> Router<SharedState> {
         .route("/favicon.ico", get(|| async { StatusCode::NOT_FOUND }))
         .route("/{id}", get(drop_page).post(unlock))
         .route("/{id}/{name}", get(download))
+        // Three segments, so it can't collide with a file name (names have no `/`).
+        .route("/{id}/-/manifest", get(manifest))
 }
 
 /// Shared headers for responses a browser may render.
@@ -36,16 +38,22 @@ fn harden(headers: &mut HeaderMap) {
 }
 
 fn html(status: StatusCode, render: impl FnOnce(&str) -> String) -> Response {
-    html_page(status, "'none'", render)
+    html_page(status, "'none'", "'none'", render)
 }
 
-/// `form_action` is the CSP source list for forms; only the password page posts one.
-fn html_page(status: StatusCode, form_action: &str, render: impl FnOnce(&str) -> String) -> Response {
+/// `form_action` and `connect_src` are CSP source lists: only the password page
+/// posts a form, and only an encrypted drop's page fetches (its own files).
+fn html_page(
+    status: StatusCode,
+    form_action: &str,
+    connect_src: &str,
+    render: impl FnOnce(&str) -> String,
+) -> Response {
     let nonce = ids::generate(22);
     let body = render(&nonce);
     let csp = format!(
         "default-src 'none'; img-src 'self'; style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; \
-         base-uri 'none'; form-action {form_action}; frame-ancestors 'none'"
+         connect-src {connect_src}; base-uri 'none'; form-action {form_action}; frame-ancestors 'none'"
     );
     let mut response = (status, body).into_response();
     let headers = response.headers_mut();
@@ -83,6 +91,9 @@ async fn drop_page(
     let now = Utc::now();
     match state.storage.load_active(&id, now).await {
         Ok(Some(meta)) if !password::is_unlocked(&meta, &headers) => locked(&state, &meta, StatusCode::OK, false),
+        Ok(Some(meta)) if meta.is_encrypted() => html_page(StatusCode::OK, "'none'", "'self'", |nonce| {
+            pages::encrypted_drop_page(&meta, &state.config.site_name, now, nonce)
+        }),
         Ok(Some(meta)) => html(StatusCode::OK, |nonce| pages::drop_page(&meta, &state.config.site_name, now, nonce)),
         Ok(None) => not_found(State(state)).await,
         Err(e) => internal_error("failed to load drop", e),
@@ -90,7 +101,7 @@ async fn drop_page(
 }
 
 fn locked(state: &SharedState, meta: &DropMeta, status: StatusCode, wrong: bool) -> Response {
-    html_page(status, "'self'", |nonce| pages::locked_page(meta, &state.config.site_name, wrong, nonce))
+    html_page(status, "'self'", "'none'", |nonce| pages::locked_page(meta, &state.config.site_name, wrong, nonce))
 }
 
 fn see_other(location: &str) -> Response {
@@ -143,6 +154,42 @@ async fn unlock(
     let cookie = password::unlock_cookie(&meta, &key, (meta.expires_at - now).num_seconds(), secure);
     let mut response = see_other(&format!("/{id}"));
     response.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_str(&cookie).expect("ascii cookie"));
+    response
+}
+
+/// The encrypted manifest of an end-to-end encrypted drop, fetched by its page.
+/// Opaque bytes to the server; `404` until the uploader has written it.
+async fn manifest(
+    State(state): State<SharedState>,
+    path: Result<Path<String>, PathRejection>,
+    headers: HeaderMap,
+) -> Response {
+    let Ok(Path(id)) = path else { return not_found(State(state)).await };
+    if !ids::is_valid(&id) {
+        return not_found(State(state)).await;
+    }
+    let meta = match state.storage.load_active(&id, Utc::now()).await {
+        Ok(Some(meta)) if meta.is_encrypted() && meta.manifest_size.is_some() => meta,
+        Ok(_) => return not_found(State(state)).await,
+        Err(e) => return internal_error("failed to load drop", e),
+    };
+    if !password::is_unlocked(&meta, &headers) {
+        // Fetched by script, which can't follow a redirect to the password form usefully.
+        let mut response = (StatusCode::FORBIDDEN, "Password required").into_response();
+        harden(response.headers_mut());
+        return response;
+    }
+    let bytes = match state.storage.read_manifest(&id).await {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return not_found(State(state)).await,
+        Err(e) => return internal_error("failed to read manifest", e),
+    };
+    let mut response = Response::new(Body::from(bytes));
+    let h = response.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox; default-src 'none'"));
+    harden(h);
     response
 }
 

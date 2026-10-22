@@ -21,6 +21,13 @@ pub struct DropMeta {
     /// Random key a browser gets as a cookie once it knows the password.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlock_key: Option<String>,
+    /// Format version when the drop is end-to-end encrypted ([`crate::e2ee`]).
+    /// Its title is then `None` and its file names are opaque object names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2ee: Option<u8>,
+    /// Size of the encrypted manifest, once the client has uploaded it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_size: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -41,11 +48,17 @@ impl DropMeta {
             files: Vec::new(),
             password_hash: None,
             unlock_key: None,
+            e2ee: None,
+            manifest_size: None,
         }
     }
 
     pub fn is_protected(&self) -> bool {
         self.password_hash.is_some()
+    }
+
+    pub fn is_encrypted(&self) -> bool {
+        self.e2ee.is_some()
     }
 
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {

@@ -41,6 +41,11 @@ trust boundary. For sensitive data, complete your own security review before rol
   files served as attachments. Pages use CSP and anti-framing headers.
 - The Docker image runs as UID/GID 65532. The HTTPS deployment overlay additionally
   drops Linux capabilities and makes the application root filesystem read-only.
+- Cloud links are end-to-end encrypted by default (`docs/E2EE.md`). The Mac encrypts
+  contents, file names and titles with AES-256-GCM under a random per-drop key that only
+  travels in the link's `#` fragment. The server stores ciphertext and opaque object names,
+  and recipients decrypt in the browser with Web Crypto. The client fails closed: it never
+  uploads plaintext to a server without the capability.
 - The companion protocol encrypts relay payloads in the clients using ChaChaPoly
   (`Shared/XNotchLink/Sources/XNotchLink/SecureChannel.swift`). The relay forwards
   bytes; room IDs are bearer credentials. It can still observe traffic metadata.
@@ -53,11 +58,20 @@ trust boundary. For sensitive data, complete your own security review before rol
    every configured Mac as an instance administrator. Rotation requires updating
    every client; rotating the API token does not revoke drop links, unlock cookies,
    or existing relay room secrets. Delete affected drops/rooms separately.
-2. **Cloud uploads are not end-to-end encrypted.** The server receives file plaintext
-   and stores file contents without application-level encryption. Drop passwords
-   gate HTTP access; they do not encrypt files. Host/storage administrators and a
-   compromised server can read them. Use encrypted host volumes or private buckets
-   with managed encryption and tightly restricted credentials, including backups.
+2. **End-to-end encryption protects stored data, not recipients from a hostile server.**
+   With encrypted links (the default), storage, backups and host administrators see only
+   ciphertext. But the decrypting page comes from the same server, so a server that is
+   compromised or malicious *while a link is opened* can serve a page that steals the key
+   from the URL. Anyone who holds the full link can decrypt. Keys can't be revoked:
+   deleting a drop removes the ciphertext but not copies already downloaded or backed up.
+   A lost key means the files can't be recovered. The server still sees metadata: file
+   count and sizes, times, IP addresses, expiry, and the drop password when set. Drop
+   passwords gate HTTP access but are not encryption keys. Links made with encryption
+   turned off, or by older clients, are stored as plaintext; for those, use encrypted host
+   volumes or private buckets with restricted credentials, including backups. Browsers
+   decrypt only over HTTPS (or on localhost). Without the File System Access API (desktop
+   Chrome/Edge), files over 1 GiB can't be decrypted, and large files need about their
+   size in memory. See `docs/E2EE.md` for the format and full threat model.
 3. **Public links and unlock cookies are transferable secrets.** Passwords are
    optional, not enforced by server policy. Share passwords separately; prefer long
    IDs and short expiry. Do not rely on obscurity for highly sensitive documents.
@@ -73,7 +87,8 @@ trust boundary. For sensitive data, complete your own security review before rol
    [rate-limit reference](REFERENCE.md#rate-limiting-and-client-identity) before
    tuning defaults.
 5. **Operational logs are not a user audit trail.** Request paths contain drop IDs
-   and filenames; creation logs contain IDs. Relay room IDs are shortened in app
+   and filenames (opaque object names for encrypted drops; the key fragment never
+   reaches the server or its logs); creation logs contain IDs. Relay room IDs are shortened in app
    request logs, but external proxies may log complete room URLs. Restrict log
    access/retention, redact secrets in upstream logging, and never log Authorization
    headers or cookies. There is no reliable attribution to an individual uploader.
@@ -96,6 +111,7 @@ trust boundary. For sensitive data, complete your own security review before rol
 - [ ] Private encrypted storage/backups; least-privilege storage credentials.
 - [ ] `ID_LENGTH=22`, appropriate expiry/file limits; relay disabled if unused.
 - [ ] Password and anonymous access tests performed with non-sensitive sample data.
+- [ ] Encrypted links verified end to end over HTTPS; users told that the full link is the key.
 - [ ] Trusted proxy identity and 429/health behavior tested; ingress connection/concurrency
       controls, resource monitoring, alerting and log retention configured.
 - [ ] Restore drill and token/room/drop revocation procedure tested.

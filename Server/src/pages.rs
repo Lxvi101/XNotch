@@ -1,12 +1,13 @@
 //! Server-rendered HTML pages. Everything is self-contained: inline CSS, inline
-//! SVG icons and one tiny countdown script, all allowed by a per-response nonce.
+//! SVG icons and small inline scripts (a countdown, and the decryptor of
+//! encrypted drops), all allowed by a per-response nonce. No third-party code.
 
 use std::fmt::Write;
 
 use chrono::{DateTime, Utc};
 
 use crate::model::DropMeta;
-use crate::names;
+use crate::{e2ee, names};
 
 /// Images larger than this are not previewed inline on the drop page.
 const PREVIEW_MAX_BYTES: u64 = 25 * 1000 * 1000;
@@ -46,6 +47,12 @@ h1{font-size:clamp(34px,7.5vw,54px);line-height:1.06;font-weight:700;letter-spac
 .lock input:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:transparent}
 .lock .pill{border:0;font:inherit;font-weight:600;cursor:pointer}
 .error{margin-top:12px;color:#ff6961;font-size:14px}
+.error-text{color:#ff6961}
+button.pill{border:0;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+button.pill:disabled{opacity:.5;cursor:default}
+.note{margin-top:28px;display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:13px}
+.note svg{flex:none;width:16px;height:16px;margin-top:1px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+[hidden]{display:none!important}
 .empty{margin-top:36px;padding:28px;border:1px dashed rgba(255,255,255,.12);border-radius:18px;color:var(--muted);text-align:center}
 footer{padding:28px 20px calc(36px + env(safe-area-inset-bottom));text-align:center;color:var(--faint);font-size:13px}
 @media (max-width:440px){.row{gap:12px;padding:12px}.pill{padding:7px 13px}.sub{font-size:16px}}
@@ -53,6 +60,12 @@ footer{padding:28px 20px calc(36px + env(safe-area-inset-bottom));text-align:cen
 
 /// Counts down the "Expires in" label so it stays honest on long-lived tabs.
 const COUNTDOWN_JS: &str = r#"(function(){var e=document.getElementById("exp");if(!e)return;var t=+e.getAttribute("data-expires")*1000;function p(n,u){return n+" "+u+(n===1?"":"s")}function h(s){if(s<60)return"less than a minute";if(s<3600)return p(Math.floor(s/60),"minute");if(s<172800)return p(Math.floor(s/3600),"hour");return p(Math.floor(s/86400),"day")}function f(){var s=Math.floor((t-Date.now())/1000);if(s<=0){e.textContent="Expired";return}e.textContent="Expires in "+h(s);setTimeout(f,s<3600?5000:60000)}f()})();"#;
+
+/// Keeps the URL fragment (an encrypted drop's key) when the password form posts:
+/// the browser carries the action's fragment over to the redirect back to the page.
+const KEEP_FRAGMENT_JS: &str = r#"(function(){var f=document.querySelector("form.lock");if(f&&location.hash)f.setAttribute("action",f.getAttribute("action")+location.hash)})();"#;
+
+const LOCK_ICON: &str = r#"<rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>"#;
 
 /// Escapes text for HTML element content and quoted attribute values.
 pub fn escape(input: &str) -> String {
@@ -148,13 +161,17 @@ fn icon(kind: &str) -> &'static str {
     }
 }
 
-/// Wraps page content. `is_drop` adds the countdown script and the "Shared with" footer.
-fn layout(title: &str, site_name: &str, nonce: &str, body: &str, is_drop: bool) -> String {
-    let (footer, script) = if is_drop {
-        ("Shared with ", format!(r#"<script nonce="{nonce}">{COUNTDOWN_JS}</script>"#))
-    } else {
-        ("", String::new())
-    };
+/// Wraps page content. `is_drop` adds the countdown script and the "Shared with"
+/// footer; `extra_js` is another inline script for the page.
+fn layout(title: &str, site_name: &str, nonce: &str, body: &str, is_drop: bool, extra_js: &[&str]) -> String {
+    let footer = if is_drop { "Shared with " } else { "" };
+    let mut script = String::new();
+    if is_drop {
+        let _ = write!(script, r#"<script nonce="{nonce}">{COUNTDOWN_JS}</script>"#);
+    }
+    if !extra_js.is_empty() {
+        let _ = write!(script, r#"<script nonce="{nonce}">{}</script>"#, extra_js.concat());
+    }
     format!(
         r##"<!doctype html>
 <html lang="en">
@@ -229,7 +246,36 @@ pub fn drop_page(meta: &DropMeta, site_name: &str, now: DateTime<Utc>, nonce: &s
         body.push_str("</ul>");
     }
 
-    layout(&title, site_name, nonce, &body, true)
+    layout(&title, site_name, nonce, &body, true, &[])
+}
+
+/// The page of an end-to-end encrypted drop. The server knows neither the
+/// title nor the file names, so the page is a shell: its script decrypts the
+/// manifest with the key in the URL fragment and fills it in.
+pub fn encrypted_drop_page(meta: &DropMeta, site_name: &str, now: DateTime<Utc>, nonce: &str) -> String {
+    let remaining = format_remaining((meta.expires_at - now).num_seconds());
+    let mut glyphs = String::new();
+    for kind in ["image", "video", "audio", "pdf", "archive", "code", "doc", "file"] {
+        let _ = write!(
+            glyphs,
+            r#"<template id="glyph-{kind}"><svg viewBox="0 0 24 24" aria-hidden="true">{}</svg></template>"#,
+            icon(kind)
+        );
+    }
+    let body = format!(
+        r#"<div id="e2ee" data-drop="{id}">
+<h1 id="title">Encrypted files</h1>
+<p class="sub"><span id="exp" data-expires="{expires}">Expires in {remaining}</span><span id="details"> · Decrypting…</span></p>
+<noscript><div class="empty">These files are end-to-end encrypted. Turn on JavaScript to decrypt them in this browser.</div></noscript>
+<ul class="files" id="files" aria-live="polite"></ul>
+<div class="empty" id="notice" role="alert" hidden></div>
+<p class="note"><svg viewBox="0 0 24 24" aria-hidden="true">{LOCK_ICON}</svg><span>End-to-end encrypted. Files are decrypted in this browser with the key at the end of the link, which is never sent to the server.</span></p>
+</div>
+{glyphs}"#,
+        id = escape(&meta.id),
+        expires = meta.expires_at.timestamp(),
+    );
+    layout("Encrypted files", site_name, nonce, &body, true, &[e2ee::CORE_JS, e2ee::PAGE_JS])
 }
 
 /// Asks for the password of a protected drop. Shows nothing about the drop
@@ -247,13 +293,13 @@ pub fn locked_page(meta: &DropMeta, site_name: &str, wrong: bool, nonce: &str) -
         expires = meta.expires_at.timestamp(),
         id = meta.id,
     );
-    layout("Password required", site_name, nonce, &body, true)
+    layout("Password required", site_name, nonce, &body, true, &[KEEP_FRAGMENT_JS])
 }
 
 pub fn not_found_page(site_name: &str, nonce: &str) -> String {
     let body = r#"<h1>Not found</h1>
 <p class="sub">This link has expired or never existed.</p>"#;
-    layout("Not found", site_name, nonce, body, false)
+    layout("Not found", site_name, nonce, body, false, &[])
 }
 
 pub fn home_page(site_name: &str, nonce: &str) -> String {
@@ -262,7 +308,7 @@ pub fn home_page(site_name: &str, nonce: &str) -> String {
 <p class="sub">Files shared from XNotch appear at their own short links.</p>"#,
         escape(site_name)
     );
-    layout(site_name, site_name, nonce, &body, false)
+    layout(site_name, site_name, nonce, &body, false, &[])
 }
 
 #[cfg(test)]
@@ -307,5 +353,32 @@ mod tests {
         assert!(html.contains("Shared with Site &amp; &lt;Co&gt;"));
         assert!(html.contains("/abcdefgh/%22%3E%3Cimg%20src%3Dx%3E.png?inline=1"));
         assert!(html.contains(">Expires in 1 hour</span> · 1 file · 10 bytes"));
+    }
+
+    #[test]
+    fn encrypted_page_reveals_nothing_the_manifest_hides() {
+        let now = DateTime::parse_from_rfc3339("2026-10-13T10:00:00Z").unwrap().with_timezone(&Utc);
+        let mut meta = DropMeta::new("abcdefgh".into(), None, now, 3600);
+        meta.e2ee = Some(1);
+        meta.upsert_file(FileMeta {
+            name: "0123456789abcdef0123456789abcdef".into(),
+            size: 12_345,
+            content_type: "application/octet-stream".into(),
+        });
+        let html = encrypted_drop_page(&meta, "Site", now, "n0nce");
+        assert!(html.contains(r#"<div id="e2ee" data-drop="abcdefgh">"#));
+        assert!(!html.contains("0123456789abcdef0123456789abcdef"), "object names stay off the page");
+        assert!(!html.contains("12,345") && !html.contains("12.3 KB"), "sizes come from the manifest");
+        assert!(html.contains("var XNE = "));
+        assert_eq!(html.matches(r#"<script nonce="n0nce">"#).count(), 2);
+        assert!(!html.contains("<script src"));
+    }
+
+    #[test]
+    fn locked_page_keeps_the_fragment() {
+        let meta = DropMeta::new("abcdefgh".into(), None, Utc::now(), 3600);
+        let html = locked_page(&meta, "Site", false, "n0nce");
+        assert!(html.contains(KEEP_FRAGMENT_JS));
+        assert!(html.contains(r#"action="/abcdefgh""#));
     }
 }

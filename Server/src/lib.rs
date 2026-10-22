@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod config;
+pub mod e2ee;
 pub mod error;
 pub mod ids;
 pub mod model;

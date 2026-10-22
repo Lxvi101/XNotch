@@ -59,6 +59,55 @@ final class CloudServerTests: XCTestCase {
         try await client.delete(drop: drop.id)
     }
 
+    /// Uploads like the app does, then reads back what the server stores and serves.
+    /// With XNE_SWIFT_DROP=path it also writes the link for Server/tests/e2ee/browser.mjs,
+    /// which then decrypts this Swift-made drop in a real browser.
+    func testEncryptedUploadIsOpaqueToTheServer() async throws {
+        let info = try await client.info()
+        guard info.supportsEncryption else { throw XCTSkip("The server predates end-to-end encryption") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("e2ee-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let small = folder.appendingPathComponent("Re\u{301}sume\u{301} secret.txt")
+        try Data("Top secret résumé".utf8).write(to: small)
+        let big = folder.appendingPathComponent("big secret.bin")
+        let bigBytes = Data((0..<(2 * DropCrypto.segmentSize + 999)).map { UInt8(truncatingIfNeeded: $0 &* 13) })
+        try bigBytes.write(to: big)
+
+        let uploader = DropUploader(client: client, info: info, encrypt: true)
+        let result = try await uploader.upload([small, big], title: "Secret title", expiresIn: 3600, password: nil) { _ in }
+        let id = result.drop.id
+        let key = try XCTUnwrap(DropCrypto.Key(fragment: try XCTUnwrap(result.link.fragment)))
+
+        let (page, _) = try await URLSession.shared.data(from: result.drop.url)
+        let html = String(decoding: page, as: UTF8.self)
+        XCTAssertTrue(html.contains("data-drop=\"\(id)\""))
+        for secret in ["Secret title", "secret.txt", "big secret", "Top secret"] { XCTAssertFalse(html.contains(secret), secret) }
+
+        let (sealedManifest, _) = try await URLSession.shared.data(from: result.drop.url.appendingPathComponent("-/manifest"))
+        let manifest = try DropCrypto.openManifest(sealedManifest, key: key, dropID: id)
+        XCTAssertEqual(manifest.title, "Secret title")
+        XCTAssertEqual(manifest.files.map(\.name), ["Résumé secret.txt", "big secret.bin"])
+        for (entry, expected) in zip(manifest.files, [Data("Top secret résumé".utf8), bigBytes]) {
+            let (sealed, response) = try await URLSession.shared.data(from: result.drop.url.appendingPathComponent(entry.id))
+            XCTAssertEqual((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
+            XCTAssertEqual(UInt64(sealed.count), DropCrypto.ciphertextSize(plaintextSize: UInt64(expected.count)))
+            XCTAssertNil(sealed.range(of: expected.prefix(16)))
+            XCTAssertEqual(try DropCrypto.open(sealed, kind: .file, key: key, dropID: id, objectID: entry.id), expected)
+        }
+
+        if let out = ProcessInfo.processInfo.environment["XNE_SWIFT_DROP"] {
+            let record: [String: Any] = [
+                "link": result.link.absoluteString, "title": "Secret title",
+                "files": manifest.files.map { ["name": $0.name, "size": $0.size] },
+                "sha256": [Data("Top secret résumé".utf8), bigBytes].map(DropCryptoTests.sha256)
+            ]
+            try JSONSerialization.data(withJSONObject: record).write(to: URL(fileURLWithPath: out))
+        } else {
+            try await client.delete(drop: id)
+        }
+    }
+
     func testWrongTokenIsExplained() async throws {
         let wrong = CloudClient(server: client.baseURL.absoluteString, token: "wrong-token-000000")!
         do {

@@ -127,7 +127,8 @@ async fn full_drop_lifecycle() {
             "default_expiry_seconds": 86400,
             "max_expiry_seconds": 2592000,
             "relay": true,
-            "passwords": true
+            "passwords": true,
+            "e2ee": [1]
         })
     );
 
@@ -470,4 +471,132 @@ async fn password_protected_drop() {
     let long = "x".repeat(1025);
     let reply = h.api(Method::POST, "/api/drops", json!({"password": long}).to_string()).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+}
+
+const OBJECT: &str = "00112233445566778899aabbccddeeff";
+
+#[tokio::test]
+async fn encrypted_drop_stores_only_opaque_bytes() {
+    let h = harness(&[]);
+
+    // A title would be plaintext the manifest is meant to hide: refused, not stored.
+    let titled = h.api(Method::POST, "/api/drops", json!({"e2ee": 1, "title": "Tax return"}).to_string()).await;
+    assert_eq!(titled.status, StatusCode::BAD_REQUEST, "{}", titled.text());
+    let future = h.api(Method::POST, "/api/drops", json!({"e2ee": 2}).to_string()).await;
+    assert_eq!(future.status, StatusCode::BAD_REQUEST);
+    assert!(future.json()["error"].as_str().unwrap().contains("unsupported e2ee version"));
+
+    let created = h.api(Method::POST, "/api/drops", json!({"e2ee": 1, "title": "  "}).to_string()).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    assert_eq!(created.json()["e2ee"], 1);
+    let id = created.json()["id"].as_str().unwrap().to_owned();
+
+    // Readable names are refused; opaque object names are stored as octet streams.
+    let named = h.upload(&id, "Tax%20return.pdf", "x").await;
+    assert_eq!(named.status, StatusCode::BAD_REQUEST, "{}", named.text());
+    assert_eq!(h.upload(&id, &OBJECT.to_uppercase(), "x").await.status, StatusCode::BAD_REQUEST);
+    let ciphertext = vec![0xA5u8; 100];
+    let uploaded = h.upload(&id, OBJECT, ciphertext.clone()).await;
+    assert_eq!(uploaded.status, StatusCode::CREATED, "{}", uploaded.text());
+
+    // Until the manifest exists, the page has nothing to decrypt.
+    assert_eq!(h.get(&format!("/{id}/-/manifest"), &[]).await.status, StatusCode::NOT_FOUND);
+
+    let too_big = vec![0u8; xnotch_cloud::e2ee::MAX_MANIFEST_BYTES as usize + 1];
+    let reply = h.api(Method::PUT, &format!("/api/drops/{id}/manifest"), too_big).await;
+    assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let manifest = vec![0x5Au8; 300];
+    let reply = h.api(Method::PUT, &format!("/api/drops/{id}/manifest"), manifest.clone()).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.text());
+    assert_eq!(reply.json(), json!({"size": 300}));
+
+    let meta: Value =
+        serde_json::from_slice(&std::fs::read(h.dir.path().join(format!("drops/{id}/meta.json"))).unwrap()).unwrap();
+    assert_eq!(
+        (meta["e2ee"].clone(), meta["manifest_size"].clone(), meta["title"].clone()),
+        (json!(1), json!(300), Value::Null)
+    );
+    assert_eq!(meta["files"][0]["content_type"], "application/octet-stream");
+
+    let list = h.api(Method::GET, "/api/drops", Body::empty()).await.json();
+    assert_eq!(list[0]["e2ee"], 1);
+
+    // The page is a shell: no names, no title; it may fetch only from this origin.
+    let page = h.get(&format!("/{id}"), &[]).await;
+    assert_eq!(page.status, StatusCode::OK);
+    let html = page.text();
+    assert!(html.contains(&format!(r#"data-drop="{id}""#)) && html.contains("var XNE = "));
+    assert!(!html.contains(OBJECT));
+    let csp = page.header("content-security-policy");
+    assert!(
+        csp.contains("connect-src 'self'") && csp.contains("script-src 'nonce-") && csp.contains("default-src 'none'")
+    );
+    assert!(!csp.contains("unsafe"), "{csp}");
+
+    let fetched = h.get(&format!("/{id}/-/manifest"), &[]).await;
+    assert_eq!(fetched.status, StatusCode::OK);
+    assert_eq!(fetched.body.as_ref(), manifest.as_slice());
+    assert_eq!(fetched.header("content-type"), "application/octet-stream");
+    assert_eq!(fetched.header("cache-control"), "no-store");
+
+    let file = h.get(&format!("/{id}/{OBJECT}?inline=1"), &[]).await;
+    assert_eq!(file.status, StatusCode::OK);
+    assert_eq!(file.body.as_ref(), ciphertext.as_slice());
+    assert_eq!(file.header("content-type"), "application/octet-stream");
+    assert!(file.header("content-disposition").starts_with("attachment"));
+
+    // Legacy drops have no manifest, and the route never shadows a file name.
+    let legacy = h.create(json!({"title": "Plain"})).await;
+    let reply = h.api(Method::PUT, &format!("/api/drops/{legacy}/manifest"), "x").await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+    assert_eq!(h.get(&format!("/{legacy}/-/manifest"), &[]).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(h.upload(&legacy, "-", "dash").await.status, StatusCode::CREATED);
+    assert_eq!(h.get(&format!("/{legacy}/-"), &[]).await.text(), "dash");
+    let page = h.get(&format!("/{legacy}"), &[]).await;
+    assert!(page.text().contains("Plain") && !page.text().contains("var XNE"));
+    assert!(page.header("content-security-policy").contains("connect-src 'none'"));
+
+    // Deleting the drop removes the manifest with everything else.
+    assert_eq!(h.api(Method::DELETE, &format!("/api/drops/{id}"), Body::empty()).await.status, StatusCode::NO_CONTENT);
+    assert!(!h.dir.path().join(format!("drops/{id}")).exists());
+    assert_eq!(h.get(&format!("/{id}/-/manifest"), &[]).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn encrypted_drop_behind_a_password() {
+    let h = harness(&[]);
+    let created = h.api(Method::POST, "/api/drops", json!({"e2ee": 1, "password": "open sesame"}).to_string()).await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert_eq!((created.json()["e2ee"].clone(), created.json()["protected"].clone()), (json!(1), json!(true)));
+    let id = created.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(h.upload(&id, OBJECT, "cipher").await.status, StatusCode::CREATED);
+    assert_eq!(h.api(Method::PUT, &format!("/api/drops/{id}/manifest"), "m").await.status, StatusCode::CREATED);
+
+    // Locked: the form keeps the key fragment across its redirect; nothing else is served.
+    let page = h.get(&format!("/{id}"), &[]).await;
+    assert!(page.text().contains("Password required") && !page.text().contains("var XNE"));
+    assert!(page.text().contains("location.hash"));
+    assert_eq!(h.get(&format!("/{id}/-/manifest"), &[]).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(h.get(&format!("/{id}/{OBJECT}"), &[]).await.status, StatusCode::SEE_OTHER);
+
+    let reply = h.post_form(&format!("/{id}"), "password=open+sesame").await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    let cookie = reply.header("set-cookie").split(';').next().unwrap().to_owned();
+    assert!(h.get(&format!("/{id}"), &[("cookie", &cookie)]).await.text().contains("var XNE"));
+    assert_eq!(h.get(&format!("/{id}/-/manifest"), &[("cookie", &cookie)]).await.text(), "m");
+    assert_eq!(h.get(&format!("/{id}/{OBJECT}"), &[("cookie", &cookie)]).await.text(), "cipher");
+}
+
+#[tokio::test]
+async fn old_clients_still_create_plain_drops() {
+    let h = harness(&[]);
+    // A client from before encryption sends no `e2ee` and gets no `e2ee` back.
+    let created = h.api(Method::POST, "/api/drops", json!({"title": "Old", "expires_in": 3600}).to_string()).await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert!(created.json().get("e2ee").is_none(), "{}", created.text());
+    let id = created.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(h.upload(&id, "Report%201.pdf", "pdf").await.status, StatusCode::CREATED);
+    let list = h.api(Method::GET, "/api/drops", Body::empty()).await.json();
+    assert!(list[0].get("e2ee").is_none());
+    assert_eq!(h.get(&format!("/{id}/Report%201.pdf"), &[]).await.text(), "pdf");
 }

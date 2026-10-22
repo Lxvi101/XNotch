@@ -1,0 +1,81 @@
+{
+  "format" : "XNotch Cloud E2EE v1",
+  "pattern" : "plaintext_pattern_size n means bytes (i * 31 + 7) mod 256 for i in 0..<n",
+  "vectors" : [
+    {
+      "ciphertext_hex" : "584e434501010104070a0d101316191c1f2225282b2e3134373a3d404346494c4f5255585b5e80db98faa4e47495cde06f0181a46000",
+      "ciphertext_sha256" : "83feba59d906279c668079dd8f0eb74bfdf2b07c9b9908f5284ae0989f8b3388",
+      "ciphertext_size" : 54,
+      "drop_id" : "a1B2c3D4",
+      "key" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_fragment" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "kind" : "file",
+      "name" : "empty file",
+      "object_id" : "00112233445566778899aabbccddeeff",
+      "plaintext_pattern_size" : 0,
+      "salt" : "0104070a0d101316191c1f2225282b2e3134373a3d404346494c4f5255585b5e"
+    },
+    {
+      "ciphertext_hex" : "584e434501010205080b0e1114171a1d202326292c2f3235383b3e4144474a4d505356595c5fcc9a8cdf9fd7cb2c26c8b84663a198d177bca55b128222cc6cab4a0d07",
+      "ciphertext_sha256" : "a546f3805aec5603e90efb8daa8cd7e7016a1a0deccda804a85c409c910e41d8",
+      "ciphertext_size" : 67,
+      "drop_id" : "a1B2c3D4",
+      "key" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_fragment" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "kind" : "file",
+      "name" : "short file",
+      "object_id" : "00112233445566778899aabbccddeeff",
+      "plaintext_utf8" : "Hello, XNotch",
+      "salt" : "0205080b0e1114171a1d202326292c2f3235383b3e4144474a4d505356595c5f"
+    },
+    {
+      "ciphertext_hex" : "584e434501020306090c0f1215181b1e2124272a2d303336393c3f4245484b4e5154575a5d6069ffb6acfb6c66af6a6dfbb2b1320d82288949d3ebb663582d564b258d5f9ad73fab9d04452654c56651e3947c733b608285858d58c5c27fdb257185b12a3d4fef7cb62b7484b4fbba073c6dda579672bcc618a2bba8a8053949efd0b523999ba72abaddbb4cf5801de13d498af37ff37a99164a8293661c015deb6ff8a181fb13ff42037d5fd71ea106c2bc0bef",
+      "ciphertext_sha256" : "7c233471b4fb276c9bee5669784933efdcbbec6b1f990562144c9dd3c94cf30a",
+      "ciphertext_size" : 180,
+      "drop_id" : "a1B2c3D4",
+      "key" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_fragment" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "kind" : "manifest",
+      "name" : "manifest",
+      "plaintext_utf8" : "{\"files\":[{\"id\":\"00112233445566778899aabbccddeeff\",\"name\":\"Résumé final.pdf\",\"size\":13}],\"title\":\"Résumé final.pdf\",\"v\":1}",
+      "salt" : "0306090c0f1215181b1e2124272a2d303336393c3f4245484b4e5154575a5d60"
+    },
+    {
+      "ciphertext_sha256" : "e1b6f79b0538fb3c6784ec0053dd3ab50e1f15821c147663276f5d605620e9b2",
+      "ciphertext_size" : 1048630,
+      "drop_id" : "a1B2c3D4",
+      "key" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_fragment" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "kind" : "file",
+      "name" : "one full segment",
+      "object_id" : "00112233445566778899aabbccddeeff",
+      "plaintext_pattern_size" : 1048576,
+      "salt" : "04070a0d101316191c1f2225282b2e3134373a3d404346494c4f5255585b5e61"
+    },
+    {
+      "ciphertext_sha256" : "6a4bb75c8f5eebbf4ace9a489b888319e75576199317e29621a0f29b65c32282",
+      "ciphertext_size" : 2098472,
+      "drop_id" : "a1B2c3D4",
+      "key" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_fragment" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "kind" : "file",
+      "name" : "two segments and a bit",
+      "object_id" : "ffeeddccbbaa99887766554433221100",
+      "plaintext_pattern_size" : 2098386,
+      "salt" : "05080b0e1114171a1d202326292c2f3235383b3e4144474a4d505356595c5f62"
+    },
+    {
+      "ciphertext_hex" : "584e4345010106090c0f1215181b1e2124272a2d303336393c3f4245484b4e5154575a5d60634569d53fe7bd2106a0279de68e183b1e61",
+      "ciphertext_sha256" : "8da89f6a223a1b6da53102290e2341914b9c3f1d23aeb73627c8af84dc35a049",
+      "ciphertext_size" : 55,
+      "drop_id" : "a1B2c3D4",
+      "key" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_fragment" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "kind" : "file",
+      "name" : "one byte",
+      "object_id" : "00112233445566778899aabbccddeeff",
+      "plaintext_pattern_size" : 1,
+      "salt" : "06090c0f1215181b1e2124272a2d303336393c3f4245484b4e5154575a5d6063"
+    }
+  ]
+}

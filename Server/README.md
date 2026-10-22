@@ -10,8 +10,10 @@ Mac when they are on different networks.
 - Runs in Docker on a small VPS or a 64-bit Raspberry Pi.
 
 **Security in one paragraph.** One shared API token controls the whole server, and
-anyone holding a drop link can download it until it expires. Uploaded files are
-stored unencrypted on the server, so whoever runs the host or bucket can read them.
+anyone holding a drop link can download it until it expires. New Mac uploads are
+end-to-end encrypted by default; the complete link holds the key. Legacy links and
+uploads with encryption disabled remain server-readable. Recipients must still
+trust the server’s download page.
 Relay traffic is end-to-end encrypted between the phone and the Mac. This suits a
 person or a trusted team; it is not a multi-user document system. Read the
 [security assessment](docs/SECURITY.md) before using it for a company or customer.
@@ -51,4 +53,5 @@ Dokploy, S3/B2 and Raspberry Pi notes.
 | --- | --- |
 | [Self-hosting guide](docs/SELF_HOSTING.md) | Installing, securing, backing up and upgrading a server. |
 | [Reference](docs/REFERENCE.md) | All settings, rate limits and proxy trust, the relay, the HTTP API, storage layout, development. |
+| [Encryption](docs/E2EE.md) | How encrypted links work, browser support, and trust limits. |
 | [Security assessment](docs/SECURITY.md) | What the server protects, its limits, and a deployment checklist. |

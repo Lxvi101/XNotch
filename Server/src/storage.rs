@@ -3,6 +3,7 @@
 //! Layout (under an optional prefix):
 //! - `drops/{id}/meta.json`   drop metadata ([`DropMeta`])
 //! - `drops/{id}/files/{name}` file contents
+//! - `drops/{id}/manifest`     encrypted manifest of an end-to-end encrypted drop
 //! - `relay/rooms/{room}`      a registered relay room ([`RelayRoom`])
 
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -125,6 +126,10 @@ impl Storage {
         self.drop_dir(id).join("files").join(name)
     }
 
+    fn manifest_path(&self, id: &str) -> Path {
+        self.drop_dir(id).join("manifest")
+    }
+
     fn relay_room_path(&self, room: &str) -> Path {
         self.relay_rooms.clone().join(room)
     }
@@ -170,12 +175,28 @@ impl Storage {
     /// Streams a request body into `drops/{id}/files/{name}`, failing with
     /// [`WriteError::TooLarge`] as soon as more than `limit` bytes arrive.
     /// Returns the number of bytes written.
-    pub async fn write_file<S, E>(&self, id: &str, name: &str, mut body: S, limit: u64) -> Result<u64, WriteError>
+    pub async fn write_file<S, E>(&self, id: &str, name: &str, body: S, limit: u64) -> Result<u64, WriteError>
     where
         S: Stream<Item = std::result::Result<Bytes, E>> + Unpin,
         E: Into<BoxError>,
     {
-        let path = self.file_path(id, name);
+        self.write_object(id, self.file_path(id, name), body, limit).await
+    }
+
+    /// Streams the encrypted manifest of a drop into `drops/{id}/manifest`, like [`Self::write_file`].
+    pub async fn write_manifest<S, E>(&self, id: &str, body: S, limit: u64) -> Result<u64, WriteError>
+    where
+        S: Stream<Item = std::result::Result<Bytes, E>> + Unpin,
+        E: Into<BoxError>,
+    {
+        self.write_object(id, self.manifest_path(id), body, limit).await
+    }
+
+    async fn write_object<S, E>(&self, id: &str, path: Path, mut body: S, limit: u64) -> Result<u64, WriteError>
+    where
+        S: Stream<Item = std::result::Result<Bytes, E>> + Unpin,
+        E: Into<BoxError>,
+    {
         let mut writer =
             BufWriter::with_capacity(self.store.clone(), path, PART_SIZE).with_max_concurrency(UPLOAD_CONCURRENCY);
 
@@ -212,6 +233,15 @@ impl Storage {
         let options = GetOptions { range: range.map(GetRange::Bounded), ..Default::default() };
         match self.store.get_opts(&self.file_path(id, name), options).await {
             Ok(result) => Ok(Some(result)),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Reads the whole encrypted manifest (at most [`crate::e2ee::MAX_MANIFEST_BYTES`]).
+    pub async fn read_manifest(&self, id: &str) -> Result<Option<Bytes>> {
+        match self.store.get(&self.manifest_path(id)).await {
+            Ok(result) => Ok(Some(result.bytes().await?)),
             Err(object_store::Error::NotFound { .. }) => Ok(None),
             Err(e) => Err(e),
         }

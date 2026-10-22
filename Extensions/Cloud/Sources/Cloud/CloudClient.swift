@@ -10,6 +10,10 @@ struct CloudClient: Sendable {
         let maxExpirySeconds: UInt64
         /// Missing on servers from before drop passwords.
         let passwords: Bool?
+        /// End-to-end encryption format versions; missing on servers from before it.
+        let e2ee: [Int]?
+
+        var supportsEncryption: Bool { e2ee?.contains(Int(DropCrypto.version)) == true }
     }
 
     struct Drop: Decodable, Sendable {
@@ -18,6 +22,8 @@ struct CloudClient: Sendable {
         let expiresAt: Date
         /// Whether the server applied the password; older servers leave it out.
         let protected: Bool?
+        /// The encryption format the server recorded; older servers leave it out.
+        let e2ee: Int?
     }
 
     enum Failure: LocalizedError {
@@ -65,10 +71,22 @@ struct CloudClient: Sendable {
         try await decode(Info.self, from: request("GET", "api/info"))
     }
 
+    /// Whether browsers can decrypt links from this server: Web Crypto only
+    /// exists on https pages (and on the local machine).
+    var canServeEncryptedLinks: Bool {
+        baseURL.scheme?.lowercased() == "https" || ["localhost", "127.0.0.1", "::1", "[::1]"].contains(baseURL.host ?? "")
+    }
+
     /// With a `password`, visitors must enter it before they see or download anything.
-    func createDrop(expiresIn: TimeInterval, title: String?, password: String? = nil) async throws -> Drop {
+    /// An `encrypted` drop keeps its title in the encrypted manifest instead: it is never sent.
+    func createDrop(expiresIn: TimeInterval, title: String?, password: String? = nil,
+                    encrypted: Bool = false) async throws -> Drop {
         var body: [String: Any] = ["expires_in": Int(expiresIn)]
-        if let title { body["title"] = title }
+        if encrypted {
+            body["e2ee"] = Int(DropCrypto.version)
+        } else if let title {
+            body["title"] = title
+        }
         if let password, !password.isEmpty { body["password"] = password }
         var request = request("POST", "api/drops")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -85,6 +103,14 @@ struct CloudClient: Sendable {
         request.timeoutInterval = 120
         let (data, response) = try await session.upload(for: request, fromFile: file,
                                                         delegate: UploadProgress(progress))
+        try Self.check(data, response)
+    }
+
+    /// The encrypted manifest of an encrypted drop, written after its files.
+    func uploadManifest(_ sealed: Data, to drop: String) async throws {
+        var request = request("PUT", "api/drops/\(Self.pathComponent(drop))/manifest")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await session.upload(for: request, from: sealed)
         try Self.check(data, response)
     }
 

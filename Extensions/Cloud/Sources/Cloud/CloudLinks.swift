@@ -15,6 +15,8 @@ final class CloudLinks: ObservableObject {
         let expiresAt: Date
         /// `nil` for links saved before passwords existed.
         let isProtected: Bool?
+        /// `nil` for links saved before encryption existed. The key is in `url`'s fragment.
+        var isEncrypted: Bool? = nil
 
         var isExpired: Bool { expiresAt <= Date() }
     }
@@ -51,6 +53,11 @@ final class CloudLinks: ObservableObject {
     @Published var defaultExpiry: TimeInterval {
         didSet { defaults.set(defaultExpiry, forKey: Keys.expiry) }
     }
+    /// End-to-end encrypt new links. On unless turned off: with it on, an
+    /// upload fails rather than go to a server that would store plaintext.
+    @Published var encryptLinks: Bool {
+        didSet { defaults.set(encryptLinks, forKey: Keys.encrypt) }
+    }
     @Published private(set) var links: [SharedLink] = []
     @Published private(set) var transfer: Transfer = .idle
     @Published private(set) var check: Check = .none
@@ -68,7 +75,7 @@ final class CloudLinks: ObservableObject {
     private var generation = 0
 
     private enum Keys {
-        static let server = "server", expiry = "defaultExpiry", links = "links"
+        static let server = "server", expiry = "defaultExpiry", links = "links", encrypt = "encryptLinks"
     }
 
     init(defaults: UserDefaults, log: Logger) {
@@ -78,6 +85,7 @@ final class CloudLinks: ObservableObject {
         token = Keychain.read() ?? ""
         let expiry = defaults.double(forKey: Keys.expiry)
         defaultExpiry = expiry > 0 ? expiry : 86_400
+        encryptLinks = defaults.object(forKey: Keys.encrypt) as? Bool ?? true
         if let data = defaults.data(forKey: Keys.links),
            let saved = try? JSONDecoder().decode([SharedLink].self, from: data) {
             links = saved.filter { !$0.isExpired }
@@ -105,48 +113,25 @@ final class CloudLinks: ObservableObject {
         generation += 1
         let current = generation
         setTransfer(.uploading(0))
+        let encrypt = encryptLinks
         Task {
             do {
-                let sizes = urls.map(Self.size(of:))
-                let total = max(1, sizes.reduce(0, +))
                 let title = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
                 // Known limits first: a file the server would refuse fails here, clearly.
                 let info = try await client.info()
                 self.info = info
-                if let tooBig = zip(urls, sizes).first(where: { UInt64($0.1) > info.maxFileSize }) {
-                    throw TooLarge(name: tooBig.0.lastPathComponent, limit: info.maxFileSize)
-                }
-                let protect = password.map { !$0.isEmpty } ?? false
-                if protect, info.passwords != true { throw PasswordsUnsupported() }
-                let drop = try await client.createDrop(expiresIn: expiresIn, title: title, password: password)
-                do {
-                    // Never hand out an open link that was meant to be locked.
-                    if protect, drop.protected != true { throw PasswordsUnsupported() }
-                    var done: Int64 = 0
-                    for (url, size) in zip(urls, sizes) {
-                        let prepared = try await PreparedFile.make(for: url)
-                        defer { prepared.cleanUp() }
-                        // A folder's size is only known once zipped.
-                        let preparedSize = (try? prepared.url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
-                        if preparedSize > info.maxFileSize { throw TooLarge(name: prepared.name, limit: info.maxFileSize) }
-                        let base = done
-                        try await client.upload(prepared.url, name: prepared.name, to: drop.id) { fraction in
-                            Task { @MainActor in
-                                guard self.generation == current, self.isUploading else { return }
-                                self.transfer = .uploading(Double(base + Int64(Double(size) * fraction)) / Double(total))
-                            }
-                        }
-                        done += size
+                let uploader = DropUploader(client: client, info: info, encrypt: encrypt)
+                let result = try await uploader.upload(urls, title: title, expiresIn: expiresIn, password: password) { fraction in
+                    Task { @MainActor in
+                        guard self.generation == current, self.isUploading else { return }
+                        self.transfer = .uploading(fraction)
                     }
-                } catch {
-                    // Don't leave a half-filled link behind that nobody can see or revoke.
-                    try? await client.delete(drop: drop.id)
-                    throw error
                 }
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(drop.url.absoluteString, forType: .string)
-                remember(SharedLink(id: drop.id, url: drop.url, title: title, fileCount: urls.count,
-                                    createdAt: Date(), expiresAt: drop.expiresAt, isProtected: protect))
+                NSPasteboard.general.setString(result.link.absoluteString, forType: .string)
+                remember(SharedLink(id: result.drop.id, url: result.link, title: title, fileCount: urls.count,
+                                    createdAt: Date(), expiresAt: result.drop.expiresAt,
+                                    isProtected: password.map { !$0.isEmpty } ?? false, isEncrypted: encrypt))
                 setTransfer(.copied)
                 onCopied?()
             } catch {
@@ -231,12 +216,6 @@ final class CloudLinks: ObservableObject {
         let work = DispatchWorkItem { [weak self] in self?.transfer = .idle }
         transferReset = work
         DispatchQueue.main.asyncAfter(deadline: .now() + (value == .copied ? 2.5 : 4), execute: work)
-    }
-
-    private static func size(of url: URL) -> Int64 {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
-        if values?.isDirectory == true { return 1 }
-        return Int64(values?.fileSize ?? 1)
     }
 }
 
