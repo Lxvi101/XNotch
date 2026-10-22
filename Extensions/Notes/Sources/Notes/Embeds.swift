@@ -221,6 +221,9 @@ extension NoteTextView {
         menu.addItem(ClosureMenuItem("Show in Finder", symbol: "folder") {
             NSWorkspace.shared.activateFileViewerSelecting([image.url])
         })
+        menu.addItem(ClosureMenuItem("Send to Tray", symbol: "tray.and.arrow.up") { [weak self] in
+            self?.fileHandler?.sendToTray([image.url])
+        })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Edit Markdown", symbol: "chevron.left.forwardslash.chevron.right") { [weak self] in
             // Selecting it reveals it.

@@ -501,6 +501,82 @@ final class NoteTextView: NSTextView {
         super.deleteBackward(sender)
     }
 
+    /// ⌘⌫ with nothing left before the caret on its line takes the line
+    /// itself, joining it to the one above.
+    override func deleteToBeginningOfLine(_ sender: Any?) {
+        let before = string
+        let selection = selectedRange()
+        super.deleteToBeginningOfLine(sender)
+        if string == before, selection.length == 0, selection.location > 0 { deleteBackward(sender) }
+    }
+
+    // MARK: Moving lines
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        switch (event.keyCode, modifiers) {
+        case (126, [.option]): moveLines(up: true)
+        case (125, [.option]): moveLines(up: false)
+        case (126, [.option, .shift]): copyLines(up: true)
+        case (125, [.option, .shift]): copyLines(up: false)
+        default: super.keyDown(with: event)
+        }
+    }
+
+    /// The whole lines the selection touches, without the last one's line
+    /// break, and whether there is one. A selection ending at the start of a
+    /// line leaves that line out.
+    private func selectedLines() -> (range: NSRange, text: String, hasBreak: Bool) {
+        let string = self.string as NSString
+        let selection = selectedRange()
+        var end = NSMaxRange(selection)
+        if selection.length > 0, end > 0, string.character(at: end - 1) == 0x0A { end -= 1 }
+        let lines = string.lineRange(for: NSRange(location: selection.location, length: end - selection.location))
+        let hasBreak = lines.length > 0 && string.character(at: NSMaxRange(lines) - 1) == 0x0A
+        let text = string.substring(with: NSRange(location: lines.location, length: lines.length - (hasBreak ? 1 : 0)))
+        return (lines, text, hasBreak)
+    }
+
+    /// ⌥↑ and ⌥↓: the selected lines trade places with the line above or below.
+    func moveLines(up: Bool) {
+        let string = self.string as NSString
+        let selection = selectedRange()
+        let (lines, text, hasBreak) = selectedLines()
+        if up {
+            guard lines.location > 0 else { return }
+            let above = string.lineRange(for: NSRange(location: lines.location - 1, length: 0))
+            let aboveText = string.substring(with: NSRange(location: above.location, length: above.length - 1))
+            replace(NSRange(location: above.location, length: NSMaxRange(lines) - above.location),
+                    with: text + "\n" + aboveText + (hasBreak ? "\n" : ""),
+                    selection: NSRange(location: selection.location - above.length, length: selection.length))
+        } else {
+            guard hasBreak, NSMaxRange(lines) < string.length else { return }
+            let below = string.lineRange(for: NSRange(location: NSMaxRange(lines), length: 0))
+            let belowBreak = string.character(at: NSMaxRange(below) - 1) == 0x0A
+            let belowText = string.substring(with: NSRange(location: below.location, length: below.length - (belowBreak ? 1 : 0)))
+            replace(NSRange(location: lines.location, length: NSMaxRange(below) - lines.location),
+                    with: belowText + "\n" + text + (belowBreak ? "\n" : ""),
+                    selection: NSRange(location: selection.location + (belowText as NSString).length + 1, length: selection.length))
+        }
+        scrollRangeToVisible(selectedRange())
+    }
+
+    /// ⌥⇧↑ and ⌥⇧↓: a copy of the selected lines above or below them; the
+    /// selection goes with the copy that's in that direction.
+    func copyLines(up: Bool) {
+        let selection = selectedRange()
+        let (lines, text, hasBreak) = selectedLines()
+        let shift = up ? 0 : (text as NSString).length + 1
+        if hasBreak {
+            replace(NSRange(location: NSMaxRange(lines), length: 0), with: text + "\n",
+                    selection: NSRange(location: selection.location + shift, length: selection.length))
+        } else {
+            replace(NSRange(location: NSMaxRange(lines), length: 0), with: "\n" + text,
+                    selection: NSRange(location: selection.location + shift, length: selection.length))
+        }
+        scrollRangeToVisible(selectedRange())
+    }
+
     override func insertTab(_ sender: Any?) {
         guard selectedRange().length == 0, let prefix = listPrefix(ofLineAt: selectedRange().location) else {
             return super.insertTab(sender)
@@ -581,20 +657,36 @@ final class NoteTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if isFromOwnBucket(sender) { return [] }
         if referencesBucket(sender) { return followDrop(sender) }
         guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.draggingEntered(sender) }
         return fileHandler.fileDragMoved(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if isFromOwnBucket(sender) { return [] }
         if referencesBucket(sender) { return followDrop(sender) }
         guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.draggingUpdated(sender) }
         return fileHandler.fileDragMoved(sender)
     }
 
-    /// A file dragged out of this note's bucket goes into the text as a reference, not in again as a copy.
+    /// A file dragged out of this note's own bucket is on its way out: the
+    /// note doesn't take it back, and doesn't chase it with the caret.
+    private func isFromOwnBucket(_ sender: NSDraggingInfo) -> Bool {
+        guard let fileHandler else { return false }
+        return (sender.draggingSource as AnyObject?) === fileHandler
+    }
+
+    /// The last drag's answer to `referencesBucket`, so the pasteboard is read once per drag, not per move.
+    private var bucketReference: (drag: Int, answer: Bool)?
+
+    /// One of this note's bucket files from elsewhere, like Finder, goes into
+    /// the text as a reference, not in again as a copy.
     private func referencesBucket(_ sender: NSDraggingInfo) -> Bool {
-        fileHandler?.bucketFiles(on: sender.draggingPasteboard).isEmpty == false
+        if let bucketReference, bucketReference.drag == sender.draggingSequenceNumber { return bucketReference.answer }
+        let answer = fileHandler?.bucketFiles(on: sender.draggingPasteboard).isEmpty == false
+        bucketReference = (sender.draggingSequenceNumber, answer)
+        return answer
     }
 
     /// The caret follows the drag, so it's clear where the reference lands.
@@ -612,6 +704,7 @@ final class NoteTextView: NSTextView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if isFromOwnBucket(sender) { return false }
         if let fileHandler, case let files = fileHandler.bucketFiles(on: sender.draggingPasteboard), !files.isEmpty {
             let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
             fileHandler.insertReferences(files, at: index)
@@ -637,6 +730,7 @@ protocol NoteFileHandling: AnyObject {
     /// Files on the pasteboard that are already in this note's bucket.
     func bucketFiles(on pasteboard: NSPasteboard) -> [URL]
     func insertReferences(_ urls: [URL], at index: Int)
+    func sendToTray(_ urls: [URL])
 }
 
 /// The scroll view and text view for one note window, kept by its controller

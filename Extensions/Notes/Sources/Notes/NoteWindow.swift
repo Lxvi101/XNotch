@@ -581,6 +581,11 @@ final class NoteController: NSObject {
 
 extension NoteController: NoteFileHandling {
     func fileDragMoved(_ info: NSDraggingInfo) -> NSDragOperation {
+        // A file on its way out of the bucket isn't a drop for this note.
+        if (info.draggingSource as AnyObject?) === self {
+            fileDragEnded()
+            return []
+        }
         if !state.isDragTarget {
             withAnimation(NoteMotion.hover) { state.isDragTarget = true }
         }
@@ -642,6 +647,10 @@ extension NoteController: NoteFileHandling {
         text.setSelectedRange(NSRange(location: location + (insertion as NSString).length, length: 0))
         panel.makeKey()
         editor.focus(atEnd: false)
+    }
+
+    func sendToTray(_ urls: [URL]) {
+        library.sendToTray(urls)
     }
 
     func attach(_ urls: [URL]) {
@@ -874,6 +883,9 @@ extension NoteController: NoteFileHandling {
         menu.addItem(ClosureMenuItem("Copy", symbol: "doc.on.doc") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects([attachment.url as NSURL])
+        })
+        menu.addItem(ClosureMenuItem("Send to Tray", symbol: "tray.and.arrow.up") { [weak self] in
+            self?.sendToTray([attachment.url])
         })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Remove from Bucket", symbol: "trash") { [weak self] in self?.removeAttachment(attachment) })

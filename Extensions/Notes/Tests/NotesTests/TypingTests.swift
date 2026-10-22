@@ -168,4 +168,56 @@ final class EditorOptionTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(1.3))
         XCTAssertEqual(view.string, "- [x] go\n- [ ] keep")
     }
+
+    private func lineEditor(_ text: String) -> NoteTextView {
+        _ = NSApplication.shared
+        let editor = MarkdownEditor()
+        editor.textView.assumesFocus = true
+        editor.load(text)
+        return editor.textView
+    }
+
+    func testCommandDeleteOnAnEmptyLineRemovesIt() {
+        let view = lineEditor("one\n\ntwo")
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        view.deleteToBeginningOfLine(nil)
+        XCTAssertEqual(view.string, "one\ntwo")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 3, length: 0))
+        view.setSelectedRange(NSRange(location: 6, length: 0)) // after "tw"
+        view.deleteToBeginningOfLine(nil)
+        XCTAssertEqual(view.string, "one\no")
+    }
+
+    func testOptionArrowsMoveLines() {
+        let view = lineEditor("a\nbb\nc")
+        view.setSelectedRange(NSRange(location: 3, length: 0)) // in "bb"
+        view.moveLines(up: true)
+        XCTAssertEqual(view.string, "bb\na\nc")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 1, length: 0))
+        view.moveLines(up: true)
+        XCTAssertEqual(view.string, "bb\na\nc")
+        view.moveLines(up: false)
+        view.moveLines(up: false)
+        XCTAssertEqual(view.string, "a\nc\nbb")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 5, length: 0))
+        view.moveLines(up: false)
+        XCTAssertEqual(view.string, "a\nc\nbb")
+        // Several selected lines move together; one ending at a line's start leaves it out.
+        view.setSelectedRange(NSRange(location: 0, length: 4))
+        view.moveLines(up: false)
+        XCTAssertEqual(view.string, "bb\na\nc")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 3, length: 3))
+    }
+
+    func testOptionShiftArrowsCopyLines() {
+        let view = lineEditor("a\nbb")
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        view.copyLines(up: false)
+        XCTAssertEqual(view.string, "a\nbb\nbb")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 6, length: 0))
+        view.setSelectedRange(NSRange(location: 1, length: 0))
+        view.copyLines(up: true)
+        XCTAssertEqual(view.string, "a\na\nbb\nbb")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 1, length: 0))
+    }
 }

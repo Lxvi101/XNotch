@@ -30,6 +30,7 @@ final class NotesExtension: XNotchExtension {
         let library = NoteLibrary(root: host.storage.directory, preferences: preferences)
         library.tick = { [weak host] in host?.feedback.tick() }
         library.openSettings = { [weak host] in host?.notch.openSettings() }
+        library.sendToTray = { [weak host] urls in host?.shelf.add(urls) }
         library.load()
         library.restore()
         library.startCloud()

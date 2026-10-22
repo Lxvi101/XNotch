@@ -154,6 +154,8 @@ final class NoteLibrary {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored var tick: () -> Void = {}
     @ObservationIgnored var openSettings: () -> Void = {}
+    /// Puts files on XNotch's tray.
+    @ObservationIgnored var sendToTray: ([URL]) -> Void = { _ in }
     @ObservationIgnored var cloud: CloudSync?
     @ObservationIgnored var indexSaveTask: Task<Void, Never>?
     @ObservationIgnored var rescanTimer: Timer?
