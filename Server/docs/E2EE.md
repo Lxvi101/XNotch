@@ -152,7 +152,10 @@ that setting is on, the app never falls back to plaintext:
 1. If `/api/info` lacks `e2ee: [1]` (an old server), nothing is created or uploaded.
 2. If the server URL is plain `http` and not `localhost`, `127.0.0.1` or `::1`, the upload is
    refused, including `http` addresses on your LAN. Browsers only expose Web Crypto in secure
-   contexts (HTTPS or localhost), so recipients couldn't decrypt those links.
+   contexts (HTTPS or localhost), so recipients couldn't decrypt those links. The public URL returned on drop creation is
+   checked too, before any file is uploaded or a key is attached; an HTTPS API cannot
+   silently hand out an insecure HTTP link. URLs with credentials, an existing fragment,
+   or an invalid authority are rejected.
 3. If the created drop doesn't echo `e2ee: 1` (for example, a proxy changed the request),
    the drop is deleted before any file is sent.
 4. If any step fails after the drop exists, the app tries to delete the drop. That deletion is
