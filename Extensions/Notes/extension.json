@@ -1,0 +1,11 @@
+{
+  "id": "notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "summary": "Markdown sticky notes that float over everything, each with a bucket for files, grouped into spaces.",
+  "symbol": "note.text",
+  "tint": "#FF8A4C",
+  "principalClass": "NotesPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.4.0" },
+  "creator": { "name": "XNotch" }
+}
