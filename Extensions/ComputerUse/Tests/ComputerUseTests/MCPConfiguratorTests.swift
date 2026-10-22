@@ -86,4 +86,15 @@ final class MCPConfiguratorTests: XCTestCase {
         XCTAssertEqual(calls, ["mcp remove --scope user wink-cua",
                                "mcp add --scope user wink-cua -- \(command.path)"])
     }
+
+    func testRunReadsLongOutputAndStopsAtTheTimeout() throws {
+        let long = try configurator.run(URL(fileURLWithPath: "/bin/sh"), ["-c", "yes | head -c 200000"])
+        XCTAssertEqual(long.status, 0)
+        XCTAssertEqual(long.output.count, 199_999)
+
+        let start = Date()
+        let slow = try configurator.run(URL(fileURLWithPath: "/bin/sleep"), ["10"], timeout: 0.3)
+        XCTAssertNotEqual(slow.status, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
 }

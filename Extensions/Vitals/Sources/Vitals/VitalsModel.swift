@@ -311,7 +311,8 @@ final class VitalsModel: ObservableObject {
         let shown = settings.namesBusiestApp && !watchers.isEmpty && settings.visible.contains(.cpu)
         let request = SystemSampler.Request(metrics: metrics, findsBusiestApp: shown || alertMonitor.cpuBusySince != nil,
                                             // While the page is up, so a tile opens onto rows already in place.
-                                            breaksDown: !watchers.isEmpty && settings.visible.contains(where: \.breaksDown))
+                                            breaksDown: !watchers.isEmpty && settings.visible.contains(where: \.breaksDown),
+                                            isWatched: !watchers.isEmpty)
         Task {
             let sample = await sampler.sample(request)
             isSampling = false
@@ -407,7 +408,10 @@ final class VitalsModel: ObservableObject {
     }
 
     nonisolated static func appending(_ value: Double, to history: [Double]) -> [Double] {
-        Array((history + [value]).suffix(historyLength))
+        var history = history
+        history.removeFirst(max(0, history.count - historyLength + 1))
+        history.append(value)
+        return history
     }
 }
 

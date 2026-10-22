@@ -67,9 +67,16 @@ final class WinkInstaller: ObservableObject {
 
     /// Reads what's installed, set up and granted. Brings an installed Wink up
     /// to date with the bundled one, and moves 0.9.0's bare server into it.
-    func refresh() async {
+    /// Without `clients`, the clients are only read when that move needs them.
+    func refresh(clients: Bool = true) async {
         updateIfNeeded()
         isInstalled = FileManager.default.isExecutableFile(atPath: command.path)
+        if clients || FileManager.default.fileExists(atPath: legacyBinary.path) { await refreshClients() }
+        await migrateLegacyBinary()
+        await refreshGrants()
+    }
+
+    private func refreshClients() async {
         let configurator = configurator
         let clients = clients
         let found = await Task.detached {
@@ -86,8 +93,6 @@ final class WinkInstaller: ObservableObject {
         }
         self.states = states
         hasRefreshed = true
-        await migrateLegacyBinary()
-        await refreshGrants()
     }
 
     func refreshGrants() async {
@@ -211,8 +216,22 @@ final class WinkInstaller: ObservableObject {
     private func updateIfNeeded() {
         guard let bundled, FileManager.default.isExecutableFile(atPath: command.path) else { return }
         let bundledServer = bundled.appendingPathComponent("Contents/MacOS/wink-cua")
-        guard !FileManager.default.contentsEqual(atPath: bundledServer.path, andPath: command.path) else { return }
+        guard !Self.isSame(bundledServer, command) else { return }
         try? copyApp()
+    }
+
+    /// A copy keeps its original's size and date, so those settle the usual
+    /// launch; otherwise the bytes do, and an equal copy takes the date.
+    private static func isSame(_ original: URL, _ copy: URL) -> Bool {
+        let fm = FileManager.default
+        guard let a = try? fm.attributesOfItem(atPath: original.path),
+              let b = try? fm.attributesOfItem(atPath: copy.path),
+              a[.size] as? Int == b[.size] as? Int else { return false }
+        let date = a[.modificationDate] as? Date
+        if date != nil, date == b[.modificationDate] as? Date { return true }
+        guard fm.contentsEqual(atPath: original.path, andPath: copy.path) else { return false }
+        if let date { try? fm.setAttributes([.modificationDate: date], ofItemAtPath: copy.path) }
+        return true
     }
 
     /// 0.9.0 installed a bare server, which ran with each client's permissions

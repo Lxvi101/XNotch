@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import IOKit
 import IOKit.ps
+import notify
 
 /// One reading of everything that was asked for. Rates and the CPU need two
 /// readings, so they're nil the first time.
@@ -76,6 +77,8 @@ actor SystemSampler {
         var findsBusiestApp: Bool
         /// Every app's CPU and memory, for an open breakdown.
         var breaksDown = false
+        /// A page or preview is on screen, so the battery is read afresh rather than every half minute.
+        var isWatched = false
     }
 
     private let host = mach_host_self()
@@ -91,6 +94,16 @@ actor SystemSampler {
     private var lastTasks: (times: [pid_t: UInt64], at: TimeInterval)?
     private var identities: [pid_t: Identity] = [:]
     private var lastDisk: (free: Int64, total: Int64, at: TimeInterval)?
+    private var lastBattery: (battery: Battery?, at: TimeInterval)?
+    /// Posted when the Mac is plugged in or unplugged; checking it is a read of shared memory.
+    private let powerSourceToken: Int32 = {
+        var token: Int32 = 0
+        return notify_register_check(kIOPSNotifyPowerSource, &token) == NOTIFY_STATUS_OK ? token : NOTIFY_TOKEN_INVALID
+    }()
+
+    deinit {
+        if powerSourceToken != NOTIFY_TOKEN_INVALID { notify_cancel(powerSourceToken) }
+    }
 
     func sample(_ request: Request) -> Sample {
         var sample = Sample()
@@ -109,7 +122,7 @@ actor SystemSampler {
             sample.diskFree = disk.free
             sample.diskTotal = disk.total
         }
-        if metrics.contains(.battery) { sample.battery = Self.battery() }
+        if metrics.contains(.battery) { sample.battery = battery(fresh: request.isWatched) }
         if request.findsBusiestApp || request.breaksDown {
             let apps = scanProcesses(memory: request.breaksDown)
             // Without memory when not breaking down, but CPU per app is ready for a tile that opens.
@@ -235,6 +248,18 @@ actor SystemSampler {
     }
 
     // MARK: Battery
+
+    /// Reading it asks powerd, so unless it's on screen or the power source
+    /// changed, it's read twice a minute.
+    private func battery(fresh: Bool) -> Battery? {
+        let now = ProcessInfo.processInfo.systemUptime
+        var changed: Int32 = 1
+        if powerSourceToken != NOTIFY_TOKEN_INVALID { notify_check(powerSourceToken, &changed) }
+        if !fresh, changed == 0, let last = lastBattery, now - last.at < 30 { return last.battery }
+        let battery = Self.battery()
+        lastBattery = (battery, now)
+        return battery
+    }
 
     static func battery() -> Battery? {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),

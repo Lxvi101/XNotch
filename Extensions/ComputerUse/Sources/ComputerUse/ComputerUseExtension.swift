@@ -36,8 +36,8 @@ final class ComputerUseExtension: XNotchExtension, SettingsPaneProviding, Permis
         self.host = host
         let preferences = ComputerUsePreferences(defaults: host.storage.defaults)
         self.preferences = preferences
-        // Also brings an installed server up to date with the one this XNotch ships.
-        Task { await installer.refresh() }
+        // Brings an installed server up to date with the one this XNotch ships; Settings reads the clients.
+        Task { await installer.refresh(clients: false) }
         sink = DistributedSink(names: [AgentSessions.startName, AgentSessions.actionName, AgentSessions.endName,
                                        Self.permissionNeededName]) { [weak self] name, info in
             self?.host?.log.debug("\(name.rawValue, privacy: .public) \(info.count) keys")

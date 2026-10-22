@@ -63,4 +63,15 @@ final class WinkInstallerTests: XCTestCase {
         let server = try String(contentsOf: installer.command, encoding: .utf8)
         XCTAssertTrue(server.contains("accessibility"))
     }
+
+    func testUpdatesASameSizedInstall() async throws {
+        let directory = root.appendingPathComponent("Wink")
+        let installer = WinkInstaller(bundled: try makeBundledApp(), directory: directory, clients: [])
+        await installer.install(guide: nil)
+        let original = try Data(contentsOf: installer.command)
+        try Data(original.map { $0 == UInt8(ascii: "t") ? UInt8(ascii: "T") : $0 }).write(to: installer.command)
+
+        await installer.refresh(clients: false)
+        XCTAssertEqual(try Data(contentsOf: installer.command), original)
+    }
 }

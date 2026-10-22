@@ -192,8 +192,9 @@ struct MCPConfigurator: Sendable {
         process.standardOutput = pipe
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        let deadline = Date().addingTimeInterval(timeout)
         let output = pipe.fileHandleForReading
         var data = Data()
         let reader = DispatchQueue(label: "mcp-configurator.read")
@@ -202,8 +203,7 @@ struct MCPConfigurator: Sendable {
             data = output.readDataToEndOfFile()
             done.signal()
         }
-        while process.isRunning, Date() < deadline { usleep(20_000) }
-        if process.isRunning { process.terminate() }
+        if exited.wait(timeout: .now() + timeout) == .timedOut { process.terminate() }
         _ = done.wait(timeout: .now() + 2)
         process.waitUntilExit()
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)

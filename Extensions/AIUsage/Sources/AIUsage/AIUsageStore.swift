@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -100,9 +101,16 @@ final class AIUsageStore: ObservableObject {
     var onChange: (() -> Void)?
 
     private var defaults: UserDefaults?
+    /// What defaults hold, so a reading that only moved its timestamp waits for quit.
+    private var saved: [ProviderUsageSnapshot] = []
+    private var quitObserver: NSObjectProtocol?
 
     func load(defaults: UserDefaults) {
         self.defaults = defaults
+        quitObserver = quitObserver ?? NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.persist(dated: true) }
+        }
         let loaded = AIUsageSettings.load(from: defaults)
         let callback = onSettingsChange
         onSettingsChange = nil
@@ -110,8 +118,10 @@ final class AIUsageStore: ObservableObject {
         mirror.value = loaded
         onSettingsChange = callback
         var restored: [AIProviderID: ProviderState] = [:]
+        saved = []
         if let data = defaults.data(forKey: AIUsageSettings.Keys.snapshots),
            let snapshots = try? JSONDecoder().decode([ProviderUsageSnapshot].self, from: data) {
+            saved = snapshots
             for snapshot in snapshots {
                 restored[snapshot.provider] = ProviderState(status: .stale, snapshot: snapshot,
                                                             message: "Last reading, from before XNotch restarted.")
@@ -232,11 +242,22 @@ final class AIUsageStore: ObservableObject {
         return count > 0 ? count : nil
     }
 
-    private func persist() {
+    /// Each write rewrites the whole plist, so a newer `refreshedAt` alone is only written when `dated`.
+    private func persist(dated: Bool = false) {
         guard let defaults else { return }
         let snapshots = AIProviderID.allCases.compactMap { states[$0]?.snapshot?.cacheable }
+        guard snapshots != saved, dated || snapshots.map(\.undated) != saved.map(\.undated) else { return }
         if let data = try? JSONEncoder().encode(snapshots) {
             defaults.set(data, forKey: AIUsageSettings.Keys.snapshots)
+            saved = snapshots
         }
+    }
+}
+
+private extension ProviderUsageSnapshot {
+    var undated: ProviderUsageSnapshot {
+        var copy = self
+        copy.refreshedAt = .distantPast
+        return copy
     }
 }

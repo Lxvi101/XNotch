@@ -127,6 +127,22 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNil(restored.state(for: .codex).snapshot?.accountLabel)
     }
 
+    func testANewerTimestampAloneIsSavedAtQuit() {
+        let store = store()
+        var snapshot = makeSnapshot(at: referenceDate)
+        store.apply(snapshot)
+        let later = referenceDate.addingTimeInterval(300)
+        snapshot.refreshedAt = later
+        store.apply(snapshot)
+        XCTAssertEqual(self.store().state(for: .codex).snapshot?.refreshedAt, referenceDate)
+
+        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        XCTAssertEqual(self.store().state(for: .codex).snapshot?.refreshedAt, later)
+
+        store.apply(makeSnapshot(percent: 55, at: later.addingTimeInterval(300)))
+        XCTAssertEqual(self.store().state(for: .codex).snapshot?.windows.first?.percentUsed, 55)
+    }
+
     func testSettingsPersistWithoutCredentials() {
         let store = store()
         store.settings.showsRemaining = true
