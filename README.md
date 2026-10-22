@@ -77,6 +77,7 @@ XNotch is split into two parts:
 
 ## Self-host XNotch Cloud
 
-Host file sharing and the optional iPhone relay on your own infrastructure. Follow the
-[Linux server tutorial](Server/README.md#linux-server-walkthrough-ubuntu-2404-lts) for Docker installation, HTTPS, verification, backups, and upgrades.
-Read the [security assessment](Server/docs/SECURITY.md) before an enterprise deployment.
+Host file sharing and the optional iPhone relay on your own server. Start with
+[XNotch Cloud](Server/README.md), then follow the illustrated
+[self-hosting guide](Server/docs/SELF_HOSTING.md) for Docker, HTTPS, backups and upgrades.
+Read the [security assessment](Server/docs/SECURITY.md) before a company deployment.

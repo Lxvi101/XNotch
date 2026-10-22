@@ -1,12 +1,14 @@
 # Tutorial capture provenance
 
+Screenshots used in the [self-hosting guide](../SELF_HOSTING.md).
+
 Captured October 22, 2026, on an isolated OrbStack Ubuntu 24.04 arm64 VM.
 
 - `01-docker-installed.png`: browser-rendered recording of actual OS, Docker,
   Compose and hello-world command output. This is not a native terminal screenshot.
 - `02-services-running.png`: browser-rendered recording of actual Compose and
   HTTP verification output. The displayed `compose ...` abbreviates the two file
-  arguments documented in the tutorial.
+  arguments documented in the guide.
 - `03-password-protected.png` and `04-drop-unlocked.png`: actual browser screenshots
   of the running Linux server, before and after unlocking a disposable sample drop.
 

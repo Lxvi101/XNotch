@@ -69,8 +69,9 @@ trust boundary. For sensitive data, complete your own security review before rol
    scanning, or DLP; a token holder can still exhaust storage. Apply ingress
    connection/concurrency limits, disk budgets and alerts, and an appropriate
    scanning process. Trust only controlled proxy peers and verify real-client
-   separation, especially behind Dokploy/Traefik/CDNs. See the README's rate-limit
-   configuration and saturation behavior before tuning defaults.
+   separation, especially behind Dokploy/Traefik/CDNs. See the
+   [rate-limit reference](REFERENCE.md#rate-limiting-and-client-identity) before
+   tuning defaults.
 5. **Operational logs are not a user audit trail.** Request paths contain drop IDs
    and filenames; creation logs contain IDs. Relay room IDs are shortened in app
    request logs, but external proxies may log complete room URLs. Restrict log
@@ -100,5 +101,5 @@ trust boundary. For sensitive data, complete your own security review before rol
 - [ ] Restore drill and token/room/drop revocation procedure tested.
 - [ ] Independent review for the customer's data classification and compliance needs.
 
-See the [Linux walkthrough](../README.md#linux-server-walkthrough-ubuntu-2404-lts)
+See the [self-hosting guide](SELF_HOSTING.md#linux-server-walkthrough-ubuntu-2404-lts)
 for deployment commands. This checklist does not certify the resulting deployment.

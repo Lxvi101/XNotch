@@ -31,7 +31,7 @@ The app keeps the fastest route that's up and moves to a faster one when it appe
 
 - **USB**: while the app is open it listens on a loopback port (47812); a Mac with the iPhone plugged in reaches it through usbmuxd, as Xcode does. Trust the Mac when the iPhone asks.
 - **Wi-Fi**: Bonjour (`_xnotchlink._tcp`) on the same network, or peer-to-peer Wi-Fi when the devices are close. iOS asks once for Local Network access; without it, allow it under Settings → Privacy & Security → Local Network.
-- **Internet**: after a moment without a faster route, through the relay on the Mac's XNotch Cloud server (see Server/README.md). Both sides connect out, so it works behind any router.
+- **Internet**: after a moment without a faster route, through the relay on the Mac's XNotch Cloud server (see [the relay reference](../Server/docs/REFERENCE.md#relay)). Both sides connect out, so it works behind any router.
 - **Bluetooth**: after a few seconds without anything faster, an L2CAP channel. iOS asks once. Much slower than the rest; fine for text and photos.
 
 The Share extension tries USB, Wi-Fi and the internet together and uses whichever connects first; Bluetooth is left to the app.
