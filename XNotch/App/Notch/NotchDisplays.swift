@@ -10,6 +10,7 @@ final class NotchServices {
     let media = NowPlayingService()
     let extensions = ExtensionManager()
     let headphones = HeadphonesMonitor()
+    let dragDetector = DragDetector()
     private(set) var isStarted = false
     private let preferences = Preferences.shared
     private var cancellables: Set<AnyCancellable> = []
@@ -27,6 +28,19 @@ final class NotchServices {
                 }
             }
             .store(in: &cancellables)
+        // The adapter runs only while the notch or the Lock Screen shows what's playing.
+        preferences.$showsMediaInNotch.combineLatest(preferences.$lockScreenMediaEnabled)
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMedia() }
+            .store(in: &cancellables)
+    }
+
+    private var wantsMedia: Bool { preferences.showsMediaInNotch || preferences.lockScreenMediaEnabled }
+
+    private func updateMedia() {
+        guard isStarted else { return }
+        if wantsMedia { media.start() } else { media.stop() }
     }
 
     /// Media, the shelf and extensions all read files, some in protected
@@ -35,7 +49,7 @@ final class NotchServices {
     func start() {
         guard !isStarted else { return }
         isStarted = true
-        media.start()
+        if wantsMedia { media.start() }
         shelf.load()
         extensions.loadAll()
         if preferences.showsHeadphonesInNotch { headphones.start() }

@@ -73,7 +73,7 @@ struct MediaSharedElements: View, Animatable {
 
             VisualizerBars(energy: isPlaying ? 1 : 0, color: accent)
                 .animation(Motion.content, value: isPlaying)
-                .environment(\.isNotchSurfaceVisible, visible * (1 - glyph) > 0.001)
+                .transformEnvironment(\.isNotchSurfaceVisible) { $0 = $0 && visible * (1 - glyph) > 0.001 }
                 .opacity(Double((visible * (1 - glyph)).smoothstep))
                 .blur(radius: (visible * (1 - glyph)).revealBlur(6))
                 .position(x: mid + visualizer.x, y: visualizer.y)

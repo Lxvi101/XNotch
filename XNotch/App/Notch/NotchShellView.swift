@@ -28,6 +28,7 @@ struct NotchShellView: View {
         }
         .frame(width: NotchMetrics.canvasSize.width, height: NotchMetrics.canvasSize.height, alignment: .top)
         .opacity(model.isPresentingOnboarding ? 0 : 1)
+        .environment(\.isNotchSurfaceVisible, model.isOnScreen)
         .coordinateSpace(name: Self.canvasSpace)
         .onPreferenceChange(ShelfTileFramesKey.self) { frames in
             MainActor.assumeIsolated { model.tileFrames = frames }

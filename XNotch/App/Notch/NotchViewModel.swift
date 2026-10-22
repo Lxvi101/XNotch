@@ -51,6 +51,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var eyesReveal: CGFloat = 0
     /// The onboarding draws its own notch over this one and owns the pointer.
     @Published private(set) var isPresentingOnboarding = false
+    /// False while the window can't be seen: a fullscreen space, the Lock
+    /// Screen, displays asleep. Timelines inside pause.
+    @Published var isOnScreen = true
 
     @Published private(set) var hoveredDropTarget: DropTarget?
     @Published private(set) var notchSize: CGSize

@@ -304,8 +304,9 @@ private struct NotchSurfaceVisibleKey: EnvironmentKey {
 
 extension EnvironmentValues {
     /// False while the surface holding this view is fully hidden (a page
-    /// that isn't open, a card that's dismissed). Pause timelines and other
-    /// continuous work on it: hidden pages stay in the view tree.
+    /// that isn't open, a card that's dismissed) or off screen (a fullscreen
+    /// space, the Lock Screen, displays asleep). Pause timelines and other
+    /// continuous work on it.
     public var isNotchSurfaceVisible: Bool {
         get { self[NotchSurfaceVisibleKey.self] }
         set { self[NotchSurfaceVisibleKey.self] = newValue }

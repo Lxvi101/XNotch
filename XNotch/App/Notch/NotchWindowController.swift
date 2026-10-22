@@ -11,12 +11,16 @@ final class NotchWindowController {
     private let window: NotchWindow
     private let container: NotchContainerView
     let model: NotchViewModel
-    private let dragDetector = DragDetector()
+    private let dragDetector: DragDetector
     private(set) var screen: NSScreen
     private var monitors: [Any] = []
     private var spaceObserver: NSObjectProtocol?
+    private var occlusionObserver: NSObjectProtocol?
     private var cancellables: Set<AnyCancellable> = []
     private var pointerWasFar = false
+    /// Outside this, moves can't reach a closed, relaxed notch, so they're
+    /// dropped before the model is read. Cleared on every model change.
+    private var quietZone: NSRect?
     /// The window stays off fullscreen spaces; the global monitors still fire
     /// there, so input is ignored until a regular space is active again.
     private var isOnFullscreenSpace = false
@@ -27,6 +31,7 @@ final class NotchWindowController {
 
     init(screen: NSScreen, services: NotchServices) {
         self.screen = screen
+        dragDetector = services.dragDetector
         model = NotchViewModel(notchSize: Self.notchSize(on: screen), services: services)
         window = NotchWindow(contentRect: Self.canvasFrame(on: screen))
 
@@ -48,6 +53,9 @@ final class NotchWindowController {
         installMonitors()
         installDragDetector()
 
+        model.objectWillChange
+            .sink { [weak self] _ in self?.quietZone = nil }
+            .store(in: &cancellables)
         model.$surface
             .filter { $0 != .open }
             .sink { [weak self] _ in self?.window.releaseKeyboard() }
@@ -59,6 +67,17 @@ final class NotchWindowController {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.activeSpaceChanged() }
+        }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let visible = self.window.occlusionState.contains(.visible)
+                if self.model.isOnScreen != visible { self.model.isOnScreen = visible }
+            }
         }
     }
 
@@ -77,6 +96,7 @@ final class NotchWindowController {
         let frame = Self.canvasFrame(on: next)
         let size = Self.notchSize(on: next)
         screen = next
+        quietZone = nil
         guard frame != window.frame || size != model.notchSize else { return }
         window.setFrame(frame, display: true)
         model.updateNotchSize(size)
@@ -88,9 +108,11 @@ final class NotchWindowController {
         model.close()
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
-        dragDetector.stop()
+        dragDetector.remove(self)
         if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
         spaceObserver = nil
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = nil
         window.releaseKeyboard()
         window.orderOut(nil)
     }
@@ -228,6 +250,8 @@ final class NotchWindowController {
         // File drags are driven by the drag detector and the drop target.
         guard !dragDetector.isContentDragging, !isOnFullscreenSpace else { return }
         let point = NSEvent.mouseLocation
+        let isMove = event.type == .mouseMoved || event.type == .leftMouseDragged
+        if isMove, pointerWasFar, let quietZone, !quietZone.contains(point) { return }
         if model.showsEyes || model.isPresentingOnboarding { model.eyes.pointer = point }
         guard !model.isPresentingOnboarding else {
             window.ignoresMouseEvents = true
@@ -235,9 +259,12 @@ final class NotchWindowController {
         }
         // Global moves arrive for the whole screen. Far from a closed notch
         // they change nothing once the shell has relaxed, so skip them.
-        if event.type == .mouseMoved || event.type == .leftMouseDragged, model.surface == .closed, !model.pillsActive {
-            let far = distance(from: point, to: rect(for: model.restingGeometry)) > pointerRadius + 40
+        if isMove, model.surface == .closed, !model.pillsActive {
+            let resting = rect(for: model.restingGeometry)
+            let reach = pointerRadius + 40
+            let far = distance(from: point, to: resting) > reach
             defer { pointerWasFar = far }
+            quietZone = model.showsEyes ? nil : resting.insetBy(dx: -reach, dy: -reach)
             if far && pointerWasFar { return }
         } else {
             pointerWasFar = false
@@ -285,7 +312,8 @@ final class NotchWindowController {
                                 height: resting.height + 8).contains(point)
             model.updatePillHighlight(pill: pill(at: point), onBody: onBody, onMediaGlyph: isOnMediaGlyph(point))
         }
-        window.ignoresMouseEvents = !interactionRect.contains(point)
+        let ignores = !interactionRect.contains(point)
+        if window.ignoresMouseEvents != ignores { window.ignoresMouseEvents = ignores }
     }
 
     private func canvasPoint(_ point: NSPoint) -> CGPoint {
@@ -295,25 +323,20 @@ final class NotchWindowController {
     // MARK: File drag
 
     private func installDragDetector() {
-        dragDetector.onDragBegan = { [weak self] in
-            MainActor.assumeIsolated {
+        dragDetector.add(self, DragDetector.Observer(
+            began: { [weak self] in
                 guard let self, !self.isOnFullscreenSpace else { return }
                 self.model.fileDragBegan()
-            }
-        }
-        dragDetector.onDragMoved = { [weak self] point in
-            MainActor.assumeIsolated { self?.fileDragMoved(to: point) }
-        }
-        dragDetector.onDragEnded = { [weak self] in
-            MainActor.assumeIsolated {
+            },
+            moved: { [weak self] point in self?.fileDragMoved(to: point) },
+            ended: { [weak self] in
                 guard let self else { return }
                 // Over the notch, the drop itself can arrive a second or more after
                 // the mouse is let go; the drag session's end closes the zone instead.
                 if !self.container.isDragDestination { self.model.fileDragEnded() }
                 self.syncPointer(NSEvent.mouseLocation)
             }
-        }
-        dragDetector.start()
+        ))
     }
 
     private func fileDragMoved(to point: NSPoint) {

@@ -108,7 +108,7 @@ A page's content area is `NotchPageContext.contentWidth` (400 pt) wide and `Notc
 While your page is fully hidden XNotch removes its view, so `@State` inside it resets each time the page opens. Keep anything that should survive in your model. Also:
 
 - Don't touch the file system, Launch Services (`NSWorkspace.icon(forFile:)`, `FileManager.displayName(atPath:)`) or the network from `body`, which runs on animation frames. Cache those in your model, and refresh them in `onAppear` or when `NotchPageContext.isActive` turns true.
-- `@Environment(\.isNotchSurfaceVisible)` is false whenever the surface holding a view is hidden but still mounted. Pause `TimelineView`s and timers on it.
+- `@Environment(\.isNotchSurfaceVisible)` is false whenever the surface holding a view is hidden but still mounted, or the notch is off screen (a fullscreen space, the Lock Screen, displays asleep). Pause `TimelineView`s and timers on it.
 
 ## The host
 

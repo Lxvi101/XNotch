@@ -31,22 +31,26 @@ enum FileIcons {
     static func setThumbnail(_ image: NSImage?, for path: String) {
         thumbnails[path] = image
     }
+
+    /// Lets go of files that left the shelf.
+    static func keep(only paths: Set<String>) {
+        icons = icons.filter { paths.contains($0.key) }
+        thumbnails = thumbnails.filter { paths.contains($0.key) }
+    }
 }
 
 actor ThumbnailService {
     static let shared = ThumbnailService()
 
-    private var cache: [String: NSImage] = [:]
+    /// Finished thumbnails live in `FileIcons`; this only joins concurrent requests.
     private var pending: [String: Task<NSImage?, Never>] = [:]
 
     func thumbnail(for url: URL, size: CGSize) async -> NSImage? {
         let key = "\(url.path)_\(size.width)x\(size.height)"
-        if let cached = cache[key] { return cached }
         if let task = pending[key] { return await task.value }
 
         let task = Task<NSImage?, Never> {
             let image = await Self.generate(for: url, size: size)
-            if let image { cache[key] = image }
             pending[key] = nil
             return image
         }

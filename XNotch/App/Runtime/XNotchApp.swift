@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Process children outlive the app unless they're stopped.
+    func applicationWillTerminate(_ notification: Notification) {
+        displays?.services.media.stop()
+    }
+
     /// There's no Dock icon or menu bar, so opening the app again shows Settings.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard onboarding?.isRunning != true else { return false }

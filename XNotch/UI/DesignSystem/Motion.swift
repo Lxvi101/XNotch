@@ -88,7 +88,7 @@ struct RevealModifier: ViewModifier, Animatable {
         let visible = p > 0.001
         if visible || !unmountsWhenHidden {
             content
-                .environment(\.isNotchSurfaceVisible, visible)
+                .transformEnvironment(\.isNotchSurfaceVisible) { $0 = $0 && visible }
                 .scaleEffect(hiddenScale + (1 - hiddenScale) * p, anchor: .top)
                 .offset(y: travel * (1 - p))
                 .blur(radius: p.revealBlur(maxBlur))

@@ -60,4 +60,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         return window
     }
+
+    /// Let go once closed: a closed window would keep its panes alive,
+    /// observing media, extensions and preferences.
+    func windowWillClose(_ notification: Notification) {
+        window = nil
+    }
 }

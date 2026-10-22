@@ -10,6 +10,7 @@
  */
 
 import AppKit
+import ImageIO
 import SwiftUI
 
 struct NowPlayingTrack: Equatable {
@@ -56,10 +57,15 @@ final class NowPlayingService: ObservableObject {
         launch()
     }
 
+    /// Also clears the track, so nothing stale shows while it's off.
     func stop() {
         isRunning = false
         process?.terminate()
         process = nil
+        track = nil
+        artwork = nil
+        artworkGlow = nil
+        accent = .white
     }
 
     // MARK: Commands
@@ -99,9 +105,9 @@ final class NowPlayingService: ObservableObject {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
 
-        let reader = AdapterLineReader { [weak self] update, image in
+        let reader = AdapterLineReader { [weak self] update, artwork in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.apply(update, decodedArtwork: image) }
+                MainActor.assumeIsolated { self?.apply(update, artwork: artwork) }
             }
         }
         output.fileHandleForReading.readabilityHandler = { handle in
@@ -138,7 +144,8 @@ final class NowPlayingService: ObservableObject {
 
     // MARK: Merging
 
-    private func apply(_ update: NowPlayingUpdate, decodedArtwork: DecodedArtwork?) {
+    private func apply(_ update: NowPlayingUpdate, artwork change: ArtworkChange) {
+        guard isRunning else { return }
         restartDelay = 1
         let payload = update.payload
         let diff = update.diff ?? false
@@ -189,14 +196,18 @@ final class NowPlayingService: ObservableObject {
             next.anchor = instant
         }
 
-        if let decodedArtwork {
-            artwork = decodedArtwork.image
-            artworkGlow = decodedArtwork.glow
-            accent = Color(nsColor: decodedArtwork.accent)
-        } else if !diff || payload.clearsArtwork {
+        // Assigned only on a change: each publish re-renders every notch.
+        switch change {
+        case .new(let decoded):
+            artwork = decoded.image
+            artworkGlow = decoded.glow
+            accent = Color(nsColor: decoded.accent)
+        case .cleared where artwork != nil:
             artwork = nil
             artworkGlow = nil
             accent = .white
+        case .cleared, .unchanged:
+            break
         }
 
         let resolved: NowPlayingTrack? = next.title.isEmpty && !next.isPlaying ? nil : next
@@ -208,6 +219,29 @@ struct DecodedArtwork: @unchecked Sendable {
     let image: NSImage
     let glow: NSImage?
     let accent: NSColor
+
+    /// Players send artwork at up to 3000 px; the largest place it's shown is
+    /// 100 pt, so it's decoded straight to this size.
+    private static let maxPixelSize = 320
+
+    init?(data: Data) {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        let thumbnail = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                         kCGImageSourceCreateThumbnailWithTransform: true,
+                         kCGImageSourceShouldCacheImmediately: true,
+                         kCGImageSourceThumbnailMaxPixelSize: Self.maxPixelSize] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, options),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnail) else { return nil }
+        image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width / 2, height: cgImage.height / 2))
+        glow = ArtworkGlow.image(of: image)
+        accent = ArtworkAccent.color(of: image)
+    }
+}
+
+enum ArtworkChange: Sendable {
+    case unchanged
+    case new(DecodedArtwork)
+    case cleared
 }
 
 /// Splits the adapter's stdout into JSON lines and decodes them, including the
@@ -215,9 +249,11 @@ struct DecodedArtwork: @unchecked Sendable {
 private final class AdapterLineReader: @unchecked Sendable {
     private var buffer = Data()
     private let decoder = JSONDecoder()
-    private let onUpdate: (NowPlayingUpdate, DecodedArtwork?) -> Void
+    /// The artwork last decoded; players resend the same image with every full update.
+    private var artworkHash: Int?
+    private let onUpdate: (NowPlayingUpdate, ArtworkChange) -> Void
 
-    init(onUpdate: @escaping (NowPlayingUpdate, DecodedArtwork?) -> Void) {
+    init(onUpdate: @escaping (NowPlayingUpdate, ArtworkChange) -> Void) {
         self.onUpdate = onUpdate
     }
 
@@ -227,14 +263,24 @@ private final class AdapterLineReader: @unchecked Sendable {
             let line = buffer[buffer.startIndex..<newline]
             buffer.removeSubrange(buffer.startIndex...newline)
             guard !line.isEmpty, let update = try? decoder.decode(NowPlayingUpdate.self, from: line) else { continue }
-            var artwork: DecodedArtwork?
-            if let base64 = update.payload.artworkData,
-               let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
-               let image = NSImage(data: data) {
-                artwork = DecodedArtwork(image: image, glow: ArtworkGlow.image(of: image), accent: ArtworkAccent.color(of: image))
-            }
-            onUpdate(update, artwork)
+            onUpdate(update, artworkChange(in: update))
         }
+    }
+
+    private func artworkChange(in update: NowPlayingUpdate) -> ArtworkChange {
+        if let base64 = update.payload.artworkData {
+            let hash = base64.hashValue
+            guard hash != artworkHash else { return .unchanged }
+            if let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
+               let decoded = DecodedArtwork(data: data) {
+                artworkHash = hash
+                return .new(decoded)
+            }
+        }
+        // A full update without artwork, or a diff that nulls it, clears it.
+        guard update.diff != true || update.payload.clearsArtwork else { return .unchanged }
+        artworkHash = nil
+        return .cleared
     }
 }
 

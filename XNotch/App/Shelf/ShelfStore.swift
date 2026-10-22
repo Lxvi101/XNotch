@@ -60,12 +60,14 @@ final class ShelfStore: ObservableObject {
     func remove(_ ids: Set<UUID>) {
         items.removeAll { ids.contains($0.id) }
         selection.subtract(ids)
+        FileIcons.keep(only: Set(items.map(\.path)))
         save()
     }
 
     func removeAll() {
         items.removeAll()
         selection.removeAll()
+        FileIcons.keep(only: [])
         save()
     }
 

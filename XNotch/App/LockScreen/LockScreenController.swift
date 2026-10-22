@@ -5,9 +5,10 @@ import SwiftUI
 /// Shows the Now Playing card on the Lock Screen while the Mac is locked and
 /// something is playing, and offers a desktop preview of the same card.
 ///
-/// Lock state comes from the distributed lock notifications, with a poll of
-/// the session dictionary while locked because the unlock notification can
-/// arrive well after the user is back on the desktop.
+/// Lock state comes from the distributed lock notifications. The unlock
+/// notification can arrive well after the user is back on the desktop, so the
+/// session dictionary is polled while the card is up, and checked before
+/// anything else relies on the Mac still being locked.
 @MainActor
 final class LockScreenController {
     private(set) var isLocked = false
@@ -53,17 +54,18 @@ final class LockScreenController {
             .map { $0 != nil }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.update() }
+            .sink { [weak self] _ in self?.confirmLockThenUpdate() }
             .store(in: &cancellables)
         preferences.$lockScreenMediaEnabled
             .dropFirst()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.update() }
+            .sink { [weak self] _ in self?.confirmLockThenUpdate() }
             .store(in: &cancellables)
     }
 
     /// The card over the desktop for a few seconds, exactly as it appears locked.
     func preview() {
+        confirmLock()
         guard !isLocked else { return }
         isPreviewing = true
         present(onLockScreen: false)
@@ -80,30 +82,37 @@ final class LockScreenController {
 
     // MARK: Lock state
 
+    /// Also re-entered while `isLocked` is stale from a missed unlock.
     private func locked() {
-        guard !isLocked else { return }
         isLocked = true
         endPreview()
         onLock?()
-        startPolling()
         update()
     }
 
     private func unlocked() {
         guard isLocked else { return }
         isLocked = false
-        stopPolling()
+        update()
+    }
+
+    private func confirmLock() {
+        if isLocked && !Self.sessionIsLocked() { unlocked() }
+    }
+
+    private func confirmLockThenUpdate() {
+        confirmLock()
         update()
     }
 
     private func startPolling() {
-        pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isLocked else { return }
-                if !Self.sessionIsLocked() { self.unlocked() }
-            }
+        guard pollTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.confirmLock() }
         }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 
     private func stopPolling() {
@@ -117,14 +126,12 @@ final class LockScreenController {
     }
 
     private func update() {
-        if isLocked {
-            if preferences.lockScreenMediaEnabled && media.track != nil {
-                present(onLockScreen: true)
-            } else {
-                dismiss()
-            }
-        } else if !isPreviewing {
-            dismiss()
+        if isLocked && preferences.lockScreenMediaEnabled && media.track != nil {
+            present(onLockScreen: true)
+            startPolling()
+        } else {
+            stopPolling()
+            if isLocked || !isPreviewing { dismiss() }
         }
     }
 
