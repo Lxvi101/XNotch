@@ -1,0 +1,3 @@
+{$PUBLIC_URL} {
+	reverse_proxy xnotch-cloud:8080
+}

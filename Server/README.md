@@ -15,6 +15,11 @@ like `https://drop.example.com/8122cbAZ`.
 - A WebSocket [relay](#relay) lets the XNotch iPhone app reach the Mac when the two are
   on different networks. Payloads are end-to-end encrypted; the server only pipes bytes.
 
+## Self-host on Linux
+
+Start with the [Ubuntu + Docker + HTTPS walkthrough](#linux-server-walkthrough-ubuntu-2404-lts) below.
+For an enterprise rollout, read the [security assessment](docs/SECURITY.md) first: this is a shared-token file-drop service, not a multi-tenant document management system.
+
 ## Quick start
 
 ```sh
@@ -30,7 +35,7 @@ Without Compose:
 
 ```sh
 docker build -t xnotch-cloud Server
-docker run -d --name xnotch-cloud -p 8080:8080 -v xnotch-data:/data \
+docker run -d --name xnotch-cloud -p 127.0.0.1:8080:8080 -v xnotch-data:/data \
   -e PUBLIC_URL=http://localhost:8080 -e API_TOKEN=change-me-to-a-long-secret \
   xnotch-cloud
 ```
@@ -38,6 +43,256 @@ docker run -d --name xnotch-cloud -p 8080:8080 -v xnotch-data:/data \
 Without Docker (Rust 1.88 or newer): `PUBLIC_URL=http://localhost:8080 API_TOKEN=... DATA_DIR=./data cargo run --release`.
 
 In XNotch, enter the server URL (`PUBLIC_URL`) and the API token, then use **Test connection**.
+
+## Linux server walkthrough (Ubuntu 24.04 LTS)
+
+This walkthrough targets a **fresh Ubuntu Server 24.04 LTS, amd64 or arm64**, with
+sudo access. Use a dedicated VM per customer. Start with 2 CPUs and 4 GiB RAM for
+building, plus disk space for images and retained uploads; measure actual demand
+before choosing production limits. Commands run on the Linux server over SSH.
+
+The examples use `drop.example.com`: replace it with your domain. You need an A
+record pointing to the server's public IPv4 address (and a correct AAAA record
+only if IPv6 works), inbound TCP 80/443 for Caddy, and outbound DNS/HTTPS for
+packages, images and certificates. Restrict SSH to your administrator network.
+For VPN-only deployments, use your organization's TLS/PKI and ingress setup instead
+of this public certificate example. Public recipients must be able to reach the host.
+
+**About the images:** Docker/service images render actual command output recorded
+on an isolated Ubuntu 24.04 arm64 VM. Drop-page images are browser screenshots
+of that running server. The capture uses local HTTP and disposable demo data;
+production instructions below use HTTPS. Public DNS/certificate issuance is not
+shown or verified by these captures.
+
+### 1. Install Docker Engine and Compose
+
+Connect with `ssh your-admin@your-server`. Check the host:
+
+```sh
+cat /etc/os-release
+uname -m
+df -h /
+```
+
+On an existing host, have the administrator review conflicting Docker/containerd
+packages and workloads first. The following installs from Docker's official apt
+repository; it does not uninstall existing runtimes.
+
+```sh
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git openssl nano
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources > /dev/null <<EOF_DOCKER
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF_DOCKER
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker run --rm hello-world
+sudo docker compose version
+```
+
+![Recorded Ubuntu output after installing Docker and Compose](docs/images/01-docker-installed.png)
+
+Expect “Hello from Docker!” and a Compose version. Keep using `sudo`: membership
+in the `docker` group effectively grants root-level access.
+See [Docker's Ubuntu installation reference](https://docs.docker.com/engine/install/ubuntu/)
+for other supported Ubuntu versions and conflicting packages.
+
+### 2. Download and configure XNotch Cloud
+
+```sh
+git clone https://github.com/Lxvi101/XNotch.git
+cd XNotch/Server
+git rev-parse HEAD
+umask 077
+cp .env.example .env
+chmod 600 .env
+# Generate directly into .env without printing the token:
+sed -i "s/^API_TOKEN=$/API_TOKEN=$(openssl rand -hex 32)/" .env
+nano .env
+```
+
+Record the commit SHA in your deployment inventory. For production, check out a
+reviewed release or commit before building. In `.env`, keep the generated API token
+and set these values (adapt the limits to your organization's policy):
+
+```dotenv
+PUBLIC_URL=https://drop.example.com
+SITE_NAME=Company File Drop
+ID_LENGTH=22
+MAX_FILE_SIZE=1073741824
+DEFAULT_EXPIRY=86400
+MAX_EXPIRY=604800
+STORAGE=local
+RELAY=off
+LOG_FORMAT=json
+```
+
+This permits 1 GiB per file and at most seven days of link lifetime. It does not
+limit total storage. Set `RELAY=on` only if you need the iPhone internet relay.
+Use a password manager to transfer the API token to authorized Mac clients; do not
+put it in screenshots, tickets or Git. Docker administrators can inspect container
+environment variables even when `.env` is protected.
+
+### 3. Start with HTTPS
+
+The supplied [HTTPS overlay](deploy/compose.https.yml) adds Caddy and persistent
+certificate storage. Only Caddy publishes host ports; XNotch's port 8080 stays on
+the Docker network. Leave the commented `ports:` section in `docker-compose.yml`
+commented. Ports 80 and 443 must be free; do not run this alongside another ingress
+already using those ports. For an existing enterprise ingress, route it to the
+private application port instead.
+
+Run all following commands from `XNotch/Server`:
+
+```sh
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml config --quiet
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml up -d --build
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml ps
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml logs --tail=50 caddy
+```
+
+The first Rust build can take several minutes. Wait for `xnotch-cloud` to become
+healthy and Caddy to start. Caddy obtains/renews a certificate for `PUBLIC_URL` and
+redirects HTTP to HTTPS. Its `/data` volume contains certificate private keys;
+protect it. See [Caddy's HTTPS reverse-proxy guide](https://caddyserver.com/docs/quick-starts/reverse-proxy).
+
+![Recorded output showing healthy application and running proxy](docs/images/02-services-running.png)
+
+At your network/provider firewall allow 80/443 to this host and SSH only from your
+admin network. **Do not allow 8080.** Docker-published ports can bypass UFW rules;
+use an appropriate upstream firewall and verify from a different machine.
+See [Docker's firewall documentation](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
+The example does not configure a WAF or request rate limits; supply these through
+your organization's ingress before exposing it to untrusted traffic at scale.
+
+### 4. Verify access before uploading real data
+
+From your Mac or another machine (replace the domain):
+
+```sh
+curl --fail --show-error https://drop.example.com/healthz
+# Expected: ok
+curl -s -o /dev/null -w '%{http_code}\n' https://drop.example.com/api/info
+# Expected: 401 (no token)
+curl --connect-timeout 5 http://YOUR_SERVER_IP:8080/healthz
+# Expected: connection refused or timeout, not ok
+```
+
+Do not use `curl -k` to work around certificate errors. Resolve DNS, clock, firewall
+or certificate-chain problems first. Test both IPv4 and IPv6 if you publish both.
+
+In **XNotch → Settings → Cloud**, enable Cloud, enter `https://drop.example.com` and
+the API token, and use **Test connection**. Upload a harmless sample file from the
+shelf. Check all of the following in a private browser window:
+
+1. A normal drop opens and its downloaded contents match the original.
+2. A password-protected drop hides its title and files before unlocking; a wrong
+   password fails, the right password works, and a direct file URL also stays locked.
+3. Delete the test drop and confirm the old page/file URLs no longer work.
+4. Create a short-lived test drop, wait for its expiry and confirm access is denied.
+
+![Password form before a sample drop is unlocked](docs/images/03-password-protected.png)
+
+![Sample drop after entering its password](docs/images/04-drop-unlocked.png)
+
+An `ok` health check proves the HTTP process responds; it does not prove TLS,
+authentication, storage writes, expiry, or backups work. Complete the upload test.
+
+### 5. Back up and restore local storage
+
+The named `xnotch-data` volume holds files, metadata, password hashes, unlock keys
+and relay room credentials. Back up the **whole volume**, plus `.env`, the exact
+source commit and deployment configuration. Encrypt backups and control their
+retention: expired data may remain in backups. For S3, use provider-specific backup,
+versioning and lifecycle policies instead of this local-volume recipe.
+
+For a consistent local backup, stop the application briefly. These commands use
+the running container to discover the actual volume name rather than assuming a
+Compose project prefix. Run in Bash from `Server`:
+
+```bash
+set -e
+umask 077
+mkdir -p backups
+cid=$(sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml ps -q xnotch-cloud)
+volume=$(sudo docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+test -n "$volume"
+sudo docker pull ubuntu:24.04
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml stop xnotch-cloud
+if sudo docker run --rm -v "$volume:/source:ro" ubuntu:24.04 tar -C /source -czf - . > backups/data.tar.gz; then
+  echo 'Backup created; copy it to encrypted off-host storage.'
+else
+  echo 'Backup failed; do not use this archive.' >&2
+fi
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml start xnotch-cloud
+```
+
+For restoration, use a **separate staging host/instance**, configure the same reviewed
+version and `.env`, and copy the archive to `backups/data.tar.gz`. From the
+staging `Server` directory, create the stopped container and restore into its
+fresh volume:
+
+```sh
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml build
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml create xnotch-cloud
+cid=$(sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml ps -aq xnotch-cloud)
+volume=$(sudo docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+test -n "$volume" || exit 1
+# volume is the EMPTY staging instance's volume, not a live production volume.
+sudo docker run --rm -i -v "$volume:/restore" ubuntu:24.04 tar -C /restore -xzf - < backups/data.tar.gz
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml up -d
+```
+
+Archive ownership preserves UID 65532. Verify sample downloads, locked drops and
+expiry on staging. Do not restore over a running instance. Restoring also restores
+old bearer secrets; account for this in an incident recovery. Expired drops remain
+inaccessible and are swept after startup. A routine restore drill must use an
+unexpired fixture if you want to test downloads.
+
+### 6. Updates, rotation and troubleshooting
+
+Back up first; review release changes and test the chosen commit in staging.
+From `Server`, use `git fetch --tags`, then `git checkout YOUR_REVIEWED_COMMIT`.
+Rebuild and restart using the **same two Compose files and directory**:
+
+```sh
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml build --pull
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml pull caddy
+sudo docker compose -f docker-compose.yml -f deploy/compose.https.yml up -d
+```
+
+Record image digests for reproducible releases; the supplied image tags are mutable.
+To roll back, check out the previous reviewed commit and rebuild; only restore data
+if needed and compatible. Never use `docker compose down -v` on a deployment whose
+data you need: it removes named volumes.
+
+To rotate the API token, generate a new random value into `.env`, restart with
+`up -d`, then update all Mac clients. Revoke compromised drops and relay rooms
+separately; API token rotation alone does not revoke their bearer credentials.
+
+| Symptom | Check |
+| --- | --- |
+| Certificate issuance fails | DNS A/AAAA, public 80/443, server clock, Caddy logs; avoid repeated issuance attempts while DNS is wrong. |
+| `502` from Caddy | Application health/logs, storage permissions, and both services on the same Compose network. |
+| `401` in XNotch | API token matches `.env`; recreate the container after changing it. |
+| Upload gets `413` | `MAX_FILE_SIZE` and any upstream proxy body-size limits. |
+| `/data` not writable | Prefer named volumes; bind mounts need UID/GID 65532 ownership. |
+| Disk fills | Monitor retained data, image/build cache and logs; expiry does not cap total usage. |
+| Relay unavailable | Set `RELAY=on`, allow WebSocket upgrades at ingress, check proxy idle timeouts. |
+
+Monitor container restarts, disk space, certificate renewal, sweep errors and
+backup restoration. Inspect logs with `logs --tail=100 xnotch-cloud`, treating drop
+URLs and filenames as sensitive. See the [security assessment](docs/SECURITY.md)
+for limitations that deployment configuration alone cannot fix.
 
 ## Configuration
 

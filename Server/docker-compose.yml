@@ -13,7 +13,7 @@ services:
       - "8080"
     # Uncomment to reach the server directly (for example without Dokploy):
     # ports:
-    #   - "8080:8080"
+    #   - "127.0.0.1:8080:8080"
     environment:
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://drop.example.com}
       API_TOKEN: ${API_TOKEN:?set API_TOKEN (at least 16 characters)}

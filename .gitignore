@@ -13,3 +13,6 @@ __pycache__/
 /vendor/
 /tools/
 /InspirationVideos/
+
+# Self-hosted Cloud backups contain files and bearer credentials.
+/Server/backups/

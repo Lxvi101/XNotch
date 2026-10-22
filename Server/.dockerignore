@@ -10,3 +10,8 @@ docker-compose.yml
 Dockerfile
 rustfmt.toml
 .DS_Store
+
+# Documentation assets and operational backups are not build inputs.
+docs/
+deploy/
+backups/

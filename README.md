@@ -71,5 +71,12 @@ XNotch is split into two parts:
 ### Option 2: Build from Source
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/Lxvi101/XNotch.git](https://github.com/Lxvi101/XNotch.git)
+   git clone https://github.com/Lxvi101/XNotch.git
    cd XNotch
+   ```
+
+## Self-host XNotch Cloud
+
+Host file sharing and the optional iPhone relay on your own infrastructure. Follow the
+[Linux server tutorial](Server/README.md#linux-server-walkthrough-ubuntu-2404-lts) for Docker installation, HTTPS, verification, backups, and upgrades.
+Read the [security assessment](Server/docs/SECURITY.md) before an enterprise deployment.
