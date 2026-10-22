@@ -160,20 +160,27 @@ private struct GeneralPane: View {
         return shown.map(PageRow.page) + [.hiddenDivider] + hidden.map(PageRow.page)
     }
 
-    /// Dragging a row past the divider hides it, back above shows it. The
-    /// shelf and Music stay shown.
-    private func movePageRow(from source: IndexSet, to destination: Int) {
+    /// Where a row may be dragged: anywhere, but the shelf and Music stay
+    /// above the divider, and the divider stays put.
+    private func pageRowRange(_ row: PageRow, in rows: [PageRow]) -> ClosedRange<Int>? {
+        guard case .page(let info) = row else { return nil }
+        guard [OpenPage.shelf, OpenPage.media].contains(info.page) else { return 0...(rows.count - 1) }
+        let divider = rows.firstIndex { $0.id == PageRow.hiddenDivider.id } ?? rows.count
+        return 0...max(0, divider - 1)
+    }
+
+    /// Dragging a row past the divider hides it, back above shows it.
+    private func movePageRow(_ row: PageRow, to index: Int) {
         let rows = pageRows
-        guard let from = source.first, case .page(let moved) = rows[from] else { return }
-        var arranged = rows
-        arranged.move(fromOffsets: source, toOffset: destination)
-        guard let divider = arranged.firstIndex(where: { $0.id == PageRow.hiddenDivider.id }),
-              let to = arranged.firstIndex(where: { $0.id == moved.id }) else { return }
+        guard case .page(let moved) = row else { return }
+        var arranged = rows.filter { $0.id != moved.id }
+        arranged.insert(row, at: min(index, arranged.count))
+        guard let divider = arranged.firstIndex(where: { $0.id == PageRow.hiddenDivider.id }) else { return }
         let listed = rows.compactMap { if case .page(let info) = $0 { info } else { nil } }
         let nowHidden = Set(arranged[(divider + 1)...].map(\.id))
         guard nowHidden.isDisjoint(with: [OpenPage.shelf.id, OpenPage.media.id]) else { return }
         preferences.hiddenPages = preferences.hiddenPages.subtracting(listed.map(\.id)).union(nowHidden)
-        preferences.pageOrder = PageOrder.moving(moved.page, to: to > divider ? to - 1 : to, among: listed,
+        preferences.pageOrder = PageOrder.moving(moved.page, to: index > divider ? index - 1 : index, among: listed,
                                                  in: preferences.pageOrder)
     }
 
@@ -229,7 +236,8 @@ private struct GeneralPane: View {
                 screens = DisplayOption.connected
             }
             Section {
-                ForEach(pageRows) { row in
+                let rows = pageRows
+                ReorderableRows(rows, range: { pageRowRange($0, in: rows) }, onMove: movePageRow) { row in
                     switch row {
                     case .page(let info):
                         HStack(spacing: 10) {
@@ -243,10 +251,8 @@ private struct GeneralPane: View {
                         Text("Hidden")
                             .font(.callout.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .moveDisabled(true)
                     }
                 }
-                .onMove(perform: movePageRow)
             } header: {
                 Text("Pages")
             } footer: {

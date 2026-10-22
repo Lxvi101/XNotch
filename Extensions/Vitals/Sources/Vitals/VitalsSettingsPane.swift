@@ -15,10 +15,12 @@ struct VitalsSettingsPane: View {
             }
 
             Section {
-                ForEach(model.settings.order) { metric in
+                ReorderableRows(model.settings.order, onMove: { metric, index in
+                    model.settings.order.removeAll { $0 == metric }
+                    model.settings.order.insert(metric, at: index)
+                }) { metric in
                     MetricRow(metric: metric, model: model)
                 }
-                .onMove { model.settings.order.move(fromOffsets: $0, toOffset: $1) }
             } header: {
                 Text("In the notch")
             } footer: {

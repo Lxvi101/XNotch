@@ -96,7 +96,7 @@ final class WeatherExtension: XNotchExtension, NotchPageProviding {
 |---|---|
 | `NotchPageProviding` | One or more pages in the open notch. Each gets a destination pill under the closed notch and a segment in the header switcher. |
 | `NotchKeyHandling` | Key presses while your page is open and the notch has keyboard focus (after a click into it). Return `true` to consume. Escape and ⌘, are XNotch's. |
-| `SettingsPaneProviding` | A page under Extensions in Settings. Return a `Form { … }.formStyle(.grouped)` to match. |
+| `SettingsPaneProviding` | A page under Extensions in Settings. Return a `Form { … }.formStyle(.grouped)` to match. A Form ignores `.onMove`; for rows the user reorders, put `ReorderableRows(items, onMove:) { row }` alone in a `Section` (API 1.9.0). |
 | `PermissionRequesting` | Permissions XNotch asks for in its welcome tour, right after its own (API 1.2.0). List what's missing without prompting; show macOS's prompt only in `requestPermission(_:)`. |
 | `ShelfAccessoryProviding` | A button in the tray header and entries in a tray file's right-click menu (API 1.3.0). `ShelfContext.targets` is the selection, or every file when nothing is selected; read it when the button is used. Draw the button with `ShelfHeaderButton` so it matches the header and shrinks with it. |
 | `ShelfFileActing` | Menu entries for shelf files that make new files, which land back on the shelf they came from: call `ShelfFileRequest.deliver(_:)` with them (API 1.6.0). They show in the tray and on floating shelves. The Converter's "Convert 12 Images…" is one. |
