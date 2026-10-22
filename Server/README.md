@@ -32,7 +32,8 @@ echo "$TOKEN"
 ```
 
 In **XNotch → Settings → Cloud**, enter `http://localhost:8080` and the token, then
-use **Test connection**. Remove it with `docker rm -f xnotch-cloud && docker volume rm xnotch-data`.
+use **Test connection**. To remove the demo **and delete its uploaded files**:
+`docker rm -f xnotch-cloud && docker volume rm xnotch-data`.
 
 Without Docker (Rust 1.88 or newer):
 `PUBLIC_URL=http://localhost:8080 API_TOKEN=... DATA_DIR=./data cargo run --release`.
