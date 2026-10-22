@@ -136,6 +136,11 @@ final class NotchViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        preferences.$hiddenPages
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.hiddenPagesChanged() }
+            .store(in: &cancellables)
         preferences.$pillsIconOnlyChoice
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -210,7 +215,7 @@ final class NotchViewModel: ObservableObject {
         var infos: [PageInfo] = []
         if hasMedia { infos.append(PageInfo(page: .media, title: "Music", symbol: "music.note", badge: 0)) }
         infos.append(PageInfo(page: .shelf, title: "Tray", symbol: "tray.full.fill", badge: shelf.items.count))
-        infos += extensionPages.map {
+        infos += extensionPages.filter { !preferences.hiddenPages.contains($0.page.id) }.map {
             PageInfo(page: $0.page, title: $0.descriptor.title, symbol: $0.descriptor.symbol, badge: $0.descriptor.badge ?? 0)
         }
         return PageOrder.sorted(infos, by: preferences.pageOrder)
@@ -534,6 +539,13 @@ final class NotchViewModel: ObservableObject {
     private func mediaPreferenceChanged() {
         if surface == .open && page == .media && !hasMedia { page = .shelf }
         render(surface == .closed ? Motion.close : Motion.open)
+    }
+
+    /// The shelf and Music can't be hidden, so the shelf is where an open, now hidden page goes.
+    private func hiddenPagesChanged() {
+        objectWillChange.send()
+        if !destinations.contains(page) { page = .shelf }
+        render(surface == .closed ? nil : Motion.open)
     }
 
     // MARK: Extensions

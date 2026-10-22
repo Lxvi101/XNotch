@@ -131,6 +131,43 @@ private struct GeneralPane: View {
         return PageOrder.sorted(infos, by: preferences.pageOrder)
     }
 
+    /// The pages list: shown pages, then a "Hidden" divider, then hidden ones.
+    private enum PageRow: Identifiable {
+        case page(PageInfo)
+        case hiddenDivider
+
+        var id: String {
+            switch self {
+            case .page(let info): info.id
+            case .hiddenDivider: "hidden-divider"
+            }
+        }
+    }
+
+    private var pageRows: [PageRow] {
+        let pages = pages
+        let hidden = pages.filter { preferences.hiddenPages.contains($0.id) }
+        let shown = pages.filter { !preferences.hiddenPages.contains($0.id) }
+        return shown.map(PageRow.page) + [.hiddenDivider] + hidden.map(PageRow.page)
+    }
+
+    /// Dragging a row past the divider hides it, back above shows it. The
+    /// shelf and Music stay shown.
+    private func movePageRow(from source: IndexSet, to destination: Int) {
+        let rows = pageRows
+        guard let from = source.first, case .page(let moved) = rows[from] else { return }
+        var arranged = rows
+        arranged.move(fromOffsets: source, toOffset: destination)
+        guard let divider = arranged.firstIndex(where: { $0.id == PageRow.hiddenDivider.id }),
+              let to = arranged.firstIndex(where: { $0.id == moved.id }) else { return }
+        let listed = rows.compactMap { if case .page(let info) = $0 { info } else { nil } }
+        let nowHidden = Set(arranged[(divider + 1)...].map(\.id))
+        guard nowHidden.isDisjoint(with: [OpenPage.shelf.id, OpenPage.media.id]) else { return }
+        preferences.hiddenPages = preferences.hiddenPages.subtracting(listed.map(\.id)).union(nowHidden)
+        preferences.pageOrder = PageOrder.moving(moved.page, to: to > divider ? to - 1 : to, among: listed,
+                                                 in: preferences.pageOrder)
+    }
+
     var body: some View {
         Form {
             Section {
@@ -183,25 +220,28 @@ private struct GeneralPane: View {
                 screens = DisplayOption.connected
             }
             Section {
-                let pages = pages
-                ForEach(pages) { info in
-                    HStack(spacing: 10) {
-                        Image(systemName: info.symbol)
-                            .font(.system(size: 12, weight: .semibold))
+                ForEach(pageRows) { row in
+                    switch row {
+                    case .page(let info):
+                        HStack(spacing: 10) {
+                            Image(systemName: info.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+                            Text(info.title)
+                        }
+                    case .hiddenDivider:
+                        Text("Hidden")
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text(info.title)
+                            .moveDisabled(true)
                     }
                 }
-                .onMove { source, destination in
-                    guard let from = source.first else { return }
-                    let to = destination > from ? destination - 1 : destination
-                    preferences.pageOrder = PageOrder.moving(pages[from].page, to: to, among: pages, in: preferences.pageOrder)
-                }
+                .onMove(perform: movePageRow)
             } header: {
                 Text("Pages")
             } footer: {
-                Text("Drag to reorder, or drag the icons in the open notch. The first four sit left of the camera, the rest on its right. Music only shows while something plays.")
+                Text("Drag to reorder, or drag the icons in the open notch. Drag a page below Hidden to take it out of the pills and the open notch. Music and the tray always stay. The first four sit left of the camera, the rest on its right. Music only shows while something plays.")
                     .foregroundStyle(.secondary)
             }
             Section {

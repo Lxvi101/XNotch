@@ -48,6 +48,10 @@ final class Preferences: ObservableObject {
     @Published var drawnNotchHeight: DrawnNotchHeight {
         didSet { defaults.set(drawnNotchHeight.rawValue, forKey: Key.drawnNotchHeight) }
     }
+    /// Pages the user took out of the pills and switcher, by `OpenPage.id`.
+    @Published var hiddenPages: Set<String> {
+        didSet { defaults.set(Array(hiddenPages).sorted(), forKey: Key.hiddenPages) }
+    }
     @Published private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
 
     private enum Key {
@@ -65,6 +69,7 @@ final class Preferences: ObservableObject {
         static let allDisplays = "showsOnAllDisplays"
         static let notchDisplay = "notchDisplay"
         static let drawnNotchHeight = "drawnNotchHeight"
+        static let hiddenPages = "hiddenPages"
     }
 
     private init() {
@@ -86,6 +91,7 @@ final class Preferences: ObservableObject {
         showsOnAllDisplays = defaults.bool(forKey: Key.allDisplays)
         notchDisplay = defaults.string(forKey: Key.notchDisplay)
         drawnNotchHeight = defaults.string(forKey: Key.drawnNotchHeight).flatMap(DrawnNotchHeight.init) ?? .menuBar
+        hiddenPages = Set(defaults.stringArray(forKey: Key.hiddenPages) ?? [])
         // Before extensions were opt-in, Folders came switched on; it stays as the user left it.
         knownExtensions = Set(defaults.stringArray(forKey: Key.knownExtensions)
             ?? (defaults.bool(forKey: Key.onboarding) ? ["folders"] : []))
