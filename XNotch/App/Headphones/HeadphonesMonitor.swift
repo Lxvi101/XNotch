@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import CoreBluetooth
 import IOBluetooth
 
@@ -95,47 +96,52 @@ struct HeadphonesConnection: Equatable, Identifiable {
     var battery: Int?
 }
 
-/// Reports headphones and speakers as they connect. Event-driven: IOBluetooth
-/// calls back on connect and disconnect, nothing polls. The battery is read
-/// from `system_profiler` off the main thread, a few times after a connect,
-/// since macOS learns it a moment after the link comes up.
+/// Reports headphones and speakers as macOS starts playing through them.
+/// Event-driven: Core Audio calls back when the default output device
+/// changes, nothing polls. That catches AirPods however they arrive (a fresh
+/// connect, a hand-off from the iPhone, picking them in Control Center),
+/// which IOBluetooth's connect notifications miss. The battery is read from
+/// `system_profiler` off the main thread, a few times after a switch, since
+/// macOS learns it a moment after the link comes up.
 @MainActor
 final class HeadphonesMonitor: NSObject, ObservableObject {
     /// The latest connection while its toast is relevant; updated as its battery arrives.
     @Published private(set) var latest: HeadphonesConnection?
     var onConnect: ((HeadphonesConnection) -> Void)?
 
-    private var connectNotification: IOBluetoothUserNotification?
-    private var disconnectNotifications: [String: IOBluetoothUserNotification] = [:]
-    private var connected: Set<String> = []
-    private var startedAt = Date.distantPast
+    private var outputListener: AudioObjectPropertyListenerBlock?
+    /// Bluetooth address of the current output, nil when it isn't Bluetooth.
+    private var currentAddress: String?
     private var batteryReads = 0
     private var batteryWork: DispatchWorkItem?
     private let profilerQueue = DispatchQueue(label: "dev.levi.XNotch.headphones", qos: .utility)
 
-    var isRunning: Bool { connectNotification != nil }
+    private static var defaultOutputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
+
+    var isRunning: Bool { outputListener != nil }
 
     func start() {
         guard !isRunning else { return }
-        // Never prompt from here once the user has said no.
-        switch CBCentralManager.authorization {
-        case .denied, .restricted: return
-        default: break
+        // Whatever plays at launch was already in use; only later switches show.
+        currentAddress = Self.defaultOutput().flatMap(Self.bluetoothAddress(of:))
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.outputChanged() }
         }
-        startedAt = Date()
-        for device in (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? [] where device.isConnected() {
-            track(device)
-        }
-        connectNotification = IOBluetoothDevice.register(forConnectNotifications: self,
-                                                         selector: #selector(deviceConnected(_:device:)))
+        outputListener = listener
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &Self.defaultOutputAddress,
+                                            .main, listener)
     }
 
     func stop() {
-        connectNotification?.unregister()
-        connectNotification = nil
-        disconnectNotifications.values.forEach { $0.unregister() }
-        disconnectNotifications.removeAll()
-        connected.removeAll()
+        if let outputListener {
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &Self.defaultOutputAddress,
+                                                   .main, outputListener)
+        }
+        outputListener = nil
+        currentAddress = nil
         cancelBatteryReads()
         latest = nil
     }
@@ -146,53 +152,35 @@ final class HeadphonesMonitor: NSObject, ObservableObject {
         latest = nil
     }
 
-    // IOBluetooth calls these on its own coordinator queue for devices that
-    // also have a Bluetooth LE link, so hop to main rather than assume it.
-    @objc nonisolated private func deviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        DispatchQueue.main.async { MainActor.assumeIsolated { self.handleConnect(device) } }
-    }
-
-    @objc nonisolated private func deviceDisconnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        DispatchQueue.main.async { MainActor.assumeIsolated { self.handleDisconnect(device) } }
-    }
-
-    private func handleConnect(_ device: IOBluetoothDevice) {
-        guard let address = device.addressString, !connected.contains(address),
-              let kind = Self.kind(of: device) else { return }
-        track(device)
-        // IOBluetooth also reports devices that were connected before XNotch started.
-        guard Date().timeIntervalSince(startedAt) > 2 else { return }
-        let connection = HeadphonesConnection(address: address, name: device.name ?? "Headphones", kind: kind)
+    private func outputChanged() {
+        guard let device = Self.defaultOutput() else { return }
+        let address = Self.bluetoothAddress(of: device)
+        // Core Audio can hand the same headphones a new device ID, say when
+        // the microphone turns on; that isn't a new arrival.
+        guard address != currentAddress else { return }
+        currentAddress = address
+        guard let address else { return }
+        let name = Self.name(of: device) ?? "Headphones"
+        let connection = HeadphonesConnection(address: address, name: name, kind: Self.kind(address: address, name: name))
         latest = connection
         onConnect?(connection)
         scheduleBatteryReads()
     }
 
-    private func handleDisconnect(_ device: IOBluetoothDevice) {
-        guard let address = device.addressString else { return }
-        connected.remove(address)
-        disconnectNotifications.removeValue(forKey: address)?.unregister()
-    }
-
-    private func track(_ device: IOBluetoothDevice) {
-        guard let address = device.addressString, Self.kind(of: device) != nil else { return }
-        connected.insert(address)
-        if disconnectNotifications[address] == nil {
-            disconnectNotifications[address] = device.register(forDisconnectNotification: self,
-                                                               selector: #selector(deviceDisconnected(_:device:)))
+    /// Nameless or unknown devices fall back to plain headphones; the profiler
+    /// refines Apple models by product ID once the battery read lands.
+    private static func kind(address: String, name: String) -> HeadphonesKind {
+        if let kind = HeadphonesKind(name: name) { return kind }
+        // Asking IOBluetooth without Bluetooth access would prompt, and this can do without it.
+        if CBCentralManager.authorization == .allowedAlways,
+           let device = IOBluetoothDevice(addressString: address) {
+            let ids = deviceID(of: device)
+            if let kind = HeadphonesKind(vendorID: ids.vendor, productID: ids.product)
+                ?? HeadphonesKind(classOfDevice: device.classOfDevice) {
+                return kind
+            }
         }
-    }
-
-    /// Nil for anything that isn't headphones or a speaker: mice, phones, keyboards.
-    private static func kind(of device: IOBluetoothDevice) -> HeadphonesKind? {
-        let generic = HeadphonesKind(classOfDevice: device.classOfDevice)
-        let isAudio = generic != nil || device.getServiceRecord(for: IOBluetoothSDPUUID(uuid16: 0x110B)) != nil
-        guard isAudio else { return nil }
-        let ids = deviceID(of: device)
-        return HeadphonesKind(vendorID: ids.vendor, productID: ids.product)
-            ?? device.name.flatMap(HeadphonesKind.init(name:))
-            ?? generic
-            ?? .headphones
+        return .headphones
     }
 
     /// Vendor and product from the Device ID SDP record, when macOS has it cached.
@@ -202,6 +190,46 @@ final class HeadphonesMonitor: NSObject, ObservableObject {
             record.getAttributeDataElement(attribute)?.getNumberValue().map { UInt16(truncatingIfNeeded: $0.intValue) }
         }
         return (value(0x0201), value(0x0202))
+    }
+
+    // MARK: Core Audio
+
+    private static func defaultOutput() -> AudioDeviceID? {
+        var device = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &defaultOutputAddress,
+                                                0, nil, &size, &device)
+        return status == noErr && device != kAudioObjectUnknown ? device : nil
+    }
+
+    /// The device's Bluetooth address, from its UID ("BC-80-4E-64-F0-6E:output"),
+    /// or nil for anything that isn't Bluetooth. A UID that isn't an address
+    /// still identifies the device; it just finds no battery.
+    private static func bluetoothAddress(of device: AudioDeviceID) -> String? {
+        var transport: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr,
+              transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE,
+              let uid = string(kAudioDevicePropertyDeviceUID, of: device) else { return nil }
+        let prefix = String(uid.prefix { $0 != ":" })
+        return normalized(prefix).count == 12 ? prefix : uid
+    }
+
+    private static func name(of device: AudioDeviceID) -> String? {
+        string(kAudioObjectPropertyName, of: device)
+    }
+
+    private static func string(_ selector: AudioObjectPropertySelector, of device: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: selector,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value?.takeRetainedValue() as String?
     }
 
     // MARK: Battery
