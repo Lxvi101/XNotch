@@ -650,28 +650,47 @@ final class NoteTextView: NSTextView {
     override func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
         if Attachments.carriesFiles(pasteboard), let fileHandler {
-            fileHandler.attach(from: pasteboard, at: nil)
+            fileHandler.attach(from: pasteboard, at: nil, insertingAt: selectedRange().location)
             return
         }
         pasteAsPlainText(sender)
     }
 
+    /// Whether the current drag is NSTextView's own, text dragged about,
+    /// so its exit and end go back to it and to nothing else.
+    private var textDrag = false
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if isFromOwnBucket(sender) { return [] }
-        if referencesBucket(sender) { return followDrop(sender) }
-        guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.draggingEntered(sender) }
-        return fileHandler.fileDragMoved(sender)
+        textDrag = false
+        if let operation = fileDrag(sender) { return operation }
+        textDrag = true
+        return super.draggingEntered(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if isFromOwnBucket(sender) { return [] }
+        if let operation = fileDrag(sender) { return operation }
+        return super.draggingUpdated(sender)
+    }
+
+    /// Files over the text land where the pointer is, and the caret shows
+    /// where. `nil` for anything else, which the text view takes as text.
+    private func fileDrag(_ sender: NSDraggingInfo) -> NSDragOperation? {
+        guard let fileHandler else { return nil }
+        if isFromOwnBucket(sender) {
+            // Over the open drawer it's still in the bucket, not on the text.
+            guard fileHandler.acceptsBucketDrag(sender) else {
+                fileHandler.bucketDragLeftText()
+                return []
+            }
+            return followDrop(sender)
+        }
         if referencesBucket(sender) { return followDrop(sender) }
-        guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.draggingUpdated(sender) }
+        guard Attachments.carriesFiles(sender.draggingPasteboard) else { return nil }
+        _ = followDrop(sender)
         return fileHandler.fileDragMoved(sender)
     }
 
-    /// A file dragged out of this note's own bucket is on its way out: the
-    /// note doesn't take it back, and doesn't chase it with the caret.
+    /// A file dragged out of this note's own bucket.
     private func isFromOwnBucket(_ sender: NSDraggingInfo) -> Bool {
         guard let fileHandler else { return false }
         return (sender.draggingSource as AnyObject?) === fileHandler
@@ -689,9 +708,14 @@ final class NoteTextView: NSTextView {
         return answer
     }
 
-    /// The caret follows the drag, so it's clear where the reference lands.
+    private func dropIndex(_ sender: NSDraggingInfo) -> Int {
+        characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+    }
+
+    /// The caret follows the drag, so it's clear where the file lands. It
+    /// only moves when the spot changes, so a drag doesn't restyle per move.
     private func followDrop(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+        let index = dropIndex(sender)
         if selectedRange() != NSRange(location: index, length: 0) { setSelectedRange(NSRange(location: index, length: 0)) }
         if window?.isKeyWindow == false { window?.makeKey() }
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
@@ -699,24 +723,28 @@ final class NoteTextView: NSTextView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        if textDrag { return super.draggingExited(sender) }
         fileHandler?.fileDragEnded()
-        super.draggingExited(sender)
+        if let sender, isFromOwnBucket(sender) { fileHandler?.bucketDragLeftText() }
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        if isFromOwnBucket(sender) { return false }
-        if let fileHandler, case let files = fileHandler.bucketFiles(on: sender.draggingPasteboard), !files.isEmpty {
-            let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
-            fileHandler.insertReferences(files, at: index)
+        if textDrag { return super.performDragOperation(sender) }
+        guard let fileHandler else { return false }
+        if isFromOwnBucket(sender) || referencesBucket(sender) {
+            guard fileHandler.acceptsBucketDrag(sender) else { return false }
+            let files = fileHandler.bucketFiles(on: sender.draggingPasteboard)
+            guard !files.isEmpty else { return false }
+            fileHandler.insertReferences(files, at: dropIndex(sender))
             return true
         }
-        guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.performDragOperation(sender) }
-        return fileHandler.fileDropped(sender)
+        guard Attachments.carriesFiles(sender.draggingPasteboard) else { return false }
+        return fileHandler.fileDropped(sender, insertingAt: dropIndex(sender))
     }
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        if textDrag { return super.concludeDragOperation(sender) }
         fileHandler?.fileDragEnded()
-        super.concludeDragOperation(sender)
     }
 }
 
@@ -724,9 +752,15 @@ final class NoteTextView: NSTextView {
 @MainActor
 protocol NoteFileHandling: AnyObject {
     func fileDragMoved(_ info: NSDraggingInfo) -> NSDragOperation
-    func fileDropped(_ info: NSDraggingInfo) -> Bool
+    /// Copies the dropped files into the bucket and writes them into the
+    /// text at `index`, or at the caret when it's `nil`.
+    func fileDropped(_ info: NSDraggingInfo, insertingAt index: Int?) -> Bool
     func fileDragEnded()
-    func attach(from pasteboard: NSPasteboard, at point: CGPoint?)
+    func attach(from pasteboard: NSPasteboard, at point: CGPoint?, insertingAt index: Int?)
+    /// Whether a drag of the note's own bucket files is over the text, not the open drawer.
+    func acceptsBucketDrag(_ info: NSDraggingInfo) -> Bool
+    /// A drag out of the bucket left the text: the drawer keeps the keys again.
+    func bucketDragLeftText()
     /// Files on the pasteboard that are already in this note's bucket.
     func bucketFiles(on pasteboard: NSPasteboard) -> [URL]
     func insertReferences(_ urls: [URL], at index: Int)

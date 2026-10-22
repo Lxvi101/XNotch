@@ -463,6 +463,14 @@ private struct BucketLayer: View {
                         .frame(width: width)
                         .frame(maxHeight: proxy.size.height - NoteGeometry.header - 12, alignment: .top)
                         .fixedSize(horizontal: false, vertical: true)
+                        .background {
+                            GeometryReader { drawer in
+                                Color.clear
+                                    .onAppear { state.drawerFrame = drawer.frame(in: .named(noteSpace)) }
+                                    .onChange(of: drawer.frame(in: .named(noteSpace))) { _, frame in state.drawerFrame = frame }
+                                    .onDisappear { state.drawerFrame = nil }
+                            }
+                        }
                         .offset(x: 10, y: NoteGeometry.header)
                         .transition(.bloom(from: UnitPoint(x: (state.bucketCenter.x - 10) / max(width, 1), y: -0.04)))
                 }

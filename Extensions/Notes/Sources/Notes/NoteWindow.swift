@@ -51,6 +51,8 @@ final class NoteWindowState {
     var bucketHits = 0
     /// The bucket's centre in the note, where landings head.
     @ObservationIgnored var bucketCenter = CGPoint(x: 260, y: 20)
+    /// The open bucket drawer, in the note: a drag out of the bucket over it isn't on the text.
+    @ObservationIgnored var drawerFrame: CGRect?
     /// The plus button's centre in the note, where new notes come from.
     @ObservationIgnored var plusCenter = CGPoint(x: 310, y: 20)
 
@@ -611,29 +613,51 @@ extension NoteController: NoteFileHandling {
         withAnimation(NoteMotion.hover) { state.isDragTarget = false }
     }
 
-    func fileDropped(_ info: NSDraggingInfo) -> Bool {
+    func fileDropped(_ info: NSDraggingInfo, insertingAt index: Int?) -> Bool {
         // The note's own bucket files dropped beside the text: not copies of themselves.
         guard bucketFiles(on: info.draggingPasteboard).isEmpty else {
             fileDragEnded()
             return false
         }
-        let window = info.draggingLocation
-        let point = CGPoint(x: window.x - NoteGeometry.margin, y: panel.frame.height - window.y - NoteGeometry.margin)
-        attach(from: info.draggingPasteboard, at: point)
+        attach(from: info.draggingPasteboard, at: notePoint(info), insertingAt: index)
         fileDragEnded()
         return true
     }
 
-    /// Copies the pasteboard's files into the bucket. They fly in from
-    /// `point` in the note, or from the middle of the text when pasted.
-    func attach(from pasteboard: NSPasteboard, at point: CGPoint?) {
+    /// Where a drag is, in the note, from the top left.
+    private func notePoint(_ info: NSDraggingInfo) -> CGPoint {
+        let window = info.draggingLocation
+        return CGPoint(x: window.x - NoteGeometry.margin, y: panel.frame.height - window.y - NoteGeometry.margin)
+    }
+
+    func acceptsBucketDrag(_ info: NSDraggingInfo) -> Bool {
+        guard state.showsBucket, let drawer = state.drawerFrame else { return true }
+        return !drawer.contains(notePoint(info))
+    }
+
+    func bucketDragLeftText() {
+        if state.showsBucket, panel.firstResponder === editor.textView { panel.makeFirstResponder(nil) }
+    }
+
+    /// Copies the pasteboard's files into the bucket, and once they're in,
+    /// writes them into the text at `index` (the caret when it's `nil`).
+    /// They fly in from `point` in the note, or from the middle of the text when pasted.
+    func attach(from pasteboard: NSPasteboard, at point: CGPoint?, insertingAt index: Int?) {
         let sources = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         let images = sources.isEmpty ? [NSImage(named: NSImage.multipleDocumentsName) ?? NSImage()]
             : sources.prefix(3).map { Thumbnails.icon(for: $0.path) }
         let size = NoteGeometry.noteFrame(inWindow: panel.frame).size
         launch(images, from: point ?? CGPoint(x: size.width / 2, y: size.height / 2))
+        let text = editor.textView
+        let spot = index ?? text.selectedRange().location
+        let before = text.string
         Attachments.read(pasteboard, into: library.bucketFolder(for: note)) { [weak self] urls in
-            self?.received(urls)
+            guard let self else { return }
+            self.received(urls)
+            guard !urls.isEmpty, !self.isClosing else { return }
+            // A big file takes a moment: if the text changed meanwhile, the
+            // drop spot means nothing any more, and it goes in at the caret.
+            self.insertReferences(urls, at: text.string == before ? spot : text.selectedRange().location)
         }
     }
 
@@ -659,6 +683,13 @@ extension NoteController: NoteFileHandling {
         if insertion.hasPrefix("!"), location != lineStart { insertion = "\n" + insertion }
         text.replace(NSRange(location: location, length: 0), with: insertion)
         text.setSelectedRange(NSRange(location: location + (insertion as NSString).length, length: 0))
+        // The drawer folds away, so the text it lands in is the text you type in.
+        if state.showsBucket {
+            withAnimation(NoteMotion.bloom) {
+                state.showsBucket = false
+                state.selectedAttachment = nil
+            }
+        }
         panel.makeKey()
         editor.focus(atEnd: false)
     }
@@ -1016,7 +1047,7 @@ final class NoteDropView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard noteRect.contains(convert(sender.draggingLocation, from: nil)) else { return false }
-        return MainActor.assumeIsolated { controller?.fileDropped(sender) ?? false }
+        return MainActor.assumeIsolated { controller?.fileDropped(sender, insertingAt: nil) ?? false }
     }
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
