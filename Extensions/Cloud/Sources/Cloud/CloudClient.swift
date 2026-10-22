@@ -84,9 +84,10 @@ struct CloudClient: Sendable {
               let scheme = components.scheme?.lowercased(),
               let host = components.host?.lowercased(), !host.isEmpty,
               host.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
-              host.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\?#%")) == nil,
+              host.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\?#%@")) == nil,
               components.user == nil, components.password == nil,
               components.fragment == nil,
+              (components.rangeOfPort == nil || components.port != nil),
               components.port.map({ (1...65535).contains($0) }) ?? true,
               components.url != nil else { return false }
         return scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host))

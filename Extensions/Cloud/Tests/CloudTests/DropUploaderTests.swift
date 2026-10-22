@@ -107,6 +107,8 @@ final class DropUploaderTests: XCTestCase {
             "https://user:password@drop.example.com/a1B2c3D4", "https://@drop.example.com/a1B2c3D4",
             "https://drop.example.com:99999/a1B2c3D4", "https://drop.example.com:0/a1B2c3D4",
             "https://%0Adrop.example.com/a1B2c3D4", "https://drop.example.com%2Fevil/a1B2c3D4",
+            "https://public.example.com:9999999999999999999999999/a1B2c3D4",
+            "https://public.example.com%40evil.example/a1B2c3D4",
             "https://drop.example.com/a1B2c3D4#server-fragment"
         ] {
             FakeServer.reset()
