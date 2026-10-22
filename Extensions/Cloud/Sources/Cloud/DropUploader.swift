@@ -46,7 +46,12 @@ struct DropUploader: Sendable {
             // server-readable one that was meant to be encrypted.
             if protect, drop.protected != true { throw PasswordsUnsupported() }
             if encrypt, drop.e2ee != Int(DropCrypto.version) { throw EncryptionUnsupported() }
+            // The API's origin doesn't guarantee the public link is safe.
+            // Check before preparing files, uploading bytes, or attaching a key.
+            if encrypt, !CloudClient.canServeEncryptedLinks(at: drop.url) { throw EncryptionNeedsHTTPS() }
             let key = DropCrypto.Key.random()
+            let link = encrypt ? Self.link(drop.url, key: key) : drop.url
+            if encrypt, link.fragment != key.fragment { throw CloudClient.Failure.unreadable }
             var entries: [DropCrypto.Manifest.File] = []
             var done: Int64 = 0
             for (url, size) in zip(urls, sizes) {
@@ -62,10 +67,10 @@ struct DropUploader: Sendable {
                 }
                 done += size
             }
-            guard encrypt else { return Result(drop: drop, link: drop.url) }
+            guard encrypt else { return Result(drop: drop, link: link) }
             let manifest = DropCrypto.Manifest(title: title, files: entries)
             try await client.uploadManifest(try DropCrypto.sealManifest(manifest, key: key, dropID: drop.id), to: drop.id)
-            return Result(drop: drop, link: Self.link(drop.url, key: key))
+            return Result(drop: drop, link: link)
         } catch {
             // Don't leave a half-filled link behind that nobody can see or revoke.
             try? await client.delete(drop: drop.id)
@@ -74,9 +79,9 @@ struct DropUploader: Sendable {
     }
 
     static func link(_ url: URL, key: DropCrypto.Key) -> URL {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
         components.percentEncodedFragment = key.fragment // base64url needs no escaping
-        return components.url!
+        return components.url ?? url
     }
 
     private func uploadPlain(_ prepared: PreparedFile, drop: String,

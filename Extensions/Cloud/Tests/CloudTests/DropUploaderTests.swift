@@ -88,10 +88,83 @@ final class DropUploaderTests: XCTestCase {
                                        files: [.init(id: objectID, name: file.lastPathComponent, size: 14)]))
     }
 
+    func testHTTPSAPIRefusesHTTPPublicLinkBeforeUploading() async throws {
+        try setPublicURL("http://drop.example.com/a1B2c3D4")
+        let uploader = try uploader(info: newInfo)
+        await XCTAssertThrowsAsync(try await uploader.upload([file], title: "t", expiresIn: 3600, password: nil) { _ in }) {
+            XCTAssertTrue($0 is EncryptionNeedsHTTPS, "\($0)")
+        }
+        XCTAssertEqual(FakeServer.requests, ["POST /api/drops", "DELETE /api/drops/a1B2c3D4"],
+                       "reject the public URL before any file or manifest is uploaded")
+    }
+
+    func testRefusesMalformedOrUnsafeEncryptedPublicLinksAndCleansUp() async throws {
+        let uploader = try uploader(info: newInfo)
+        for publicURL in [
+            "http://192.168.1.20/a1B2c3D4", "http://localhost.evil.example/a1B2c3D4",
+            "ftp://localhost/a1B2c3D4", "file:///a1B2c3D4", "/a1B2c3D4", "//drop.example.com/a1B2c3D4",
+            "https:/a1B2c3D4", "https:///a1B2c3D4", "https:a1B2c3D4",
+            "https://user:password@drop.example.com/a1B2c3D4", "https://@drop.example.com/a1B2c3D4",
+            "https://drop.example.com:99999/a1B2c3D4", "https://drop.example.com:0/a1B2c3D4",
+            "https://%0Adrop.example.com/a1B2c3D4", "https://drop.example.com%2Fevil/a1B2c3D4",
+            "https://drop.example.com/a1B2c3D4#server-fragment"
+        ] {
+            FakeServer.reset()
+            try setPublicURL(publicURL)
+            await XCTAssertThrowsAsync(try await uploader.upload([file], title: "t", expiresIn: 3600, password: nil) { _ in }) {
+                XCTAssertTrue($0 is EncryptionNeedsHTTPS, "\(publicURL): \($0)")
+            }
+            XCTAssertEqual(FakeServer.requests, ["POST /api/drops", "DELETE /api/drops/a1B2c3D4"], publicURL)
+        }
+    }
+
+    func testAcceptsHTTPSPublicLinkOnADifferentHost() async throws {
+        let publicURL = "https://public.example.com/a1B2c3D4"
+        try setPublicURL(publicURL)
+        let result = try await uploader(info: newInfo).upload([file], title: "t", expiresIn: 3600, password: nil) { _ in }
+        let key = try XCTUnwrap(result.link.fragment)
+        XCTAssertNotNil(DropCrypto.Key(fragment: key))
+        XCTAssertEqual(result.link.absoluteString, publicURL + "#" + key)
+        XCTAssertEqual(FakeServer.requests.count, 3)
+        XCTAssertEqual(FakeServer.requests.last, "PUT /api/drops/a1B2c3D4/manifest")
+    }
+
+    func testAcceptsOnlyTheIntendedLoopbackHTTPPublicLinks() async throws {
+        for host in ["localhost", "127.0.0.1", "[::1]"] {
+            FakeServer.reset()
+            let publicURL = "http://\(host):8080/a1B2c3D4"
+            try setPublicURL(publicURL)
+            let result = try await uploader(server: "http://\(host):8080", info: newInfo)
+                .upload([file], title: "t", expiresIn: 3600, password: nil) { _ in }
+            let key = try XCTUnwrap(result.link.fragment)
+            XCTAssertNotNil(DropCrypto.Key(fragment: key))
+            XCTAssertEqual(result.link.absoluteString, publicURL + "#" + key)
+            XCTAssertEqual(FakeServer.requests.count, 3)
+            XCTAssertEqual(FakeServer.requests.last, "PUT /api/drops/a1B2c3D4/manifest")
+        }
+    }
+
+    private func setPublicURL(_ url: String) throws {
+        let response: [String: Any] = ["id": "a1B2c3D4", "url": url, "expires_at": "2026-10-14T18:00:00Z",
+                                       "protected": false, "e2ee": 1]
+        FakeServer.createResponse = String(decoding: try JSONSerialization.data(withJSONObject: response), as: UTF8.self)
+    }
+
     func testPlainUploadsStillWorkWhenEncryptionIsOff() async throws {
         FakeServer.createResponse = #"{"id":"a1B2c3D4","url":"https://drop.example.com/a1B2c3D4","expires_at":"2026-10-14T18:00:00Z"}"#
         let result = try await uploader(info: oldInfo, encrypt: false).upload([file], title: "t", expiresIn: 3600, password: nil) { _ in }
         XCTAssertEqual(result.link.absoluteString, "https://drop.example.com/a1B2c3D4")
+        XCTAssertEqual(FakeServer.requests.count, 2)
+        XCTAssertEqual(FakeServer.bodies[FakeServer.requests[1]], Data("attack at dawn".utf8))
+    }
+
+    func testPlainUploadsKeepSupportingLANHTTPPublicLinks() async throws {
+        let publicURL = "http://192.168.1.20:8080/a1B2c3D4"
+        FakeServer.createResponse = #"{"id":"a1B2c3D4","url":"http://192.168.1.20:8080/a1B2c3D4","expires_at":"2026-10-14T18:00:00Z"}"#
+        let result = try await uploader(server: "http://192.168.1.20:8080", info: oldInfo, encrypt: false)
+            .upload([file], title: "t", expiresIn: 3600, password: nil) { _ in }
+        XCTAssertEqual(result.link.absoluteString, publicURL)
+        XCTAssertNil(result.link.fragment)
         XCTAssertEqual(FakeServer.requests.count, 2)
         XCTAssertEqual(FakeServer.bodies[FakeServer.requests[1]], Data("attack at dawn".utf8))
     }

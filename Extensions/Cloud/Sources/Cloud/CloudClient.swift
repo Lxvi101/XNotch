@@ -74,7 +74,22 @@ struct CloudClient: Sendable {
     /// Whether browsers can decrypt links from this server: Web Crypto only
     /// exists on https pages (and on the local machine).
     var canServeEncryptedLinks: Bool {
-        baseURL.scheme?.lowercased() == "https" || ["localhost", "127.0.0.1", "::1", "[::1]"].contains(baseURL.host ?? "")
+        Self.canServeEncryptedLinks(at: baseURL)
+    }
+
+    /// The public URL can have a different host from the API, but still needs
+    /// a secure browser context and an unambiguous, credential-free authority.
+    static func canServeEncryptedLinks(at url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(), !host.isEmpty,
+              host.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              host.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\?#%")) == nil,
+              components.user == nil, components.password == nil,
+              components.fragment == nil,
+              components.port.map({ (1...65535).contains($0) }) ?? true,
+              components.url != nil else { return false }
+        return scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host))
     }
 
     /// With a `password`, visitors must enter it before they see or download anything.
