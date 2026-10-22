@@ -322,6 +322,8 @@ final class NoteController: NSObject {
             NoteCommand(id: "new", title: "New Note", symbol: "square.and.pencil", shortcut: "⌘N", section: "Note") { [weak self] in
                 self?.newNote()
             },
+            NoteCommand(id: "new-window", title: "New Floating Note", symbol: "plus.rectangle.on.rectangle", shortcut: "⇧⌘N",
+                        section: "Note") { [weak self] in self?.newFloatingNote() },
             NoteCommand(id: "duplicate", title: "Duplicate Note", symbol: "plus.square.on.square", section: "Note") { [weak self] in
                 guard let self else { return }
                 self.library.duplicate(note, beside: self)
@@ -479,12 +481,23 @@ final class NoteController: NSObject {
         }
     }
 
+    /// A fresh note in this window, as the switcher swaps one in.
     func newNote() {
+        closeDrawers()
+        library.newNote(in: self)
+    }
+
+    /// A fresh note in a window of its own, beside this one.
+    func newFloatingNote() {
+        closeDrawers()
+        library.newNote(beside: self)
+    }
+
+    private func closeDrawers() {
         withAnimation(NoteMotion.bloom) {
             state.showsSwitcher = false
             state.showsBucket = false
         }
-        library.newNote(beside: self)
     }
 
     // MARK: Moving and resizing
@@ -566,6 +579,7 @@ final class NoteController: NSObject {
         case ("p", [.command, .shift]), ("k", [.command, .shift]): toggleSwitcher(commands: true)
         case ("b", [.command, .shift]): toggleBucket()
         case ("n", [.command]): newNote()
+        case ("n", [.command, .shift]): newFloatingNote()
         case ("w", [.command]): close()
         default: return false
         }
@@ -894,7 +908,10 @@ extension NoteController: NoteFileHandling {
 
     func noteMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(ClosureMenuItem("New Note", symbol: "plus", key: "n") { [weak self] in self?.newNote() })
+        menu.addItem(ClosureMenuItem("New Note", symbol: "square.and.pencil", key: "n") { [weak self] in self?.newNote() })
+        let floating = ClosureMenuItem("New Floating Note", symbol: "plus", key: "n") { [weak self] in self?.newFloatingNote() }
+        floating.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(floating)
         menu.addItem(ClosureMenuItem("Find Note…", symbol: "magnifyingglass", key: "k") { [weak self] in self?.toggleSwitcher() })
         menu.addItem(ClosureMenuItem("Bucket", symbol: "tray") { [weak self] in self?.toggleBucket() })
         menu.addItem(.separator())

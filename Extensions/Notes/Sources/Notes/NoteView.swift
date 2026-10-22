@@ -195,7 +195,7 @@ private struct Toolbar: View {
                 controller.toggleSwitcher()
             }
             .opacity(isVisible ? 1 : 0)
-            ToolbarButton(symbol: "plus", isOn: false, help: "New note (⌘N)") { controller.newNote() }
+            ToolbarButton(symbol: "plus", isOn: false, help: "New floating note (⇧⌘N)") { controller.newFloatingNote() }
                 .background {
                     GeometryReader { proxy in
                         Color.clear.onAppear {

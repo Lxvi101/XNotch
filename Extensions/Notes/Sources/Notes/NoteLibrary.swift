@@ -330,6 +330,22 @@ final class NoteLibrary {
         return note
     }
 
+    /// A fresh note in `controller`'s window, in place of the one it shows.
+    /// An empty note is already a fresh one, so it stays.
+    func newNote(in controller: NoteController) {
+        guard !isDiscardable(controller.note) else {
+            controller.bringToFront(focus: true)
+            return
+        }
+        let record = NoteRecord(id: UUID(), spaceID: controller.note.spaceID, created: Date(), modified: Date(),
+                                isPinned: false, isOpen: true, frame: nil)
+        let note = Note(record: record, text: "")
+        notes.append(note)
+        try? "".write(to: bodyURL(for: note.id), atomically: true, encoding: .utf8)
+        swap(controller, to: note)
+        tick()
+    }
+
     /// Closes a note's window; the note stays in its space, unless it's empty.
     func close(_ note: Note, to point: CGPoint? = nil) {
         guard let controller = controllers[note.id] else { return }
