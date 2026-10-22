@@ -174,8 +174,8 @@ final class DropUploaderTests: XCTestCase {
     func testSizeLimitAppliesToTheCiphertext() throws {
         let info = newInfo.replacingOccurrences(of: "1000000", with: "100")
         let uploader = try uploader(info: info)
-        XCTAssertNoThrow(try uploader.preflight(sizes: [("a", 100 - 38 - 16)], password: nil))
-        XCTAssertThrowsError(try uploader.preflight(sizes: [("a", 100 - 38 - 15)], password: nil)) { XCTAssertTrue($0 is TooLarge) }
+        XCTAssertNoThrow(try uploader.preflight(sizes: [("a", UInt64(100 - 38 - 16))], password: nil))
+        XCTAssertThrowsError(try uploader.preflight(sizes: [("a", UInt64(100 - 38 - 15))], password: nil)) { XCTAssertTrue($0 is TooLarge) }
     }
 }
 
