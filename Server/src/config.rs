@@ -27,6 +27,7 @@ pub struct Config {
     pub max_expiry: u64,
     pub id_length: usize,
     pub relay: RelayConfig,
+    pub rate_limit: crate::rate_limit::RateLimitConfig,
 }
 
 /// Settings for the WebSocket relay between the iPhone and the Mac.
@@ -172,6 +173,7 @@ impl Config {
         }
 
         let relay = RelayConfig::from_env(&var)?;
+        let rate_limit = crate::rate_limit::RateLimitConfig::from_env(&var)?;
 
         Ok(Self {
             public_url,
@@ -184,6 +186,7 @@ impl Config {
             max_expiry,
             id_length,
             relay,
+            rate_limit,
         })
     }
 }

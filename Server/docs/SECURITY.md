@@ -16,8 +16,23 @@ trust boundary. For sensitive data, complete your own security review before rol
   (`src/api.rs`). Configure a randomly generated 32-byte secret and HTTPS.
 - Drop passwords use salted Argon2id hashes. Unlock cookies are HttpOnly,
   SameSite=Lax, path-scoped, and Secure when `PUBLIC_URL` uses HTTPS
-  (`src/password.rs`). Password verification concurrency is capped at four;
-  failed attempts incur a delay (`src/public.rs`).
+  (`src/password.rs`). Creation and verification share four non-queuing blocking
+  worker slots by default (`PASSWORD_CONCURRENCY`); busy requests get 429 with
+  `Retry-After: 1`. Worker permits survive HTTP cancellation until work finishes;
+  failed attempts still incur a delay (`src/public.rs`).
+- Bounded per-IP token buckets admit public requests (120/minute, burst 60),
+  password posts (10/minute, burst 5, also charged to public), API auth/management
+  (120/minute, burst 60), and relay upgrades (30/minute, burst 20) before request
+  work. Limits return 429 with `Retry-After`; health probes are exempt and admitted
+  streams continue. At most 10000 client entries are kept, with 900-second idle
+  expiry and bounded incremental cleanup. New clients fail closed at capacity;
+  live entries are never evicted to reset budgets (`src/rate_limit.rs`).
+- Client identity defaults to the socket peer. Forwarded headers are ignored unless
+  the socket peer is in explicitly configured `TRUSTED_PROXIES` IP/CIDR ranges.
+  X-Forwarded-For is walked from right to left through trusted hops; invalid or
+  oversized chains fall back to the peer. The Caddy overlay uses a fixed private
+  proxy IP and overwrites client-supplied forwarding headers. Other ingress needs
+  an explicit trust setup, or all its clients share one budget.
 - IDs use cryptographic randomness; the default eight base62 characters provide
   about 48 bits of entropy. `ID_LENGTH=22` provides about 131 bits for new drops
   (`src/ids.rs`). Changing this does not change existing links.
@@ -46,13 +61,16 @@ trust boundary. For sensitive data, complete your own security review before rol
 3. **Public links and unlock cookies are transferable secrets.** Passwords are
    optional, not enforced by server policy. Share passwords separately; prefer long
    IDs and short expiry. Do not rely on obscurity for highly sensitive documents.
-4. **Abuse controls are incomplete.** There is no built-in per-client rate limit,
-   total storage quota, upload concurrency limit, malware scanning, or DLP. Password
-   checks have a concurrency cap but waiting requests can still consume resources;
-   password hashing on authenticated drop creation has no equivalent semaphore.
-   The shared token can therefore be used to exhaust CPU or storage. Apply ingress
-   request/concurrency limits, disk budgets and alerts, and an appropriate scanning
-   process. The bundled Caddy example provides TLS, not rate limiting.
+4. **Abuse controls remain local and limited.** Per-IP request limits and bounded
+   password workers slow guessing and bursts, but are not distributed DDoS defense.
+   NAT users share limits; IPv6 rotation/botnets can fill the bounded table and deny
+   new clients until idle expiry. State resets on restart and is not shared across
+   replicas. There is no total storage quota, upload concurrency limit, malware
+   scanning, or DLP; a token holder can still exhaust storage. Apply ingress
+   connection/concurrency limits, disk budgets and alerts, and an appropriate
+   scanning process. Trust only controlled proxy peers and verify real-client
+   separation, especially behind Dokploy/Traefik/CDNs. See the README's rate-limit
+   configuration and saturation behavior before tuning defaults.
 5. **Operational logs are not a user audit trail.** Request paths contain drop IDs
    and filenames; creation logs contain IDs. Relay room IDs are shortened in app
    request logs, but external proxies may log complete room URLs. Restrict log
@@ -77,7 +95,8 @@ trust boundary. For sensitive data, complete your own security review before rol
 - [ ] Private encrypted storage/backups; least-privilege storage credentials.
 - [ ] `ID_LENGTH=22`, appropriate expiry/file limits; relay disabled if unused.
 - [ ] Password and anonymous access tests performed with non-sensitive sample data.
-- [ ] Ingress abuse controls, resource monitoring, alerting and log retention configured.
+- [ ] Trusted proxy identity and 429/health behavior tested; ingress connection/concurrency
+      controls, resource monitoring, alerting and log retention configured.
 - [ ] Restore drill and token/room/drop revocation procedure tested.
 - [ ] Independent review for the customer's data classification and compliance needs.
 

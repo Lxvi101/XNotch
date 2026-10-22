@@ -17,6 +17,7 @@ axum = { version = "0.8", default-features = false, features = ["form", "http1",
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+ipnet = "2"
 mime_guess = { version = "2", default-features = false }
 object_store = { version = "0.14", default-features = false, features = ["aws", "fs"] }
 percent-encoding = "2"

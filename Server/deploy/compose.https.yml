@@ -1,6 +1,12 @@
 # Use with: docker compose -f docker-compose.yml -f deploy/compose.https.yml ...
 services:
   xnotch-cloud:
+    environment:
+      # Trust only the fixed Caddy peer, not the whole Docker network.
+      TRUSTED_PROXIES: 172.30.254.2
+    networks:
+      ingress:
+        ipv4_address: 172.30.254.3
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -12,6 +18,9 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    networks:
+      ingress:
+        ipv4_address: 172.30.254.2
     ports:
       - "80:80"
       - "443:443"
@@ -32,3 +41,10 @@ services:
 volumes:
   caddy-data:
   caddy-config:
+networks:
+  # If this conflicts with an existing route, change the subnet, both addresses
+  # above, and TRUSTED_PROXIES together. Do not attach untrusted containers.
+  ingress:
+    ipam:
+      config:
+        - subnet: 172.30.254.0/29

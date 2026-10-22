@@ -171,8 +171,10 @@ At your network/provider firewall allow 80/443 to this host and SSH only from yo
 admin network. **Do not allow 8080.** Docker-published ports can bypass UFW rules;
 use an appropriate upstream firewall and verify from a different machine.
 See [Docker's firewall documentation](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
-The example does not configure a WAF or request rate limits; supply these through
-your organization's ingress before exposing it to untrusted traffic at scale.
+The application includes bounded per-client request limits and password-worker
+admission controls. The HTTPS overlay trusts only Caddy's fixed private IP for
+client identity (see [rate limiting](#rate-limiting-and-client-identity)). Add ingress
+connection/concurrency limits and a WAF as appropriate for large untrusted workloads.
 
 ### 4. Verify access before uploading real data
 
@@ -322,7 +324,74 @@ All settings are environment variables. Empty values count as unset.
 | `RELAY_MAX_WAITING` | `256` | Waiting Mac sockets across all rooms. Beyond this a new Mac socket is closed with `4503`. |
 | `RELAY_PHONE_WAIT` | `10` | Seconds a phone waits for a Mac before it is closed with `4404` (0 to 300). |
 | `RELAY_IDLE_TIMEOUT` | `1800` | Seconds without a data message in either direction before a pair is closed. |
+| `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs. Empty uses socket peers only; see below. |
+| `RATE_LIMIT_PUBLIC_PER_MINUTE` / `RATE_LIMIT_PUBLIC_BURST` | `120` / `60` | Public pages, downloads, unknown paths; password posts also use this bucket. |
+| `RATE_LIMIT_PASSWORD_PER_MINUTE` / `RATE_LIMIT_PASSWORD_BURST` | `10` / `5` | Public POST/password attempts across all drop IDs, including invalid forms/drops. |
+| `RATE_LIMIT_API_PER_MINUTE` / `RATE_LIMIT_API_BURST` | `120` / `60` | API authentication and management, including uploads and invalid tokens. |
+| `RATE_LIMIT_RELAY_PER_MINUTE` / `RATE_LIMIT_RELAY_BURST` | `30` / `20` | Relay upgrade attempts, including invalid rooms/handshakes. |
+| `RATE_LIMIT_MAX_CLIENTS` | `10000` | Maximum tracked client IPs, 1 to 1000000. New clients receive 429 when full. |
+| `RATE_LIMIT_IDLE_SECONDS` | `900` | Idle expiry, 1 to 86400 seconds; must cover every bucket's full refill time. |
+| `PASSWORD_CONCURRENCY` | `4` | Shared Argon2 creation/verification slots, 1 to 64; no waiting queue. |
 | `RUST_LOG` | `info` | Log level. Set `LOG_FORMAT=json` for JSON log lines. |
+
+### Rate limiting and client identity
+
+Limits apply per client IP and per process. Each token bucket starts with `BURST`
+tokens, refills continuously at `PER_MINUTE`, and never exceeds `BURST`. Both values
+must be integers from 1 to 1000000. Public password posts consume both public and
+password budgets; API and relay admission have independent budgets. Admission is
+checked before authentication, body parsing, storage access or WebSocket upgrades.
+Rejections return JSON with **429**, a positive `Retry-After` in seconds, and
+`Cache-Control: no-store`. `GET /healthz` (and HEAD) is exempt, including when the
+client table is full. Accepted uploads/downloads and upgraded sockets are never
+interrupted by request rate limits; relay capacity/message/idle controls still apply.
+
+Client state uses a bounded table with one bounded expiry-index entry per IP.
+Idle entries expire after `RATE_LIMIT_IDLE_SECONDS` and are reclaimed incrementally
+on subsequent requests (at most 64 removals per request). That timeout must be at
+least the longest full refill time, `60 * BURST / PER_MINUTE`, so expiry cannot
+reset depleted budgets early. Live entries are never evicted to make room for
+new identities. At capacity, unknown clients fail closed with 429 and an estimated
+retry time; known clients retain their limits. Rejected attempts refresh idle time.
+Missing socket metadata in an embedded router or a poisoned limiter lock also
+fails closed. Password creation and verification share `PASSWORD_CONCURRENCY`
+blocking-job slots (about 19 MiB per Argon2 default run). Busy workers return 429
+with `Retry-After: 1` immediately; there is no waiting request queue. Cancelling a
+request keeps its slot occupied until the blocking job actually finishes.
+
+**Direct access:** leave `TRUSTED_PROXIES` empty. The socket peer IP is the identity;
+ports are ignored and IPv4-mapped IPv6 is normalized. `X-Forwarded-For`, `Forwarded`
+and `X-Real-IP` cannot change it.
+
+**Reverse proxies:** set `TRUSTED_PROXIES` to literal IP addresses or CIDRs of only
+proxies you control, for example `127.0.0.1,::1,10.42.0.8/32`. Hostnames, malformed
+entries, `/0`, and lists over 128 entries/8192 bytes fail startup. Only a request
+from a trusted socket peer may use `X-Forwarded-For`. Its plain-IP chain is walked
+right to left, stopping at the first untrusted hop; an attacker-controlled prefix
+is ignored. Multiple header lines are processed in order. Missing, malformed,
+over-2048-byte or over-32-hop chains fall back to the socket peer. Other forwarded
+headers are never used. Configure every trusted proxy to replace client-supplied
+forwarding headers or append the actual immediate peer, and restrict backend access.
+Never trust all private networks or a shared subnet containing untrusted containers.
+
+**Bundled Caddy HTTPS overlay:** it pins Caddy to `172.30.254.2` and the backend to
+`172.30.254.3` on a dedicated `172.30.254.0/29` bridge, and overrides
+`TRUSTED_PROXIES` with just the Caddy address. The Caddyfile replaces X-Forwarded-For
+with its socket peer; Caddy's [forwarding-header rules](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#defaults)
+also describe its default spoofing protections. Do not attach untrusted containers.
+If the subnet conflicts, change the bridge subnet, both static addresses and trust
+entry together in `deploy/compose.https.yml`. This example assumes Caddy receives
+internet traffic directly. Behind another load balancer/CDN, design and test that
+proxy's trust/header configuration explicitly; otherwise clients share its IP.
+For Dokploy/Traefik, configure the actual ingress peer IP/CIDR yourself; leaving
+trust empty safely groups all traffic through that proxy into one client budget.
+
+These controls slow guessing, enumeration and request bursts; they do not provide
+identity/tenant isolation, bandwidth or total-storage quotas, upload concurrency
+limits, or distributed DDoS protection. Clients behind NAT share an IP budget;
+IPv6 address rotation/botnets can consume table capacity and deny new clients.
+State resets on restart and is not shared across replicas. Keep ingress connection,
+body-size and concurrency controls, resource monitoring and storage budgets.
 
 ## Deploy with Dokploy
 
@@ -611,7 +680,8 @@ expects to be the only instance writing to its storage.
   expires. Ids are 8 random base62 characters (about 47 bits) from a CSPRNG;
   raise `ID_LENGTH` if you want longer ones.
 - **Drop passwords** add a second secret on top of the link. They are hashed with
-  Argon2id; at most 4 hashes are checked at once and every wrong guess waits 750 ms,
+  Argon2id; creation and verification share four worker slots by default, and every
+  wrong guess waits 750 ms,
   which slows guessing but does not stop it, so use more than a short word. Unlocking
   sets a cookie holding a random per-drop key (not the password); deleting the drop
   revokes it. Direct file links of a locked drop lead to the password form.
@@ -625,8 +695,9 @@ expects to be the only instance writing to its storage.
   XNotch, so a stranger in a room cannot read or forge messages; at worst they can
   occupy waiting slots. Delete the room (`DELETE /api/relay/rooms/{room}`) to cut
   it off.
-- There is no rate limiting. If the server is exposed to abuse, add a limit in
-  Traefik or your reverse proxy.
+- Built-in [rate limiting](#rate-limiting-and-client-identity) covers public/password,
+  API and relay admission. Configure trusted proxy identity before deployment; add
+  ingress connection/concurrency limits and storage budgets for broader abuse control.
 
 ## Development
 

@@ -7,8 +7,25 @@ use axum::http::{HeaderMap, header};
 use rand::Rng;
 use subtle::ConstantTimeEq;
 
+use crate::SharedState;
+use crate::error::ApiError;
 use crate::ids;
 use crate::model::DropMeta;
+
+/// No waiting request queue. Keep the permit inside the blocking job so a
+/// disconnected/cancelled HTTP request cannot release it while Argon2 still runs.
+pub async fn run_bounded<T: Send + 'static>(
+    state: &SharedState,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    let permit = state.password_checks.clone().try_acquire_owned().map_err(|_| ApiError::TooManyRequests(1))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|e| ApiError::internal("password worker failed", e))
+}
 
 /// Longest accepted password, in bytes. Argon2 handles any length; this only
 /// bounds the work a request can ask for.

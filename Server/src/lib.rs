@@ -10,6 +10,7 @@ pub mod pages;
 pub mod password;
 pub mod public;
 pub mod range;
+pub mod rate_limit;
 pub mod relay;
 pub mod storage;
 
@@ -31,15 +32,12 @@ use crate::storage::Storage;
 /// How often expired drops are swept from storage.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
-/// Password hashes checked at once. Each Argon2 run takes about 19 MiB and a
-/// few tens of milliseconds, so this bounds memory and CPU under guessing.
-pub const PASSWORD_CHECKS: usize = 4;
-
 pub struct AppState {
     pub config: Config,
     pub storage: Storage,
     pub relay: Relay,
-    pub password_checks: tokio::sync::Semaphore,
+    pub password_checks: Arc<tokio::sync::Semaphore>,
+    pub rate_limiter: rate_limit::RateLimiter,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -47,7 +45,9 @@ pub type SharedState = Arc<AppState>;
 impl AppState {
     pub fn new(config: Config, storage: Storage) -> Self {
         let relay = Relay::new(config.relay.clone());
-        Self { config, storage, relay, password_checks: tokio::sync::Semaphore::new(PASSWORD_CHECKS) }
+        let rate_limiter = rate_limit::RateLimiter::new(config.rate_limit.clone());
+        let password_checks = Arc::new(tokio::sync::Semaphore::new(config.rate_limit.password_concurrency));
+        Self { config, storage, relay, password_checks, rate_limiter }
     }
 
     pub fn drop_url(&self, id: &str) -> String {
@@ -61,6 +61,7 @@ pub fn app(state: SharedState) -> Router {
         .nest("/api", api::router(state.clone()))
         .merge(public::router())
         .fallback(public::not_found)
+        .layer(axum::middleware::from_fn_with_state(state.clone(), rate_limit::admit))
         .layer(
             TraceLayer::new_for_http()
                 // Like `DefaultMakeSpan`, but relay room ids (credentials) are shortened.

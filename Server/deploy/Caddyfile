@@ -1,3 +1,7 @@
 {$PUBLIC_URL} {
-	reverse_proxy xnotch-cloud:8080
+	# Direct internet ingress: replace any client-supplied chain with Caddy's
+	# socket peer. Additional upstream proxies need a separate trust design.
+	reverse_proxy xnotch-cloud:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
 }

@@ -64,7 +64,7 @@ async fn serve(config: Config) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("cannot bind {addr}: {e}"))?;
     tracing::info!(%addr, public_url = %state.config.public_url, version = env!("CARGO_PKG_VERSION"), "listening");
 
-    axum::serve(listener, app(state))
+    axum::serve(listener, app(state).into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| format!("server error: {e}"))?;

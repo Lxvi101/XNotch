@@ -129,12 +129,9 @@ async fn unlock(
     let right = if attempt.is_empty() || attempt.len() > password::MAX_PASSWORD_BYTES {
         false
     } else {
-        let Ok(_permit) = state.password_checks.acquire().await else {
-            return internal_error("password checks closed", "semaphore closed");
-        };
-        match tokio::task::spawn_blocking(move || password::verify(&attempt, &hash)).await {
+        match password::run_bounded(&state, move || password::verify(&attempt, &hash)).await {
             Ok(right) => right,
-            Err(e) => return internal_error("failed to check password", e),
+            Err(e) => return e.into_response(),
         }
     };
     if !right {

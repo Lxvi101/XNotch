@@ -56,7 +56,9 @@ async fn start_in(dir: TempDir, extra: &[(&str, &str)], tweak: impl FnOnce(&mut 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = app(state.clone());
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    tokio::spawn(async move {
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap()
+    });
     Server { addr, app: app(state.clone()), state, dir }
 }
 
@@ -70,7 +72,9 @@ impl Server {
         if let Some(token) = token {
             request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
         }
-        let response = self.app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+        let mut request = request.body(Body::empty()).unwrap();
+        request.extensions_mut().insert(axum::extract::ConnectInfo("127.0.0.1:12345".parse::<SocketAddr>().unwrap()));
+        let response = self.app.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&body).unwrap_or(Value::Null))

@@ -116,9 +116,8 @@ async fn create_drop(State(state): State<SharedState>, body: Bytes) -> Result<Re
             )));
         }
         Some(p) => Some(
-            tokio::task::spawn_blocking(move || password::hash(&p))
-                .await
-                .map_err(|e| ApiError::internal("failed to hash password", e))?
+            password::run_bounded(&state, move || password::hash(&p))
+                .await?
                 .map_err(|e| ApiError::internal("failed to hash password", e))?,
         ),
     };
