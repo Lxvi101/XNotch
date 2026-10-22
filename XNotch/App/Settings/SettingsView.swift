@@ -23,7 +23,10 @@ struct SettingsView: View {
     let onReplayOnboarding: () -> Void
 
     var body: some View {
-        NavigationSplitView {
+        // The sidebar always shows, as in System Settings: the window doesn't
+        // resize to make room for it, so collapsing it only squeezed and
+        // re-flowed the pane, and a collapsed sidebar stayed collapsed.
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $navigation.selection) {
                 Section {
                     row(.general, "General", "gearshape.fill", .gray)
@@ -44,6 +47,7 @@ struct SettingsView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 210, max: 240)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .frame(minWidth: 460)
