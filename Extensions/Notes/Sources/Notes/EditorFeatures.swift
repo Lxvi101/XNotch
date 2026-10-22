@@ -125,6 +125,13 @@ extension MarkdownLayoutManager {
             guard extra.height > 0 else { return nil }
             return CGRect(x: extra.minX + container.lineFragmentPadding, y: extra.minY + 1, width: 2, height: height(of: fallback))
         }
+        // A picture's line holds no visible text: the caret stands beside the
+        // picture, a line of text tall, along its bottom.
+        if let (run, image) = imageLine(at: index, in: storage), let frame = blockImageFrame(for: run, image: image) {
+            let tall = height(of: fallback)
+            let x = index <= run.location ? max(0, frame.minX - 4) : frame.maxX + 3
+            return CGRect(x: x, y: frame.maxY - tall, width: 2, height: tall)
+        }
         let character = min(index, length - 1)
         let glyph = glyphIndexForCharacter(at: character)
         ensureLayout(forGlyphRange: NSRange(location: glyph, length: 1))
@@ -147,12 +154,29 @@ extension MarkdownLayoutManager {
         let font = (storage.attribute(.font, at: fontIndex, effectiveRange: nil) as? NSFont) ?? fallback
         let x: CGFloat
         if index >= length {
-            x = boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).maxX
+            // Where the last character sits plus its width: a hidden one has
+            // none, and its bounding box would be empty, not where it is.
+            let width = boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).width
+            x = line.minX + position.x + width
         } else {
             x = line.minX + position.x
         }
         let baseline = line.minY + position.y
         return CGRect(x: x, y: baseline - font.ascender, width: 2, height: height(of: font))
+    }
+
+    /// The picture whose line `index` is on, from its start to the end of its markdown.
+    private func imageLine(at index: Int, in storage: NSTextStorage) -> (NSRange, NoteImage)? {
+        let string = storage.string as NSString
+        for probe in [index, index - 1] where probe >= 0 && probe < storage.length {
+            var run = NSRange()
+            guard let image = storage.attribute(.mdImage, at: probe, longestEffectiveRange: &run,
+                                                in: NSRange(location: 0, length: storage.length)) as? NoteImage else { continue }
+            var end = NSMaxRange(run)
+            if end > run.location, string.character(at: end - 1) == 0x0A { end -= 1 }
+            if index >= run.location, index <= end { return (run, image) }
+        }
+        return nil
     }
 }
 

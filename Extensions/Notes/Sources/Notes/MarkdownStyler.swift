@@ -22,6 +22,9 @@ extension NSAttributedString.Key {
     static let mdLink = NSAttributedString.Key("xnotch.md.link")
     /// A line showing an image instead of its markdown. The value is a `NoteImage`.
     static let mdImage = NSAttributedString.Key("xnotch.md.image")
+    /// An image as a small thumbnail in a line of text, drawn over the space
+    /// its first character holds open. The value is a `NoteImage`.
+    static let mdInlineImage = NSAttributedString.Key("xnotch.md.inlineimage")
 }
 
 /// Mote's look, in TextKit terms.
@@ -52,14 +55,87 @@ struct MarkdownTheme {
     static let codeFill = NSColor(white: 1, alpha: 0.075)
 }
 
-/// An image shown in place of its markdown line.
+/// How big an embedded image shows: the hint after a `|` in its alt text,
+/// as Obsidian writes it (`![photo|large](photo.png)`), so the file reads
+/// the same anywhere.
+enum ImageDisplay: Equatable {
+    /// A small rounded thumbnail in the line of text.
+    case inline
+    /// Fits a square, by default: a preview, not the picture at full size.
+    case preview
+    case medium, large, full
+    case width(CGFloat)
+
+    static let previewSide: CGFloat = 160
+    static let inlineHeight: CGFloat = 18
+
+    /// The alt text without its hint, and the hint.
+    static func parse(_ alt: String) -> (label: String, display: ImageDisplay?) {
+        guard let bar = alt.lastIndex(of: "|") else { return (alt, nil) }
+        let label = String(alt[..<bar]).trimmingCharacters(in: .whitespaces)
+        let hint = alt[alt.index(after: bar)...].trimmingCharacters(in: .whitespaces).lowercased()
+        switch hint {
+        case "inline": return (label, .inline)
+        case "preview", "small": return (label, .preview)
+        case "medium": return (label, .medium)
+        case "large": return (label, .large)
+        case "full": return (label, .full)
+        default:
+            if let width = Double(hint), width >= 16 { return (label, .width(CGFloat(width))) }
+            return (alt, nil)
+        }
+    }
+
+    /// What goes after the `|`; the default writes none.
+    var hint: String? {
+        switch self {
+        case .inline: "inline"
+        case .preview: nil
+        case .medium: "medium"
+        case .large: "large"
+        case .full: "full"
+        case .width(let width): String(Int(width))
+        }
+    }
+
+    /// The size the picture is drawn at, never wider than the text.
+    func size(for picture: CGSize, available: CGFloat) -> CGSize {
+        let aspect = picture.width / max(picture.height, 1)
+        switch self {
+        case .inline:
+            let height = Self.inlineHeight
+            return CGSize(width: min(max(height * aspect, height), height * 3).rounded(), height: height)
+        case .preview:
+            let side = min(Self.previewSide, available)
+            let scale = min(side / max(picture.width, 1), side / max(picture.height, 1), 1)
+            return CGSize(width: (picture.width * scale).rounded(), height: (picture.height * scale).rounded())
+        default:
+            let wanted: CGFloat = switch self {
+            case .medium: 280
+            case .large: 420
+            case .width(let width): width
+            default: available
+            }
+            let width = min(wanted, available, self == .full ? available : picture.width * 2)
+            let height = min((width / max(aspect, 0.01)).rounded(), 640)
+            return CGSize(width: (height * aspect).rounded(), height: height)
+        }
+    }
+}
+
+/// An image shown in place of its markdown, and where that markdown is.
 final class NoteImage: NSObject {
     let url: URL
     let size: CGSize
+    /// The size it's drawn at.
+    let display: CGSize
+    let mode: ImageDisplay
 
-    init(url: URL, size: CGSize) {
+    init(url: URL, size: CGSize, display: CGSize = .zero, mode: ImageDisplay = .preview) {
         self.url = url
         self.size = size
+        self.display = display
+        self.mode = mode
     }
 }
 
@@ -132,7 +208,15 @@ struct MarkdownStyler {
     private static let ordered = regex(#"^([ \t]*)(\d{1,9}[.)])([ \t]+)"#)
     private static let quote = regex(#"^([ \t]*)(>)([ \t]?)"#)
     private static let codeSpan = regex(#"(`+)([^`\n]+?)\1"#)
-    private static let image = regex(#"!\[([^\]\n]*)\]\(([^)\n]+)\)"#)
+    static let image = regex(#"!\[([^\]\n]*)\]\(([^)\n]+)\)"#)
+
+    /// The image markdown on `index`'s line that covers it, or starts there.
+    static func imageMarkup(at index: Int, in string: NSString) -> NSTextCheckingResult? {
+        guard index <= string.length else { return nil }
+        let line = string.lineRange(for: NSRange(location: min(index, max(0, string.length - 1)), length: 0))
+        return image.matches(in: string as String, range: line).first { NSLocationInRange(index, $0.range) }
+            ?? image.matches(in: string as String, range: line).first
+    }
     private static let link = regex(#"\[([^\]\n]+)\]\(([^)\n]+)\)"#)
     private static let bareURL = regex(#"\bhttps?://[^\s<>()\[\]]+[^\s<>()\[\].,;:!?'"]"#)
     private static let bold = regex(#"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
@@ -341,7 +425,7 @@ struct MarkdownStyler {
             let onLine = touches(content)
             var inline = content
 
-            if let image = wholeLineImage(line, content: content), !onLine {
+            if let image = wholeLineImage(line, content: content), !touchesInside(content) {
                 showImage(image, line: full)
                 return
             }
@@ -405,21 +489,44 @@ struct MarkdownStyler {
 
         // MARK: Images
 
+        /// An image's syntax shows only when the selection is inside it, not
+        /// beside it: typing after a picture keeps the picture.
+        func touchesInside(_ range: NSRange) -> Bool {
+            guard let selection = context.selection else { return false }
+            if selection.length > 0 { return NSIntersectionRange(selection, range).length > 0 }
+            return selection.location > range.location && selection.location < NSMaxRange(range)
+        }
+
+        /// A picture in the bucket or on disk, sized for how it's shown.
+        private func picture(_ destination: String, alt: String, alone: Bool) -> NoteImage? {
+            guard let url = MarkdownStyler.resolve(destination, base: context.base), url.isFileURL,
+                  let size = MainActor.assumeIsolated({ NoteImages.pixelSize(of: url) }) else { return nil }
+            let mode = ImageDisplay.parse(alt).display ?? (alone ? .preview : .inline)
+            return NoteImage(url: url, size: size, display: mode.size(for: size, available: context.width), mode: mode)
+        }
+
         /// `![alt](path)` alone on its line, pointing at a picture that's there.
         private func wholeLineImage(_ line: NSString, content: NSRange) -> NoteImage? {
             guard line.length > 5, line.hasPrefix("!") || line.hasPrefix(" "),
                   let match = Self.image.firstMatch(in: line as String, range: NSRange(location: 0, length: line.length)),
                   line.replacingCharacters(in: match.range, with: "").trimmingCharacters(in: .whitespaces).isEmpty,
-                  let url = MarkdownStyler.resolve(line.substring(with: match.range(at: 2)), base: context.base),
-                  url.isFileURL, let size = MainActor.assumeIsolated({ NoteImages.pixelSize(of: url) }) else { return nil }
-            return NoteImage(url: url, size: size)
+                  let image = picture(line.substring(with: match.range(at: 2)), alt: line.substring(with: match.range(at: 1)),
+                                      alone: true), image.mode != .inline else { return nil }
+            return image
         }
 
         private func showImage(_ image: NoteImage, line: NSRange) {
-            let width = min(image.size.width, context.width)
-            let height = max(24, min(360, (image.size.height * width / max(image.size.width, 1)).rounded()))
             text.addAttributes([.mdHidden: true, .font: NSFont.systemFont(ofSize: 4), .mdImage: image,
-                                .paragraphStyle: styler.paragraph(spacingBefore: 4, height: height + 6)], range: line)
+                                .paragraphStyle: styler.paragraph(spacingBefore: 4, height: image.display.height + 8)], range: line)
+        }
+
+        /// A thumbnail in the line: the `!` holds its width open, the rest of
+        /// the syntax takes none.
+        private func showInline(_ image: NoteImage, match: NSRange) {
+            text.addAttribute(.mdHidden, value: true, range: NSRange(location: match.location + 1, length: match.length - 1))
+            let bang = ("!" as NSString).size(withAttributes: [.font: theme.body]).width
+            text.addAttributes([.foregroundColor: NSColor.clear, .mdInlineImage: image,
+                                .kern: image.display.width - bang + 4], range: NSRange(location: match.location, length: 1))
         }
 
         // MARK: Inline
@@ -443,6 +550,14 @@ struct MarkdownStyler {
                     text.addAttribute(.kern, value: 4, range: NSRange(location: match.range.location - 1, length: 1))
                 }
                 text.addAttribute(.kern, value: 4, range: NSRange(location: NSMaxRange(match.range) - ticks - 1, length: 1))
+                take(match.range)
+            }
+
+            for match in Self.image.matches(in: snapshot, range: range) where free(match.range) {
+                guard !touchesInside(match.range),
+                      let image = picture(string.substring(with: match.range(at: 2)), alt: string.substring(with: match.range(at: 1)),
+                                          alone: false) else { continue }
+                showInline(image, match: match.range)
                 take(match.range)
             }
 

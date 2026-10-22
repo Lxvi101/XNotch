@@ -21,6 +21,7 @@ struct NoteRootView: View {
             BucketLayer(controller: controller, state: state)
             SwitcherLayer(controller: controller, state: state)
             LandingLayer(state: state)
+            MentionPopover(state: state, controller: controller)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .coordinateSpace(name: noteSpace)
@@ -88,8 +89,9 @@ private struct EditorLayer: View {
     let state: NoteWindowState
 
     var body: some View {
-        let receded = state.receded
-        let swapping = state.isSwapping
+        // Dimmed and blurred behind the bucket by the editor itself (see
+        // MarkdownEditor.setFocus): SwiftUI effects here would re-host the
+        // text view and lose its scroll position.
         EditorHost(editor: controller.editor)
             // Text scrolling up fades out under the header, as in Mote, instead of being cut.
             .mask {
@@ -99,10 +101,6 @@ private struct EditorLayer: View {
                 }
             }
             .padding(.top, NoteGeometry.header - 6)
-            .blur(radius: receded ? 8 : (swapping ? 6 : 0))
-            .scaleEffect(receded ? 0.965 : (swapping ? 0.985 : 1), anchor: .top)
-            .opacity(receded ? 0.35 : (swapping ? 0 : 1))
-            .allowsHitTesting(!receded)
     }
 }
 

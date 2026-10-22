@@ -113,23 +113,77 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             guard let image = value as? NoteImage else { return }
             let glyphs = glyphRange(forCharacterRange: run, actualCharacterRange: nil)
             guard glyphs.length > 0 else { return }
-            let line = lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
-            let available = CGSize(width: container.size.width - padding * 2, height: line.height - 6)
-            let scale = min(available.width / max(image.size.width, 1), available.height / max(image.size.height, 1), 1)
-            let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
-            let frame = CGRect(x: origin.x + padding, y: line.minY + 3, width: size.width, height: size.height)
-            MainActor.assumeIsolated {
-                guard let picture = NoteImages.image(for: image.url) else { return }
-                NSGraphicsContext.saveGraphicsState()
-                NSBezierPath(roundedRect: frame, xRadius: 8, yRadius: 8).addClip()
-                picture.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-                NSGraphicsContext.restoreGraphicsState()
-                NSColor(white: 1, alpha: 0.08).setStroke()
-                let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 7.5, yRadius: 7.5)
-                outline.lineWidth = 1
-                outline.stroke()
+            guard let frame = blockImageFrame(for: run, image: image) else { return }
+            drawPicture(image, in: frame.offsetBy(dx: origin.x, dy: origin.y), radius: frame.height > 60 ? 10 : 6)
+        }
+
+        storage.enumerateAttribute(.mdInlineImage, in: characters) { value, run, _ in
+            guard let image = value as? NoteImage, let frame = inlineImageFrame(for: run, image: image) else { return }
+            drawPicture(image, in: frame.offsetBy(dx: origin.x, dy: origin.y), radius: 4)
+        }
+    }
+
+    /// Where a line's image is drawn, in container coordinates.
+    func blockImageFrame(for run: NSRange, image: NoteImage) -> CGRect? {
+        guard let container = textContainers.first else { return nil }
+        let glyphs = glyphRange(forCharacterRange: run, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        let line = lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+        let width = min(image.display.width, container.size.width - container.lineFragmentPadding * 2)
+        let height = image.display.width > 0 ? image.display.height * width / image.display.width : image.display.height
+        return CGRect(x: container.lineFragmentPadding, y: line.maxY - height - 4, width: width, height: height)
+    }
+
+    /// Where an inline thumbnail is drawn: over its `!`, centred on the text.
+    func inlineImageFrame(for run: NSRange, image: NoteImage) -> CGRect? {
+        guard let container = textContainers.first, let storage = textStorage else { return nil }
+        let glyphs = glyphRange(forCharacterRange: NSRange(location: run.location, length: 1), actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        let bounds = boundingRect(forGlyphRange: glyphs, in: container)
+        let line = lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+        let baseline = line.minY + location(forGlyphAt: glyphs.location).y
+        let font = (storage.attribute(.font, at: run.location, effectiveRange: nil) as? NSFont) ?? .systemFont(ofSize: 14)
+        let middle = baseline - font.xHeight / 2
+        return CGRect(x: bounds.minX + 2, y: middle - image.display.height / 2, width: image.display.width,
+                      height: image.display.height)
+    }
+
+    /// The picture filling its rounded frame, cropped rather than squeezed.
+    private func drawPicture(_ image: NoteImage, in frame: CGRect, radius: CGFloat) {
+        MainActor.assumeIsolated {
+            guard let picture = NoteImages.image(for: image.url) else { return }
+            let scale = max(frame.width / max(image.size.width, 1), frame.height / max(image.size.height, 1))
+            let drawn = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let rect = CGRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2, width: drawn.width, height: drawn.height)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(roundedRect: frame, xRadius: radius, yRadius: radius).addClip()
+            picture.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            NSGraphicsContext.restoreGraphicsState()
+            NSColor(white: 1, alpha: 0.1).setStroke()
+            let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: radius - 0.5, yRadius: radius - 0.5)
+            outline.lineWidth = 1
+            outline.stroke()
+        }
+    }
+
+    /// The image under a point, block or inline, and the character it hangs on.
+    func image(at point: CGPoint) -> (image: NoteImage, index: Int)? {
+        guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return nil }
+        let glyph = glyphIndex(for: point, in: container, fractionOfDistanceThroughGlyph: nil)
+        let character = characterIndexForGlyph(at: glyph)
+        for index in [character, character - 1, character + 1] where index >= 0 && index < storage.length {
+            var run = NSRange()
+            if let image = storage.attribute(.mdImage, at: index, longestEffectiveRange: &run,
+                                             in: NSRange(location: 0, length: storage.length)) as? NoteImage,
+               blockImageFrame(for: run, image: image)?.contains(point) == true {
+                return (image, run.location)
+            }
+            if let image = storage.attribute(.mdInlineImage, at: index, effectiveRange: nil) as? NoteImage,
+               inlineImageFrame(for: NSRange(location: index, length: 1), image: image)?.insetBy(dx: -2, dy: -2).contains(point) == true {
+                return (image, index)
             }
         }
+        return nil
     }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
@@ -279,6 +333,12 @@ final class NoteTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         let point = containerPoint(for: event)
         if let layout = markdownLayout {
+            // A picture keeps showing when clicked: the caret stays where it was.
+            if let hit = layout.image(at: point) {
+                window?.makeFirstResponder(self)
+                if event.clickCount == 2 { peek(hit.image, at: hit.index) }
+                return
+            }
             if let box = layout.checkbox(at: point) {
                 toggleCheckbox(box)
                 return
@@ -291,8 +351,18 @@ final class NoteTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let hit = markdownLayout?.image(at: containerPoint(for: event)),
+              let markup = MarkdownStyler.imageMarkup(at: hit.index, in: string as NSString) else { return super.menu(for: event) }
+        return imageMenu(hit.image, markup: markup.range)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let point = containerPoint(for: event)
+        if markdownLayout?.image(at: point) != nil {
+            NSCursor.arrow.set()
+            return
+        }
         if let layout = markdownLayout, layout.checkbox(at: point) != nil || layout.link(at: point) != nil {
             NSCursor.pointingHand.set()
             return
@@ -511,13 +581,29 @@ final class NoteTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if referencesBucket(sender) { return followDrop(sender) }
         guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.draggingEntered(sender) }
         return fileHandler.fileDragMoved(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if referencesBucket(sender) { return followDrop(sender) }
         guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.draggingUpdated(sender) }
         return fileHandler.fileDragMoved(sender)
+    }
+
+    /// A file dragged out of this note's bucket goes into the text as a reference, not in again as a copy.
+    private func referencesBucket(_ sender: NSDraggingInfo) -> Bool {
+        fileHandler?.bucketFiles(on: sender.draggingPasteboard).isEmpty == false
+    }
+
+    /// The caret follows the drag, so it's clear where the reference lands.
+    private func followDrop(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+        if selectedRange() != NSRange(location: index, length: 0) { setSelectedRange(NSRange(location: index, length: 0)) }
+        if window?.isKeyWindow == false { window?.makeKey() }
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -526,6 +612,11 @@ final class NoteTextView: NSTextView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let fileHandler, case let files = fileHandler.bucketFiles(on: sender.draggingPasteboard), !files.isEmpty {
+            let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+            fileHandler.insertReferences(files, at: index)
+            return true
+        }
         guard Attachments.carriesFiles(sender.draggingPasteboard), let fileHandler else { return super.performDragOperation(sender) }
         return fileHandler.fileDropped(sender)
     }
@@ -543,6 +634,9 @@ protocol NoteFileHandling: AnyObject {
     func fileDropped(_ info: NSDraggingInfo) -> Bool
     func fileDragEnded()
     func attach(from pasteboard: NSPasteboard, at point: CGPoint?)
+    /// Files on the pasteboard that are already in this note's bucket.
+    func bucketFiles(on pasteboard: NSPasteboard) -> [URL]
+    func insertReferences(_ urls: [URL], at index: Int)
 }
 
 /// The scroll view and text view for one note window, kept by its controller
@@ -559,6 +653,8 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     private var styledWidth: CGFloat = 0
     private var fenceCount = 0
     var onChange: ((String) -> Void)?
+    /// After the caret moves or text changes, once styling has caught up.
+    var onCaretMove: (() -> Void)?
     /// The note's bucket: where bare file names in links and images point.
     var base: URL?
     private var isLoading = false
@@ -628,6 +724,52 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     var text: String { textView.string }
 
     private(set) lazy var caret = GlideCaret(textView: textView)
+
+    /// Blurs and dims the text on its own layer, on the GPU. SwiftUI effects on
+    /// this view would re-host it, and the re-host loses the scroll position.
+    /// The filter comes off once the text is sharp again, so typing never pays for it.
+    func setFocus(blur: CGFloat, opacity: Float, duration: TimeInterval, from start: (blur: CGFloat, opacity: Float)? = nil,
+                  easeIn: Bool = false) {
+        guard let layer = scrollView.layer else { return }
+        scrollView.layerUsesCoreImageFilters = true
+        let current = layer.presentation()
+        let fromBlur = start?.blur ?? (current?.value(forKeyPath: "filters.focus.inputRadius") as? CGFloat
+            ?? layer.value(forKeyPath: "filters.focus.inputRadius") as? CGFloat ?? 0)
+        let fromOpacity = start?.opacity ?? current?.opacity ?? layer.opacity
+        let reduced = NoteMotion.reduced
+        let targetBlur = reduced ? 0 : blur
+        if layer.filters?.isEmpty ?? true, fromBlur > 0 || targetBlur > 0 {
+            let filter = CIFilter(name: "CIGaussianBlur")!
+            filter.name = "focus"
+            layer.filters = [filter]
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak layer] in
+            guard let layer, (layer.value(forKeyPath: "filters.focus.inputRadius") as? CGFloat ?? 0) == 0 else { return }
+            layer.filters = nil
+        }
+        if layer.filters?.isEmpty == false { layer.setValue(targetBlur, forKeyPath: "filters.focus.inputRadius") }
+        layer.opacity = opacity
+        let timing = CAMediaTimingFunction(name: easeIn ? .easeIn : .easeOut)
+        if layer.filters?.isEmpty == false, fromBlur != targetBlur {
+            let animation = CABasicAnimation(keyPath: "filters.focus.inputRadius")
+            animation.fromValue = fromBlur
+            animation.toValue = targetBlur
+            animation.duration = duration
+            animation.timingFunction = timing
+            layer.add(animation, forKey: "focusBlur")
+        }
+        if fromOpacity != opacity {
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = fromOpacity
+            animation.toValue = opacity
+            animation.duration = duration
+            animation.timingFunction = timing
+            layer.add(animation, forKey: "focusOpacity")
+        }
+        CATransaction.commit()
+    }
 
     func apply(_ options: EditorOptions) {
         textView.options = options
@@ -787,6 +929,7 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     func textDidChange(_ notification: Notification) {
         flushStyle()
         caret.update()
+        onCaretMove?()
         guard !isLoading else { return }
         onChange?(textView.string)
     }
@@ -794,7 +937,10 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     func textViewDidChangeSelection(_ notification: Notification) {
         revealSelection()
         // Mid-edit the line isn't styled yet; the edit's own pass moves the caret.
-        if pendingStyle == nil { caret.update() }
+        if pendingStyle == nil {
+            caret.update()
+            onCaretMove?()
+        }
         // New text picks up plain attributes; the styler takes it from there.
         textView.typingAttributes = styler.baseAttributes
     }

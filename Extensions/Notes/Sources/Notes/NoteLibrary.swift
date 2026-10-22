@@ -464,10 +464,15 @@ final class NoteLibrary {
     func toggleVisibility(focusing: Bool = false) {
         let open = Array(controllers.values)
         if open.isEmpty {
-            let returning = notes.filter(\.isOpen).sorted { $0.modified > $1.modified }
+            var returning = notes.filter(\.isOpen).sorted { $0.modified > $1.modified }
+            // Every note closed: the latest one comes back. A new note only
+            // when there are none at all.
             if returning.isEmpty, focusing {
-                newNote()
-                return
+                guard let latest = notes.max(by: { $0.modified < $1.modified }) else {
+                    newNote()
+                    return
+                }
+                returning = [latest]
             }
             // Most recent last, so it lands on top and takes the keys.
             for (index, note) in returning.reversed().enumerated() {

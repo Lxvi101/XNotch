@@ -35,15 +35,15 @@ enum NoteMotion {
 final class NoteWindowState {
     /// The note the window shows; the switcher can change it.
     var note: Note
-    /// Where the note grows from and shrinks to, as a point of the note.
-    var anchor = UnitPoint.top
     var isHovered = false
     var isKey = false
-    var showsBucket = false
-    var showsSwitcher = false
+    var showsBucket = false { didSet { if showsBucket != oldValue { onTextFocusChange?() } } }
+    var showsSwitcher = false { didSet { if showsSwitcher != oldValue { onTextFocusChange?() } } }
     var isDragTarget = false
     /// Blurs the text out and back while the window changes notes.
-    var isSwapping = false
+    var isSwapping = false { didSet { if isSwapping != oldValue { onTextFocusChange?() } } }
+    /// The text behind the bucket and the switcher is dimmed on its own layer, not by SwiftUI.
+    @ObservationIgnored var onTextFocusChange: (() -> Void)?
     var selectedAttachment: String?
     /// Files flying from where they were dropped into the bucket.
     var landings: [Landing] = []
@@ -64,6 +64,8 @@ final class NoteWindowState {
     var receded: Bool { showsBucket || showsSwitcher }
     /// "2 of 5", shown in place of the title for a moment as a note opens.
     var positionLabel: String?
+    /// The `@` picker, while it's up.
+    var mention: MentionState?
 
     init(note: Note) {
         self.note = note
@@ -119,8 +121,8 @@ final class NoteController: NSObject {
     let editor = MarkdownEditor()
     let switcher: SwitcherModel
     private unowned let library: NoteLibrary
-    private let frameSpring = FrameSpring()
     private(set) var isClosing = false
+    private var dismissedMentionLocation: Int?
 
     init(note: Note, library: NoteLibrary) {
         state = NoteWindowState(note: note)
@@ -142,18 +144,11 @@ final class NoteController: NSObject {
             withAnimation(NoteMotion.hover) { self.state.isKey = isKey }
             self.editor.textView.updateActiveRange()
         }
-        frameSpring.onFrame = { [weak self] frame in
-            guard let panel = self?.panel else { return }
-            // A move alone shifts the window's pixels; only a resize needs drawing.
-            if frame.size == panel.frame.size {
-                panel.setFrameOrigin(frame.origin)
-            } else {
-                panel.setFrame(frame, display: true)
-            }
-        }
         editor.textView.fileHandler = self
         editor.base = library.bucketFolder(for: note)
         editor.load(note.text)
+        editor.onCaretMove = { [weak self] in self?.updateMention() }
+        state.onTextFocusChange = { [weak self] in self?.updateTextFocus() }
         editor.onChange = { [weak self] text in
             guard let self, !self.isClosing else { return }
             self.note.update(text: text)
@@ -169,7 +164,7 @@ final class NoteController: NSObject {
             ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.moveToActiveSpace, .fullScreenAuxiliary]
     }
 
-    var noteFrame: CGRect { NoteGeometry.noteFrame(inWindow: frameSpring.isAnimating ? frameSpring.target : panel.frame) }
+    var noteFrame: CGRect { NoteGeometry.noteFrame(inWindow: panel.frame) }
 
     /// Where a note made with this one's plus button comes from, on screen.
     var newNoteSource: CGPoint {
@@ -179,30 +174,19 @@ final class NoteController: NSObject {
 
     // MARK: Showing and hiding
 
-    /// Flies out of `source` (a screen point) to the note's place, growing
-    /// out of the side nearest it; appears in place without one.
+    /// Fades in where the note was, its text coming into focus. Nothing
+    /// travels: a moving window and the glass behind it can't keep up with a
+    /// spring, and a fade never asks them to. `source` is where it was opened
+    /// from, kept for callers; the note appears in its own place.
     func show(from source: CGPoint?, focus: Bool, delay: TimeInterval = 0) {
         let frame = NotePlacement.clamped(note.frame ?? NotePlacement.frame(beside: nil, avoiding: []))
         note.frame = frame
-        let target = NoteGeometry.windowFrame(forNote: frame)
-        var start = target
-        if let source {
-            let anchor = anchor(for: source, in: frame)
-            state.anchor = anchor
-            if !NoteMotion.reduced {
-                // Starts with its anchor on the source, so it leaves from there.
-                let anchorOnScreen = CGPoint(x: frame.minX + anchor.x * frame.width, y: frame.maxY - anchor.y * frame.height)
-                start = target.offsetBy(dx: source.x - anchorOnScreen.x, dy: source.y - anchorOnScreen.y)
-            }
-        } else {
-            state.anchor = .center
-        }
-        panel.setFrame(start, display: false)
-        // Laid out and drawn before the first frame, so the flight only moves
-        // pixels that exist: no layout or text setting mid-animation.
+        panel.setFrame(NoteGeometry.windowFrame(forNote: frame), display: false)
+        // Laid out and drawn before the first frame, so the fade only blends
+        // pixels that exist.
         panel.contentView?.layoutSubtreeIfNeeded()
         if let container = editor.textView.textContainer { editor.textView.layoutManager?.ensureLayout(for: container) }
-        setPresence(false, anchor: state.anchor, animated: false)
+        panel.alphaValue = 0
         panel.displayIfNeeded()
         let present = { [weak self] in
             guard let self, !self.isClosing else { return }
@@ -211,17 +195,8 @@ final class NoteController: NSObject {
                 self.panel.makeKey()
                 self.editor.focus(atEnd: true)
             }
-            // One frame at rest first, so the springs have somewhere to leave from.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self.setPresence(true, anchor: self.state.anchor, animated: true)
-                    self.flashPosition()
-                    guard start != target else { return }
-                    self.frameSpring.response = 0.5
-                    self.frameSpring.damping = 0.84
-                    self.frameSpring.animate(from: start, to: target, in: self.panel.contentView!)
-                }
-            }
+            self.fade(in: true)
+            self.flashPosition()
         }
         if delay > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { present() } }
@@ -230,28 +205,16 @@ final class NoteController: NSObject {
         }
     }
 
-    /// Folds into `point` and goes.
+    /// Fades out where it is, its text blurring away, and goes.
     func hide(to point: CGPoint, delay: TimeInterval = 0) {
         guard !isClosing else { return }
         isClosing = true
         let leave = { [weak self] in
             guard let self else { return }
-            let frame = NoteGeometry.noteFrame(inWindow: self.panel.frame)
-            let anchor = self.anchor(for: point, in: frame)
-            self.state.anchor = anchor
             self.panel.makeFirstResponder(nil)
             self.panel.ignoresMouseEvents = true
-            self.setPresence(false, anchor: anchor, animated: true)
-            if !NoteMotion.reduced {
-                let anchorOnScreen = CGPoint(x: frame.minX + anchor.x * frame.width, y: frame.maxY - anchor.y * frame.height)
-                self.frameSpring.response = 0.32
-                self.frameSpring.damping = 1
-                self.frameSpring.animate(from: self.panel.frame,
-                                         to: self.panel.frame.offsetBy(dx: (point.x - anchorOnScreen.x) * 0.9,
-                                                                       dy: (point.y - anchorOnScreen.y) * 0.9),
-                                         in: self.panel.contentView!)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + (NoteMotion.reduced ? 0.18 : 0.3)) {
+            self.fade(in: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeOut + 0.02) {
                 MainActor.assumeIsolated { self.dismiss() }
             }
         }
@@ -262,73 +225,45 @@ final class NoteController: NSObject {
         }
     }
 
+    private static let fadeIn: TimeInterval = 0.22
+    private static let fadeOut: TimeInterval = 0.16
+
+    /// The window's alpha, which the window server blends glass and all, and
+    /// a blur on the text alone, which the GPU animates; the blur comes off
+    /// once the note is at rest, so typing never pays for it.
+    private func fade(in appearing: Bool) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = appearing ? Self.fadeIn : Self.fadeOut
+            context.timingFunction = CAMediaTimingFunction(name: appearing ? .easeOut : .easeIn)
+            panel.animator().alphaValue = appearing ? 1 : 0
+        }
+        if appearing {
+            editor.setFocus(blur: 0, opacity: 1, duration: Self.fadeIn + 0.04, from: (7, 1))
+        } else {
+            editor.setFocus(blur: 7, opacity: 1, duration: Self.fadeOut, easeIn: true)
+        }
+    }
+
+    /// Behind the bucket or the switcher the text recedes; while the window
+    /// changes notes it blurs out and back.
+    private func updateTextFocus() {
+        if state.receded {
+            editor.setFocus(blur: 8, opacity: 0.35, duration: 0.3)
+        } else if state.isSwapping {
+            editor.setFocus(blur: 6, opacity: 0, duration: 0.1, easeIn: true)
+        } else {
+            editor.setFocus(blur: 0, opacity: 1, duration: 0.28)
+        }
+    }
+
     /// Off screen at once, and let go: the hosted view holds this controller,
     /// so the panel would otherwise keep it alive.
     func dismiss() {
-        frameSpring.stop()
         panel.orderOut(nil)
         panel.contentView = nil
         panel.onKeyDown = nil
         panel.onKeyChange = nil
         editor.onChange = nil
-    }
-
-    /// Scales and fades the whole note about a point of it, on the render
-    /// server: the GPU moves pixels already drawn, and nothing re-renders
-    /// per frame, glass and text included.
-    private func setPresence(_ presented: Bool, anchor: UnitPoint, animated: Bool) {
-        guard let layer = panel.contentView?.layer else { return }
-        let reduced = NoteMotion.reduced
-        let scale: CGFloat = presented ? 1 : (reduced ? 0.98 : 0.16)
-        let target = presenceTransform(scale: scale, anchor: anchor, in: layer)
-        let fromTransform = layer.presentation()?.transform ?? layer.transform
-        let fromOpacity = layer.presentation()?.opacity ?? layer.opacity
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.transform = target
-        layer.opacity = presented ? 1 : 0
-        CATransaction.commit()
-        layer.removeAnimation(forKey: "presence")
-        layer.removeAnimation(forKey: "presenceOpacity")
-        guard animated else { return }
-        // The same spring as the window's flight, so the two move as one.
-        let response = presented ? 0.5 : 0.32
-        let damping = presented ? 0.84 : 1.0
-        let spring = CASpringAnimation(keyPath: "transform")
-        spring.fromValue = NSValue(caTransform3D: fromTransform)
-        spring.toValue = NSValue(caTransform3D: target)
-        spring.mass = 1
-        spring.stiffness = pow(2 * .pi / response, 2)
-        spring.damping = 4 * .pi * damping / response
-        spring.duration = reduced ? 0.2 : spring.settlingDuration
-        if !reduced { layer.add(spring, forKey: "presence") }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = fromOpacity
-        fade.toValue = presented ? 1 : 0
-        fade.duration = presented ? (reduced ? 0.2 : 0.16) : (reduced ? 0.16 : 0.22)
-        fade.timingFunction = CAMediaTimingFunction(name: presented ? .easeOut : .easeIn)
-        layer.add(fade, forKey: "presenceOpacity")
-    }
-
-    /// A scale about the note's `anchor` point (top-left origin), for a layer
-    /// whose transform pivots on its anchorPoint.
-    private func presenceTransform(scale: CGFloat, anchor: UnitPoint, in layer: CALayer) -> CATransform3D {
-        guard scale != 1 else { return CATransform3DIdentity }
-        let bounds = layer.bounds
-        let note = bounds.insetBy(dx: NoteGeometry.margin, dy: NoteGeometry.margin)
-        let fromTop = note.minY + anchor.y * note.height
-        let pivot = CGPoint(x: note.minX + anchor.x * note.width,
-                            y: layer.isGeometryFlipped ? fromTop : bounds.height - fromTop)
-        let offset = CGPoint(x: pivot.x - layer.anchorPoint.x * bounds.width, y: pivot.y - layer.anchorPoint.y * bounds.height)
-        var transform = CATransform3DMakeTranslation(offset.x, offset.y, 0)
-        transform = CATransform3DScale(transform, scale, scale, 1)
-        return CATransform3DTranslate(transform, -offset.x, -offset.y, 0)
-    }
-
-    /// The point of the note nearest `point`, so the note grows toward where it came from.
-    private func anchor(for point: CGPoint, in frame: CGRect) -> UnitPoint {
-        UnitPoint(x: min(max((point.x - frame.minX) / frame.width, 0), 1),
-                  y: min(max((frame.maxY - point.y) / frame.height, 0), 1))
     }
 
     func bringToFront(focus: Bool) {
@@ -555,7 +490,6 @@ final class NoteController: NSObject {
     // MARK: Moving and resizing
 
     func beginMove() {
-        frameSpring.stop()
         panel.makeKey()
     }
 
@@ -585,6 +519,7 @@ final class NoteController: NSObject {
     private func handleKey(_ event: NSEvent) -> Bool {
         // A note on its way out takes nothing more.
         if isClosing { return true }
+        if state.mention != nil, handleMentionKey(event) { return true }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         if state.showsSwitcher, switcher.handle(event, open: { [weak self] note, newWindow in
@@ -658,6 +593,11 @@ extension NoteController: NoteFileHandling {
     }
 
     func fileDropped(_ info: NSDraggingInfo) -> Bool {
+        // The note's own bucket files dropped beside the text: not copies of themselves.
+        guard bucketFiles(on: info.draggingPasteboard).isEmpty else {
+            fileDragEnded()
+            return false
+        }
         let window = info.draggingLocation
         let point = CGPoint(x: window.x - NoteGeometry.margin, y: panel.frame.height - window.y - NoteGeometry.margin)
         attach(from: info.draggingPasteboard, at: point)
@@ -676,6 +616,32 @@ extension NoteController: NoteFileHandling {
         Attachments.read(pasteboard, into: library.bucketFolder(for: note)) { [weak self] urls in
             self?.received(urls)
         }
+    }
+
+    func bucketFiles(on pasteboard: NSPasteboard) -> [URL] {
+        let bucket = library.bucketFolder(for: note).standardizedFileURL.path + "/"
+        let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        guard !urls.isEmpty, urls.allSatisfy({ $0.standardizedFileURL.path.hasPrefix(bucket) }) else { return [] }
+        return urls
+    }
+
+    /// Bucket files into the text at `index`: pictures on lines of their own, as previews.
+    func insertReferences(_ urls: [URL], at index: Int) {
+        let text = editor.textView
+        let string = text.string as NSString
+        let location = min(index, string.length)
+        let lineStart = string.lineRange(for: NSRange(location: location, length: 0)).location
+        var pieces: [String] = []
+        for url in urls {
+            let markup = Attachments.markdown(for: url)
+            pieces.append(markup.hasPrefix("!") ? markup + "\n" : markup + " ")
+        }
+        var insertion = pieces.joined()
+        if insertion.hasPrefix("!"), location != lineStart { insertion = "\n" + insertion }
+        text.replace(NSRange(location: location, length: 0), with: insertion)
+        text.setSelectedRange(NSRange(location: location + (insertion as NSString).length, length: 0))
+        panel.makeKey()
+        editor.focus(atEnd: false)
     }
 
     func attach(_ urls: [URL]) {
@@ -778,18 +744,120 @@ extension NoteController: NoteFileHandling {
     /// since bare names point into the bucket. A picture goes on its own line
     /// and shows in the note.
     func insertLink(to attachment: Attachment) {
-        let name = attachment.name.replacingOccurrences(of: "]", with: ")")
-        let path = attachment.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)?
-            .replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29") ?? attachment.name
-        let isImage = NoteImages.pixelSize(of: attachment.url) != nil
-        let selection = editor.textView.selectedRange()
-        let string = editor.textView.string as NSString
-        let lineStart = string.lineRange(for: NSRange(location: selection.location, length: 0)).location
-        let atLineStart = selection.location == lineStart
-        let link = isImage ? (atLineStart ? "" : "\n") + "![\(name)](\(path))\n" : "[\(name)](\(path))"
         withAnimation(NoteMotion.bloom) { state.showsBucket = false }
         editor.focus(atEnd: false)
-        editor.textView.insertText(link, replacementRange: editor.textView.selectedRange())
+        insertReferences([attachment.url], at: editor.textView.selectedRange().location)
+    }
+
+    // MARK: Mentions
+
+    /// Opens, follows or closes the `@` picker as the caret moves.
+    func updateMention() {
+        let text = editor.textView
+        let string = text.string as NSString
+        let selection = text.selectedRange()
+        guard text.isFocused, selection.length == 0, !state.receded,
+              let found = MentionTrigger.find(in: string, caret: selection.location),
+              found.range.location != dismissedMention, !isCode(at: found.range.location),
+              let caret = caretInNote(at: found.range.location) else {
+            if state.mention != nil { withAnimation(NoteMotion.hover) { state.mention = nil } }
+            if let dismissed = dismissedMention, MentionTrigger.find(in: string, caret: selection.location)?.range.location != dismissed {
+                dismissedMention = nil
+            }
+            return
+        }
+        let files = MentionState.matches(found.query, in: note.attachments)
+        let selected = state.mention?.query == found.query ? state.mention?.selection ?? 0 : 0
+        let mention = MentionState(range: found.range, query: found.query, files: files,
+                                   selection: min(selected, max(0, files.count - 1)),
+                                   caretTop: caret.minY, caretBottom: caret.maxY, x: caret.minX)
+        if state.mention == nil {
+            withAnimation(NoteMotion.bloom) { state.mention = mention }
+        } else if state.mention != mention {
+            state.mention = mention
+        }
+    }
+
+    /// Escape closes the picker for this `@` until the caret leaves it.
+    private var dismissedMention: Int? {
+        get { dismissedMentionLocation }
+        set { dismissedMentionLocation = newValue }
+    }
+
+    func selectMention(_ index: Int) {
+        guard var mention = state.mention, mention.files.indices.contains(index), mention.selection != index else { return }
+        mention.selection = index
+        withAnimation(NoteMotion.hover) { state.mention = mention }
+    }
+
+    private func handleMentionKey(_ event: NSEvent) -> Bool {
+        guard let mention = state.mention else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers.isEmpty || modifiers == [.shift] else { return false }
+        switch event.keyCode {
+        case 125: selectMention(min(mention.selection + 1, max(0, mention.files.count - 1)))
+        case 126: selectMention(max(mention.selection - 1, 0))
+        case 36, 76, 48: // return, enter, tab
+            guard mention.files.indices.contains(mention.selection) else {
+                closeMention()
+                return event.keyCode == 48
+            }
+            insertMention(mention.files[mention.selection])
+        case 53: closeMention()
+        default: return false
+        }
+        return true
+    }
+
+    private func closeMention() {
+        dismissedMention = state.mention?.range.location
+        withAnimation(NoteMotion.hover) { state.mention = nil }
+    }
+
+    /// Replaces `@query` with the file: a picture alone on its line shows as a
+    /// preview, with the caret moved below it; one among words, inline.
+    func insertMention(_ file: Attachment) {
+        guard let mention = state.mention else { return }
+        withAnimation(NoteMotion.hover) { state.mention = nil }
+        let text = editor.textView
+        let string = text.string as NSString
+        guard NSMaxRange(mention.range) <= string.length else { return }
+        let markup = Attachments.markdown(for: file.url)
+        let line = string.lineRange(for: NSRange(location: mention.range.location, length: 0))
+        var contentsEnd = 0
+        string.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: line)
+        let before = string.substring(with: NSRange(location: line.location, length: mention.range.location - line.location))
+        let after = string.substring(with: NSRange(location: NSMaxRange(mention.range), length: contentsEnd - NSMaxRange(mention.range)))
+        let alone = markup.hasPrefix("!") && before.trimmingCharacters(in: .whitespaces).isEmpty
+            && after.trimmingCharacters(in: .whitespaces).isEmpty
+        if alone {
+            let hasNextLine = contentsEnd < string.length
+            text.replace(mention.range, with: markup + (hasNextLine ? "" : "\n"))
+            let next = (text.string as NSString).lineRange(for: NSRange(location: mention.range.location, length: 0))
+            text.setSelectedRange(NSRange(location: NSMaxRange(next), length: 0))
+        } else {
+            text.replace(mention.range, with: markup + " ")
+            text.setSelectedRange(NSRange(location: mention.range.location + (markup as NSString).length + 1, length: 0))
+        }
+    }
+
+    private func isCode(at index: Int) -> Bool {
+        guard let storage = editor.textView.textStorage, index < storage.length else { return false }
+        let attributes = storage.attributes(at: index, effectiveRange: nil)
+        return attributes[.mdCodeSpan] != nil || attributes[.mdCodeBlock] != nil
+    }
+
+    /// The caret's rectangle at `index`, in the note's coordinates (top-left origin).
+    private func caretInNote(at index: Int) -> CGRect? {
+        let text = editor.textView
+        guard let layout = text.markdownLayout, let container = text.textContainer, let content = panel.contentView,
+              let rect = layout.insertionRect(at: index, in: container) else { return nil }
+        let origin = text.textContainerOrigin
+        let inText = rect.offsetBy(dx: origin.x, dy: origin.y)
+        let inContent = text.convert(inText, to: content)
+        let top = content.isFlipped ? inContent.minY : content.bounds.height - inContent.maxY
+        return CGRect(x: inContent.minX - NoteGeometry.margin, y: top - NoteGeometry.margin,
+                      width: inContent.width, height: inContent.height)
     }
 
     // MARK: Menus
@@ -950,77 +1018,4 @@ final class NoteHostingView<Content: View>: NSHostingView<Content> {
     @MainActor required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-}
-
-// MARK: Frame spring
-
-/// Drives a window's frame with a damped spring on the display link.
-/// Interruptible: a new target starts from where the frame is on screen,
-/// at the speed it's moving, so a reversal never stalls or jumps.
-@MainActor
-final class FrameSpring: NSObject {
-    var response: Double = 0.4
-    var damping: Double = 0.86
-    var onFrame: ((CGRect) -> Void)?
-
-    private(set) var isAnimating = false
-    private var position = SIMD4<Double>.zero
-    private var velocity = SIMD4<Double>.zero
-    private var targetVector = SIMD4<Double>.zero
-    private var link: CADisplayLink?
-    private var lastTime: CFTimeInterval?
-
-    var target: CGRect { CGRect(x: targetVector.x, y: targetVector.y, width: targetVector.z, height: targetVector.w) }
-
-    func animate(from current: CGRect, to rect: CGRect, in view: NSView) {
-        if !isAnimating {
-            position = Self.vector(current)
-            velocity = .zero
-        }
-        targetVector = Self.vector(rect)
-        guard !NoteMotion.reduced else {
-            stop()
-            onFrame?(rect)
-            return
-        }
-        guard link == nil else { return }
-        isAnimating = true
-        lastTime = nil
-        let link = view.displayLink(target: self, selector: #selector(step(_:)))
-        link.add(to: .main, forMode: .common)
-        self.link = link
-    }
-
-    func stop() {
-        link?.invalidate()
-        link = nil
-        isAnimating = false
-    }
-
-    @objc private func step(_ link: CADisplayLink) {
-        let now = link.timestamp
-        let dt = min(lastTime.map { now - $0 } ?? (1.0 / 120), 1.0 / 30)
-        lastTime = now
-        let stiffness = pow(2 * .pi / response, 2)
-        let friction = 4 * .pi * damping / response
-        // Small fixed sub-steps keep the integration stable at any refresh rate.
-        let substeps = max(1, Int((dt / (1.0 / 480)).rounded(.up)))
-        let h = dt / Double(substeps)
-        for _ in 0..<substeps {
-            let force = (targetVector - position) * stiffness - velocity * friction
-            velocity += force * h
-            position += velocity * h
-        }
-        let offset = targetVector - position
-        if (offset * offset).sum() < 0.01 && (velocity * velocity).sum() < 0.5 {
-            position = targetVector
-            velocity = .zero
-            stop()
-        }
-        onFrame?(CGRect(x: position.x, y: position.y, width: position.z, height: position.w))
-    }
-
-    private static func vector(_ rect: CGRect) -> SIMD4<Double> {
-        SIMD4(rect.origin.x, rect.origin.y, rect.width, rect.height)
-    }
 }
