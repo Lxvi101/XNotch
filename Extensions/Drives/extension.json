@@ -1,0 +1,11 @@
+{
+  "id": "drives",
+  "name": "Drives",
+  "version": "1.0.0",
+  "summary": "USB sticks, SD cards and external disks as they connect, with a one-click eject.",
+  "symbol": "externaldrive.fill",
+  "tint": "#FF9F0A",
+  "principalClass": "DrivesPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.4.0" },
+  "creator": { "name": "XNotch" }
+}
