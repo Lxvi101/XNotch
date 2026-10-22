@@ -155,15 +155,20 @@ that setting is on, the app never falls back to plaintext:
    contexts (HTTPS or localhost), so recipients couldn't decrypt those links.
 3. If the created drop doesn't echo `e2ee: 1` (for example, a proxy changed the request),
    the drop is deleted before any file is sent.
-4. If any step fails after the drop exists, the drop is deleted.
+4. If any step fails after the drop exists, the app tries to delete the drop. That deletion is
+   best effort: errors are ignored, so an unreachable server or a rate limit can leave the
+   partial drop's ciphertext in storage until it expires.
 
 If a server is later downgraded to a version without `e2ee`, its encrypted drops show their
 opaque object names and download as ciphertext: nothing is revealed, but they can't be
 decrypted until the server is upgraded again.
 
-The Mac writes each encrypted file to a temporary file (ciphertext only) before uploading,
-so an upload briefly needs free disk space equal to the file's size. Encryption reads about
-two segments at a time, so memory stays small whatever the file size.
+The Mac writes each encrypted file to a temporary file before uploading, so an upload briefly
+needs free disk space about equal to the file's size. Folders are different: they are first
+zipped into a temporary **plaintext** ZIP, which is then encrypted into a second temporary
+file, so a folder upload needs roughly twice the zip's size free, and the plaintext ZIP sits
+in the Mac's temporary directory until the upload ends. Encryption reads about two segments at
+a time, so memory stays small whatever the file size.
 
 The setting is on by default, including for Macs that update from a version without it.
 Turning it off makes plain, server-readable links, as before (the Settings pane warns that
