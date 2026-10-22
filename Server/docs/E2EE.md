@@ -31,13 +31,14 @@ the data directory. Changed, swapped, reordered or truncated ciphertext is detec
    a shoulder) can decrypt. A drop password adds a server-side gate, but the server checks
    that password; it is not part of the key (see "Passwords" below).
 3. **Metadata.** The server sees: how many files a drop has; each file's ciphertext size
-   (plaintext size plus 38 bytes plus 16 bytes per MiB, so effectively the exact size);
+   (plaintext size plus 38 bytes plus 16 bytes per 1 MiB segment, so effectively the exact size);
    the manifest size; creation, upload and download times; IP addresses and user agents;
    expiry; whether a password is set; and, when the link is created, the drop password itself.
 4. **Revocation is only as good as deletion.** Deleting a drop removes the ciphertext from
    the server. It cannot take back the key. Anyone who already downloaded the ciphertext,
    or who holds a backup or snapshot of the storage, can still decrypt it with the link.
-   See SECURITY.md about expiry and physical erasure.
+   See the [security assessment](SECURITY.md#material-limitations-and-operator-actions) about
+   expiry and physical erasure.
 5. **Key loss is permanent.** Only the link holds the key: the server can't recover it, and
    XNotch keeps it only in its local list of links. If the part after `#` is lost or
    mangled, the files can't be decrypted by anyone.
@@ -55,6 +56,8 @@ the data directory. Changed, swapped, reordered or truncated ciphertext is detec
   it from `location.hash`. The drop page also sends `Referrer-Policy: no-referrer`.
 - The key never goes to the server: not in the create request, not in the manifest, and not
   in any header. The Swift tests check the bytes sent for it.
+- There are no encryption keys on the server: no setting, master key or escrow. The
+  operator can't decrypt stored encrypted drops, and can't recover a lost link.
 
 ## Object format
 
@@ -98,8 +101,13 @@ MAC or KDF is used. AES-GCM was chosen over ChaCha20-Poly1305 because Web Crypto
 ChaCha20-Poly1305, and a JavaScript implementation would mean shipping hand-written crypto
 to the browser.
 
-Limits: the format allows 2^88 segments per object. The implementations count to at least 2^53 segments (8 EiB), far beyond any file. Each object key encrypts at most
-`size / 1 MiB` messages, far below the AES-GCM usage limits.
+Limits: the 11-byte counter field is wider than any implementation uses. In practice a file
+is bounded by the server's `MAX_FILE_SIZE` (5 GiB by default, 5,120 segments), which XNotch
+checks against the encrypted size before uploading. The Swift encoder counts segments in a
+64-bit integer, and the browser decoder rejects sizes that aren't safe JavaScript integers
+(above 2^53 − 1 bytes). Each object has its own key, so a key protects only that object's
+segments. This document makes no claim about files beyond what was tested (the segment
+boundaries below, not multi-gigabyte files), and it does not rely on any AES-GCM usage-limit argument.
 
 ## Manifest
 
@@ -123,6 +131,8 @@ at most 262,198 bytes of ciphertext):
 
 ## Server protocol
 
+The HTTP endpoints are documented in the [API reference](REFERENCE.md#api); in short:
+
 - `GET /api/info` lists `"e2ee": [1]`. Servers from before this field don't support encrypted drops.
 - `POST /api/drops` with `{"e2ee": 1}` creates an encrypted drop, and the response echoes
   `"e2ee": 1`. A title with `e2ee` is refused (`400`), so it can't be stored by mistake.
@@ -136,13 +146,13 @@ at most 262,198 bytes of ciphertext):
 
 ### Failing closed
 
-The Mac app encrypts by default (Settings → Cloud Links → "End-to-end encrypt links"). While
+The Mac app encrypts by default (the "End-to-end encrypt links" switch in XNotch's Cloud settings). While
 that setting is on, the app never falls back to plaintext:
 
 1. If `/api/info` lacks `e2ee: [1]` (an old server), nothing is created or uploaded.
-2. If the server URL is plain `http` on a non-loopback host, the upload is refused. Browsers
-   only expose Web Crypto in secure contexts (HTTPS, or `localhost`/`127.0.0.1`), so
-   recipients couldn't decrypt those links.
+2. If the server URL is plain `http` and not `localhost`, `127.0.0.1` or `::1`, the upload is
+   refused, including `http` addresses on your LAN. Browsers only expose Web Crypto in secure
+   contexts (HTTPS or localhost), so recipients couldn't decrypt those links.
 3. If the created drop doesn't echo `e2ee: 1` (for example, a proxy changed the request),
    the drop is deleted before any file is sent.
 4. If any step fails after the drop exists, the drop is deleted.
@@ -155,8 +165,10 @@ The Mac writes each encrypted file to a temporary file (ciphertext only) before 
 so an upload briefly needs free disk space equal to the file's size. Encryption reads about
 two segments at a time, so memory stays small whatever the file size.
 
-Turning the setting off makes plain, server-readable links, as before. Links made earlier,
-and drops from older clients, keep working unchanged.
+The setting is on by default, including for Macs that update from a version without it.
+Turning it off makes plain, server-readable links, as before (the Settings pane warns that
+new links are stored readable). Links made earlier, and drops from older clients, stay
+plaintext and keep working unchanged; they are not encrypted retroactively.
 
 ## Decrypting in the browser
 
@@ -211,4 +223,6 @@ when the drop is created.
 - `Server/tests/e2ee/browser.mjs`: headless Chromium against a running server. It covers
   decryption and downloads, missing/damaged/wrong keys, tampered and truncated files (no
   download), the large-file disk path (commit and abort), the password form keeping the key,
-  legacy drops, no foreign requests, and a drop uploaded by the Swift app.
+  legacy drops, no foreign requests, and a drop uploaded by the Swift app. The over-1 GiB
+  path is exercised with a stand-in save dialog and a lowered memory threshold, not with a
+  real multi-gigabyte file in a real browser.

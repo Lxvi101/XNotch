@@ -41,11 +41,12 @@ trust boundary. For sensitive data, complete your own security review before rol
   files served as attachments. Pages use CSP and anti-framing headers.
 - The Docker image runs as UID/GID 65532. The HTTPS deployment overlay additionally
   drops Linux capabilities and makes the application root filesystem read-only.
-- Cloud links are end-to-end encrypted by default (`docs/E2EE.md`). The Mac encrypts
+- Cloud links are end-to-end encrypted by default ([E2EE.md](E2EE.md)). The Mac encrypts
   contents, file names and titles with AES-256-GCM under a random per-drop key that only
-  travels in the link's `#` fragment. The server stores ciphertext and opaque object names,
-  and recipients decrypt in the browser with Web Crypto. The client fails closed: it never
-  uploads plaintext to a server without the capability.
+  travels in the link's `#` fragment. The server holds no key, stores ciphertext and opaque object names,
+  and recipients decrypt in the browser with Web Crypto. While the Mac setting is on, the
+  client fails closed: it never uploads plaintext to a server without the capability, and
+  it refuses plain-`http` servers other than localhost.
 - The companion protocol encrypts relay payloads in the clients using ChaChaPoly
   (`Shared/XNotchLink/Sources/XNotchLink/SecureChannel.swift`). The relay forwards
   bytes; room IDs are bearer credentials. It can still observe traffic metadata.
@@ -69,9 +70,9 @@ trust boundary. For sensitive data, complete your own security review before rol
    passwords gate HTTP access but are not encryption keys. Links made with encryption
    turned off, or by older clients, are stored as plaintext; for those, use encrypted host
    volumes or private buckets with restricted credentials, including backups. Browsers
-   decrypt only over HTTPS (or on localhost). Without the File System Access API (desktop
-   Chrome/Edge), files over 1 GiB can't be decrypted, and large files need about their
-   size in memory. See `docs/E2EE.md` for the format and full threat model.
+   decrypt only over HTTPS (or on localhost). Files over 1 GiB can be saved only in desktop
+   Chrome or Edge (File System Access API); in other browsers a file up to 1 GiB is held in
+   memory while it is verified. See [E2EE.md](E2EE.md) for the format and full threat model.
 3. **Public links and unlock cookies are transferable secrets.** Passwords are
    optional, not enforced by server policy. Share passwords separately; prefer long
    IDs and short expiry. Do not rely on obscurity for highly sensitive documents.

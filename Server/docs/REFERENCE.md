@@ -1,7 +1,8 @@
 # XNotch Cloud reference
 
 Details for operators and client authors. To set up a server, start with the
-[self-hosting guide](SELF_HOSTING.md).
+[self-hosting guide](SELF_HOSTING.md). The format of encrypted links is in
+[E2EE.md](E2EE.md).
 
 - [Configuration](#configuration)
 - [Rate limiting and client identity](#rate-limiting-and-client-identity)
@@ -29,7 +30,7 @@ with comments. Empty values count as unset.
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | | Credentials. |
 | `S3_PREFIX` | | Optional folder inside the bucket. |
 | `S3_VIRTUAL_HOSTED_STYLE` | `false` | Requests are path-style by default so B2 and MinIO work. |
-| `MAX_FILE_SIZE` | `5368709120` | Bytes per file (5 GiB). |
+| `MAX_FILE_SIZE` | `5368709120` | Bytes per stored file (5 GiB). Encrypted files are slightly larger than their contents (38 bytes plus 16 per MiB), so XNotch checks the encrypted size against this limit. |
 | `DEFAULT_EXPIRY` | `86400` | Seconds, used when the app does not ask for an expiry. |
 | `MAX_EXPIRY` | `2592000` | Longest allowed lifetime in seconds (30 days). |
 | `ID_LENGTH` | `8` | Characters in a drop id, 6 to 32. |
@@ -179,14 +180,17 @@ No auth. Returns `200` with the text `ok`.
 curl -H "Authorization: Bearer $TOKEN" $URL/api/info
 ```
 ```json
-{"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000,"relay":true,"passwords":true}
+{"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000,"relay":true,"passwords":true,"e2ee":[1]}
 ```
 `relay` is `false` when `RELAY=off`. `passwords` says the server supports drop passwords.
+`e2ee` lists the [end-to-end encryption](E2EE.md) format versions the server can store
+and serve; older servers leave it out. XNotch makes encrypted links only on a server
+that lists it, and never falls back to plaintext while encryption is on.
 
 ### `POST /api/drops`
 
 Body (all fields optional; an empty body is fine):
-`{"expires_in": 3600, "title": "Holiday photos", "password": "correct horse"}`.
+`{"expires_in": 3600, "title": "Holiday photos", "password": "correct horse", "e2ee": 1}`.
 `expires_in` is in seconds, defaults to `DEFAULT_EXPIRY` and is clamped to
 `[60, MAX_EXPIRY]`. The response always carries the effective `expires_at`.
 Titles are trimmed and cut to 200 characters; an empty title counts as none.
@@ -203,6 +207,12 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 ```
 `protected` is `true` when the drop has a password. Older servers ignore `password`
 and leave `protected` out, so check it before handing out a link meant to be locked.
+
+With `"e2ee": 1` the drop is [end-to-end encrypted](E2EE.md) and the response echoes
+`"e2ee": 1`. Older servers ignore the field and leave it out, so a client must check the
+echo before uploading anything. An encrypted drop has no server-side title (a non-empty
+`title` with `e2ee` is `400`). Its files go under random 32-character hex object names,
+followed by the encrypted manifest, and the server never receives the key.
 
 ### `PUT /api/drops/{id}/files/{name}`
 
@@ -222,6 +232,15 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @"Report 1.pdf" \
 
 The content type is guessed from the file extension; if there is none, a specific
 `Content-Type` request header is used, otherwise `application/octet-stream`.
+In an encrypted drop, `name` must be 32 lowercase hex characters (`400` otherwise), and
+the file is always stored as `application/octet-stream`.
+
+### `PUT /api/drops/{id}/manifest`
+
+Encrypted drops only (`400` otherwise). The raw body is the encrypted manifest holding the
+files' real names and sizes and the title, at most 262,198 bytes (`413`). Upload it after
+the files: until it exists, the drop page says the files are still uploading. `201` with
+`{"size": 300}`.
 
 ### `DELETE /api/drops/{id}`
 
@@ -244,7 +263,8 @@ curl -H "Authorization: Bearer $TOKEN" $URL/api/drops
   "created_at":"2026-10-14T08:30:00Z","expires_at":"2026-10-14T09:30:00Z","protected":false,
   "files":[{"name":"Report 1.pdf","size":48213}]}]
 ```
-`title` is `null` when not set.
+`title` is `null` when not set. Encrypted drops add `"e2ee": 1`, and their file names
+are the opaque object names.
 
 ### `PUT /api/relay/rooms/{room}`
 
@@ -289,6 +309,16 @@ the drop (not even its title) until the password is entered. Pages are served wi
 strict `Content-Security-Policy`, `Referrer-Policy: no-referrer`,
 `X-Frame-Options: DENY` and `noindex`; user text is HTML-escaped.
 
+For an encrypted drop, the page holds only the drop id and expiry. Its inline scripts (allowed
+by CSP nonce; fetches limited to this origin) read the key from the URL fragment, fetch and
+decrypt the manifest, list the files, and decrypt each download in the browser.
+
+### `GET /{id}/-/manifest`
+
+The encrypted manifest of an encrypted drop, as uploaded (`application/octet-stream`,
+`no-store`). `404` for unencrypted drops or before the manifest is uploaded, and `403` for a
+locked drop without its unlock cookie.
+
 ### `POST /{id}`
 
 The password form (`application/x-www-form-urlencoded`, field `password`). A right
@@ -310,8 +340,10 @@ resume. Every response carries `X-Content-Type-Options: nosniff`.
 
 ```
 drops/{id}/meta.json        id, title, created_at, expires_at, files [{name, size, content_type}],
-                            and for locked drops password_hash (Argon2id) and unlock_key
-drops/{id}/files/{name}     file contents
+                            for locked drops password_hash (Argon2id) and unlock_key,
+                            and for encrypted drops e2ee and manifest_size
+drops/{id}/files/{name}     file contents (ciphertext under opaque names for encrypted drops)
+drops/{id}/manifest         encrypted manifest of an encrypted drop
 relay/rooms/{room}          {"created_at": "..."} for each registered relay room
 ```
 
@@ -329,10 +361,16 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
+`cargo test` also runs the cross-language encryption tests in `tests/e2ee/` when Node.js 20+
+is installed (`node --test tests/e2ee/crypto.test.mjs`); set `XNOTCH_REQUIRE_NODE=1` to make
+a missing Node a failure. `tests/e2ee/browser.mjs` drives headless Chromium against a running
+server; see the comment at its top.
+
 Code map: `config` (environment), `ids` (drop ids), `names` (file name rules,
 encoding, content types), `password` (drop passwords and unlock cookies),
 `rate_limit` (per-client admission and proxy trust), `range` (Range header), `model`
 (metadata), `storage` (object_store backends, sweeper), `api` (JSON API), `relay`
-(WebSocket relay), `public` and `pages` (drop page and downloads). Tests:
+(WebSocket relay), `public` and `pages` (drop page and downloads), `e2ee` and `assets/`
+(encrypted-drop rules and the browser decryptor). Tests:
 `tests/api.rs` drives the router directly; `tests/relay.rs` runs a real listener
 with WebSocket clients; `tests/rate_limit.rs` covers limits and client identity.

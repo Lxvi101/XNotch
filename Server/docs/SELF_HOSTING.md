@@ -166,11 +166,20 @@ In **XNotch → Settings → Cloud**, enable Cloud, enter `https://drop.example.
 the API token, and use **Test connection**. Upload a harmless sample file from the
 shelf, then check in a private browser window:
 
-1. A normal drop opens and its downloaded contents match the original.
+1. A new link (encrypted by default) ends in `#` and a 43-character key. In the private
+   window the page lists the file by its real name, and the downloaded contents match
+   the original. Test the *complete* link, key included.
 2. A password-protected drop hides its title and files before unlocking; a wrong
    password fails, the right password works, and a direct file URL also stays locked.
 3. After deleting the test drop, its old page and file URLs no longer work.
 4. A short-lived test drop denies access once it expires.
+5. In storage, the files of an encrypted drop sit under random 32-character names
+   (`drops/{id}/files/`, see the [storage layout](REFERENCE.md#storage-layout)), not their real ones.
+
+Encrypted links decrypt in the recipient's browser, so the server must be served over
+HTTPS (plain `http` works only on `localhost`). Files up to 1 GiB work in modern browsers;
+larger ones need desktop Chrome or Edge. The same server serves the page that decrypts, so
+recipients still have to trust it. See [E2EE.md](E2EE.md).
 
 ![Password form before a sample drop is unlocked](images/03-password-protected.png)
 
@@ -245,6 +254,14 @@ Record image digests for reproducible releases; the supplied image tags are muta
 To roll back, check out the previous reviewed commit and rebuild; restore data only
 if needed and compatible. **Never run `docker compose down -v`** on a deployment
 whose data you need: it deletes the named volumes.
+
+**Encryption after upgrading.** Macs running the encryption-capable XNotch encrypt new
+links by default. Upgrade the server first: an older server without `e2ee` in `/api/info`
+makes the Mac refuse the upload rather than send plaintext, and it also refuses plain-`http`
+servers other than `localhost`. To keep making readable links you must turn off
+**End-to-end encrypt links** in XNotch's Cloud settings yourself. Links created earlier stay
+plaintext and keep working. If you later roll the server back, encrypted drops show opaque
+names and download as ciphertext until you upgrade again.
 
 To rotate the API token, generate a new random value into `.env`, run `up -d`, then
 update every Mac client. Token rotation does not revoke existing drop links, unlock
