@@ -30,7 +30,7 @@ final class BackgroundAreaView: NSView {
     override func mouseDown(with event: NSEvent) {
         MainActor.assumeIsolated {
             guard let controller, let window else { return }
-            if event.clickCount == 2, !controller.shelf.files.isEmpty {
+            if event.clickCount == 2, !controller.shelf.isEmpty {
                 return controller.setExpanded(!controller.shelf.isExpanded)
             }
             moveStart = (NSEvent.mouseLocation, window.frame.origin)

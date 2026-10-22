@@ -61,6 +61,40 @@ enum PasteboardReader {
         completion([], [])
     }
 
+    /// A drop's file promises, each with the image that was dragged for it,
+    /// in the order `read` would take them; empty when there are none.
+    static func promises(in info: NSDraggingInfo) -> [(receiver: NSFilePromiseReceiver, preview: NSImage?)] {
+        var found: [(receiver: NSFilePromiseReceiver, preview: NSImage?)] = []
+        info.enumerateDraggingItems(options: [], for: nil, classes: [NSFilePromiseReceiver.self], searchOptions: [:]) { item, _, _ in
+            guard let receiver = item.item as? NSFilePromiseReceiver else { return }
+            let components = item.imageComponents ?? []
+            let contents = (components.first { $0.key == .icon } ?? components.first)?.contents
+            found.append((receiver, image(from: contents)))
+        }
+        return found
+    }
+
+    private static func image(from contents: Any?) -> NSImage? {
+        if let image = contents as? NSImage { return image }
+        guard let contents, CFGetTypeID(contents as CFTypeRef) == CGImage.typeID else { return nil }
+        return NSImage(cgImage: contents as! CGImage, size: .zero)
+    }
+
+    /// Receives a promise's files into a fresh folder in `directory`, calling
+    /// back with each one as it lands, or nil for one the sender couldn't make.
+    /// Returns the folder.
+    @discardableResult
+    static func receive(_ receiver: NSFilePromiseReceiver, into directory: URL,
+                        each: @escaping @MainActor (URL?) -> Void) -> URL {
+        let destination = freshFolder(in: directory)
+        receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: .init()) { url, error in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { each(error == nil ? url : nil) }
+            }
+        }
+        return destination
+    }
+
     /// The first few words, as a file name.
     static func textFileName(for text: String) -> String {
         let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).prefix(5).joined(separator: " ")

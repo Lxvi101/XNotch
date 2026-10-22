@@ -163,7 +163,7 @@ final class ShelfDropView: NSView {
         let point = shelfPoint(sender)
         guard CGRect(origin: .zero, size: shelfRect.size).contains(point) else { return false }
         return MainActor.assumeIsolated {
-            controller?.drop(sender.draggingPasteboard, at: point, isOwn: isOwn(sender)) ?? false
+            controller?.drop(sender, at: point, isOwn: isOwn(sender)) ?? false
         }
     }
 

@@ -8,10 +8,14 @@ enum FileKind: String, Codable {
 
     init(url: URL) {
         let values = try? url.resourceValues(forKeys: [.contentTypeKey, .isDirectoryKey, .isPackageKey])
-        let type = values?.contentType
+        self.init(type: values?.contentType, isFolder: values?.isDirectory == true && values?.isPackage != true)
+    }
+
+    /// For a file that isn't here yet, from the type it was promised as.
+    init(type: UTType?, isFolder: Bool = false) {
         if type?.conforms(to: .application) == true || type?.conforms(to: .applicationBundle) == true {
             self = .application
-        } else if values?.isDirectory == true && values?.isPackage != true {
+        } else if isFolder || type?.conforms(to: .folder) == true {
             self = .folder
         } else if let type {
             if type.conforms(to: .image) { self = .image }
@@ -83,6 +87,17 @@ struct ShelfFile: Codable, Identifiable, Hashable {
     }
 }
 
+/// A file another app promised and is still sending. It's shown as what was
+/// dragged until it lands, when it becomes a `ShelfFile` with the same id.
+struct IncomingFile: Identifiable {
+    let id = UUID()
+    let kind: FileKind
+    /// The drag image, else the type's icon.
+    let preview: NSImage
+    /// The sender gave up on it; it shakes, then goes.
+    var failed = false
+}
+
 /// What a shelf is called and how big it is, from its files.
 enum ShelfSummary {
     /// "Report.pdf", "3 Images", "4 Items".
@@ -96,9 +111,13 @@ enum ShelfSummary {
 
     /// "1 Document", "3 Items": always counted, unlike `name`.
     static func count(for files: [ShelfFile]) -> String {
-        let kinds = Set(files.map(\.kind))
-        if kinds.count == 1, let kind = kinds.first { return "\(files.count) \(kind.noun(files.count))" }
-        return "\(files.count) \(files.count == 1 ? "Item" : "Items")"
+        count(of: files.map(\.kind))
+    }
+
+    static func count(of kinds: [FileKind]) -> String {
+        let distinct = Set(kinds)
+        if distinct.count == 1, let kind = distinct.first { return "\(kinds.count) \(kind.noun(kinds.count))" }
+        return "\(kinds.count) \(kinds.count == 1 ? "Item" : "Items")"
     }
 
     static func size(for files: [ShelfFile]) -> String? {
@@ -158,6 +177,8 @@ final class Shelf: Identifiable {
     var landings = 0
     /// Where the last drop let go, in shelf coordinates, so files fly in from there.
     var lastDrop: CGPoint?
+    /// Files on their way in from another app, after `files`.
+    var incoming: [IncomingFile] = []
 
     init(record: ShelfRecord = ShelfRecord()) {
         id = record.id
@@ -172,7 +193,15 @@ final class Shelf: Identifiable {
         ShelfRecord(id: id, files: files, customName: customName, isPinned: isPinned, createdAt: createdAt, updatedAt: updatedAt)
     }
 
-    var name: String { customName ?? ShelfSummary.name(for: files) }
+    var name: String {
+        if let customName { return customName }
+        // Names come with the files; until then, what they are.
+        if !incoming.isEmpty { return ShelfSummary.count(of: files.map(\.kind) + incoming.map(\.kind)) }
+        return ShelfSummary.name(for: files)
+    }
+
+    /// No files, and none on the way.
+    var isEmpty: Bool { files.isEmpty && incoming.isEmpty }
 
     /// The selection, or every file when nothing is selected.
     var targets: [ShelfFile] {
@@ -210,6 +239,18 @@ final class Shelf: Identifiable {
         files += added
         updatedAt = Date()
         return added.count
+    }
+
+    /// Puts a file that came in where its stand-in was, keeping the stand-in's
+    /// id; false when the stand-in is gone or the file is here already.
+    @discardableResult
+    func land(_ file: ShelfFile) -> Bool {
+        guard let index = incoming.firstIndex(where: { $0.id == file.id }) else { return false }
+        incoming.remove(at: index)
+        guard !files.contains(where: { $0.path == file.path }) else { return false }
+        files.append(file)
+        updatedAt = Date()
+        return true
     }
 
     func remove(_ ids: Set<UUID>) {

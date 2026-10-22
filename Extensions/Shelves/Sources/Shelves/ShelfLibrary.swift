@@ -19,6 +19,9 @@ final class ShelfLibrary: ObservableObject {
     /// Other extensions' actions on a shelf's files, such as Convert.
     var sharedActions: (ShelfFileRequest) -> [NotchMenuItem] = { _ in [] }
 
+    /// Folders that promised files are still being written into, kept from the sweep however long they take.
+    var receivingFolders: Set<String> = []
+
     private let preferences: ShelvesPreferences
     private let fileURL: URL
     private var pendingSaves: [UUID: DispatchWorkItem] = [:]
@@ -59,6 +62,7 @@ final class ShelfLibrary: ObservableObject {
     /// Deletes files the shelves made that no shelf holds any more.
     private func sweepFiles() {
         let kept = Set(recent.flatMap(\.files).filter(\.isOwned).map { $0.url.deletingLastPathComponent().lastPathComponent })
+            .union(receivingFolders)
         let folders = (try? FileManager.default.contentsOfDirectory(at: filesDirectory, includingPropertiesForKeys: nil)) ?? []
         for folder in folders where !kept.contains(folder.lastPathComponent) {
             // Files dropped seconds ago may still be on their way to a shelf.

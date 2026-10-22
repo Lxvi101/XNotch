@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 import XNotchKit
 
 /// One shelf on screen: its panel, the label above it, drops onto it, drags
@@ -12,6 +13,12 @@ final class ShelfController: NSObject {
     /// Set when the shelf shows new files from a watched folder.
     var watchedFolderID: UUID?
     private let labelPanel = ActionLabelPanel()
+    /// Files on their way in from other apps, for the tray and the expanded header.
+    let delivery = Delivery()
+    /// Made the first time a drop takes long enough to need it.
+    private var trayPanel: ReceivingTrayPanel?
+    private var shipments: [Shipment] = []
+    private var pendingTrayHide: DispatchWorkItem?
     private unowned let library: ShelfLibrary
     private let preferences: ShelvesPreferences
     private let frameSpring = FrameSpring()
@@ -36,7 +43,10 @@ final class ShelfController: NSObject {
         dropView.addSubview(hosting)
         panel.contentView = dropView
         panel.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
-        frameSpring.onFrame = { [weak self] frame in self?.panel.setFrame(frame, display: true) }
+        frameSpring.onFrame = { [weak self] frame in
+            self?.panel.setFrame(frame, display: true)
+            self?.layoutTray()
+        }
         applySpaces()
         shelf.actions = preferences.instantActions
         // Settings change rarely; the shelf keeps its own copy of what they mean.
@@ -122,6 +132,7 @@ final class ShelfController: NSObject {
     private func leave(before: @escaping @MainActor () -> Void = {}) {
         isClosing = true
         hideLabel()
+        cancelIncoming()
         withAnimation(ShelfMotion.disappear) { shelf.isPresented = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + (ShelfMotion.reduced ? 0.16 : 0.24)) { [weak self] in
             MainActor.assumeIsolated {
@@ -129,6 +140,7 @@ final class ShelfController: NSObject {
                 self.frameSpring.stop()
                 self.panel.orderOut(nil)
                 self.labelPanel.orderOut(nil)
+                self.trayPanel?.orderOut(nil)
                 before()
                 self.library.didClose(self)
             }
@@ -162,7 +174,8 @@ final class ShelfController: NSObject {
         }
         panel.setFrameOrigin(origin)
         trackVelocity(origin)
-        let target = shelf.files.isEmpty ? nil : library.shelf(at: mouse, excluding: self)
+        // Files still on their way couldn't follow it into another shelf.
+        let target = shelf.files.isEmpty || !shelf.incoming.isEmpty ? nil : library.shelf(at: mouse, excluding: self)
         guard target !== mergeTarget else { return }
         mergeTarget?.setMergeTarget(false)
         mergeTarget = target
@@ -241,6 +254,7 @@ final class ShelfController: NSObject {
         frameSpring.stop()
         panel.orderOut(nil)
         labelPanel.orderOut(nil)
+        trayPanel?.orderOut(nil)
     }
 
     /// Keeps a shelf frame on the screen it's mostly on.
@@ -322,7 +336,8 @@ final class ShelfController: NSObject {
         }
     }
 
-    func drop(_ pasteboard: NSPasteboard, at point: CGPoint, isOwn: Bool) -> Bool {
+    func drop(_ info: NSDraggingInfo, at point: CGPoint, isOwn: Bool) -> Bool {
+        let pasteboard = info.draggingPasteboard
         hasReceivedDrop = true
         if shelf.showsActions {
             guard let action = shelf.hoveredAction else { return false }
@@ -337,8 +352,13 @@ final class ShelfController: NSObject {
             return true
         }
         guard !isOwn else { return false }
-        shelf.lastDrop = point
-        add(from: pasteboard)
+        let promises = PasteboardReader.promises(in: info)
+        if promises.isEmpty {
+            shelf.lastDrop = point
+            add(from: pasteboard)
+        } else {
+            receive(promises, droppedAt: point)
+        }
         return true
     }
 
@@ -380,6 +400,246 @@ final class ShelfController: NSObject {
             NSSound.beep()
         }
         shelf.lastDrop = nil
+    }
+
+    // MARK: Files on their way
+
+    /// How long promised files can take and still land as themselves, the way
+    /// files from Finder do. Slower ones are stood in for by what was dragged.
+    private static let landingGrace: TimeInterval = 0.12
+    /// The tray only comes out for files still on their way after this.
+    private static let trayDelay: TimeInterval = 0.45
+
+    /// One drop's promised files, from the drop until the last one lands,
+    /// fails or is let go.
+    private final class Shipment {
+        let point: CGPoint
+        var incoming: [IncomingFile] = []
+        var folders: [String] = []
+        /// Landed within the grace, before there was a stand-in to land on.
+        var early: [(id: UUID, url: URL)] = []
+        var failedEarly: Set<UUID> = []
+        /// The files have been put on the shelf, as themselves or as stand-ins.
+        var isPlaced = false
+        var isCancelled = false
+        var settled = 0
+        /// Landing, waiting for their thumbnails.
+        var landing = 0
+
+        init(point: CGPoint) { self.point = point }
+
+        var isSettled: Bool { settled >= incoming.count }
+        var isFinished: Bool { isSettled && landing == 0 }
+    }
+
+    private func receive(_ promises: [(receiver: NSFilePromiseReceiver, preview: NSImage?)], droppedAt point: CGPoint) {
+        if shipments.isEmpty && !isTrayShown || delivery.phase != .receiving {
+            delivery.reset()
+        }
+        pendingTrayHide?.cancel()
+        let shipment = Shipment(point: point)
+        shipments.append(shipment)
+        let sender = NSWorkspace.shared.frontmostApplication
+        delivery.source = sender == .current ? nil : sender?.localizedName
+        for (receiver, preview) in promises {
+            let types = receiver.fileTypes.map { UTType($0) }
+            let standIns = (types.isEmpty ? [nil] : types).map { type in
+                IncomingFile(kind: FileKind(type: type),
+                             preview: preview ?? NSWorkspace.shared.icon(for: type ?? .data))
+            }
+            shipment.incoming += standIns
+            // A promise's files come back in the order they were promised.
+            var slots = standIns.map(\.id)
+            let folder = PasteboardReader.receive(receiver, into: library.filesDirectory) { [weak self] url in
+                let id = slots.isEmpty ? nil : slots.removeFirst()
+                self?.settle(url, as: id, in: shipment)
+            }
+            shipment.folders.append(folder.lastPathComponent)
+        }
+        library.receivingFolders.formUnion(shipment.folders)
+        delivery.total += shipment.incoming.count
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.landingGrace) { [weak self] in
+            MainActor.assumeIsolated { self?.placeStandIns(for: shipment) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.trayDelay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.shipments.contains(where: { $0 === shipment }) else { return }
+                self.showTray()
+            }
+        }
+    }
+
+    /// A promised file landed, or nil when the sender couldn't make it.
+    /// `id` is its stand-in's; nil for a file beyond what was promised.
+    private func settle(_ url: URL?, as id: UUID?, in shipment: Shipment) {
+        if id != nil { shipment.settled += 1 }
+        if shipment.isCancelled || isClosing {
+            if let url { try? FileManager.default.removeItem(at: url) }
+            return
+        }
+        guard let id else {
+            if let url { add([url], owned: [url]) }
+            return
+        }
+        guard shipment.isPlaced else {
+            if let url { shipment.early.append((id, url)) } else { shipment.failedEarly.insert(id) }
+            // All in within the grace: they land as themselves, as files from Finder do.
+            if shipment.isSettled { landTogether(shipment) }
+            return
+        }
+        if let url { land(url, as: id, in: shipment) } else { fail(id, in: shipment) }
+    }
+
+    private func landTogether(_ shipment: Shipment) {
+        shipment.isPlaced = true
+        let urls = shipment.early.map(\.url)
+        delivery.received += urls.count
+        delivery.failed += shipment.failedEarly.count
+        if urls.isEmpty {
+            NSSound.beep()
+        } else {
+            shelf.lastDrop = shipment.point
+            add(urls, owned: Set(urls))
+        }
+        finish(shipment)
+    }
+
+    /// The drop is taking a while: what was dragged lands now, soft and
+    /// breathing, and turns into each file as it comes in.
+    private func placeStandIns(for shipment: Shipment) {
+        guard !shipment.isPlaced, !shipment.isCancelled, !isClosing else { return }
+        shipment.isPlaced = true
+        delivery.failed += shipment.failedEarly.count
+        let standIns = shipment.incoming.filter { !shipment.failedEarly.contains($0.id) }
+        shelf.lastDrop = shipment.point
+        withAnimation(ShelfMotion.appear) { shelf.incoming += standIns }
+        shelf.landings += 1
+        library.tick()
+        // Kept until the stand-ins have been drawn, so they fly in from the drop.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.shelf.lastDrop = nil }
+        }
+        let early = shipment.early
+        shipment.early = []
+        for (id, url) in early { land(url, as: id, in: shipment) }
+        finish(shipment)
+    }
+
+    /// Turns a stand-in into its file once the file's thumbnail is ready, so
+    /// it comes into focus as itself.
+    private func land(_ url: URL, as id: UUID, in shipment: Shipment) {
+        shipment.landing += 1
+        Thumbnails.prepare([url.standardizedFileURL.path]) { [weak self] in
+            guard let self else { return }
+            shipment.landing -= 1
+            defer { self.finish(shipment) }
+            guard !shipment.isCancelled, !self.isClosing else {
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
+            guard var file = ShelfFile(url: url, isOwned: true) else { return self.fail(id, in: shipment) }
+            file.id = id
+            let landed = withAnimation(ShelfMotion.arrive) { self.shelf.land(file) }
+            if landed { self.delivery.received += 1 }
+        }
+    }
+
+    /// A stand-in whose file never came shakes, then goes.
+    private func fail(_ id: UUID, in shipment: Shipment) {
+        delivery.failed += 1
+        guard let index = shelf.incoming.firstIndex(where: { $0.id == id }) else { return }
+        withAnimation(ShelfMotion.hover) { shelf.incoming[index].failed = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                withAnimation(ShelfMotion.content) { self.shelf.incoming.removeAll { $0.id == id } }
+            }
+        }
+    }
+
+    private func finish(_ shipment: Shipment) {
+        guard shipment.isPlaced, shipment.isFinished, let index = shipments.firstIndex(where: { $0 === shipment }) else { return }
+        shipments.remove(at: index)
+        library.receivingFolders.subtract(shipment.folders)
+        guard shipments.isEmpty else { return }
+        if delivery.failed > 0 && delivery.received == 0 && isTrayShown { NSSound.beep() }
+        withAnimation(ShelfMotion.content) { delivery.phase = delivery.failed > 0 ? .failed : .done }
+        // Long enough to read how it went, then the tray tucks back under the shelf.
+        hideTray(after: isTrayShown ? (delivery.failed > 0 ? 1.8 : 0.9) : 0)
+    }
+
+    /// Stops waiting for everything on its way. Files that come in later are thrown away.
+    func cancelIncoming() {
+        guard !shipments.isEmpty || !shelf.incoming.isEmpty else { return }
+        for shipment in shipments {
+            shipment.isCancelled = true
+            library.receivingFolders.subtract(shipment.folders)
+        }
+        shipments.removeAll()
+        withAnimation(ShelfMotion.content) { shelf.incoming.removeAll() }
+        hideTray()
+    }
+
+    // MARK: The tray
+
+    private var isTrayShown: Bool { trayPanel?.model.isVisible == true }
+
+    private func showTray() {
+        pendingTrayHide?.cancel()
+        pendingTrayHide = nil
+        guard !isClosing, panel.isVisible else { return }
+        let tray = trayPanel ?? ReceivingTrayPanel(delivery: delivery) { [weak self] in self?.cancelIncoming() }
+        trayPanel = tray
+        if tray.parent == nil {
+            tray.collectionBehavior = panel.collectionBehavior
+            // Below the shelf, unless that's off the bottom of the screen.
+            let visible = (panel.screen ?? NSScreen.main)?.visibleFrame
+            let below = visible.map { shelfFrame.minY - ReceivingTrayPanel.size.height >= $0.minY } ?? true
+            tray.model.edge = below ? .bottom : .top
+            layoutTray(force: true)
+            panel.addChildWindow(tray, ordered: .above)
+        }
+        // One frame at rest under the shelf first, for the spring to leave from.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, tray.parent != nil, self.pendingTrayHide == nil else { return }
+                withAnimation(ShelfMotion.tray) { tray.model.isVisible = true }
+            }
+        }
+    }
+
+    private func hideTray(after delay: TimeInterval = 0) {
+        pendingTrayHide?.cancel()
+        guard let tray = trayPanel, tray.parent != nil else {
+            pendingTrayHide = nil
+            if shipments.isEmpty { delivery.reset() }
+            return
+        }
+        let item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                withAnimation(ShelfMotion.disappear) { tray.model.isVisible = false }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, !tray.model.isVisible else { return }
+                        self.panel.removeChildWindow(tray)
+                        tray.orderOut(nil)
+                        if self.shipments.isEmpty { self.delivery.reset() }
+                    }
+                }
+            }
+        }
+        pendingTrayHide = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Hangs the tray from the middle of the shelf's edge, as the shelf moves or resizes.
+    private func layoutTray(force: Bool = false) {
+        guard let tray = trayPanel, force || tray.parent != nil else { return }
+        let frame = shelfFrame
+        let size = ReceivingTrayPanel.size
+        let y = tray.model.edge == .bottom ? frame.minY - size.height : frame.maxY
+        tray.setFrame(CGRect(x: frame.midX - size.width / 2, y: y, width: size.width, height: size.height), display: false)
     }
 
     // MARK: Clicks

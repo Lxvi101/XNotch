@@ -98,7 +98,7 @@ private struct CompactShelf: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if shelf.files.isEmpty {
+            if shelf.isEmpty {
                 Text("Drop files here")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
@@ -125,7 +125,7 @@ private struct CompactControls: View {
     let controller: ShelfController
 
     var body: some View {
-        let isEmpty = shelf.files.isEmpty
+        let isEmpty = shelf.isEmpty
         let visible = isEmpty || shelf.isHovered
         HStack {
             CircleButton(symbol: "xmark", help: "Close the shelf (hold ⌥ to clear it)") {
@@ -172,16 +172,16 @@ private struct FileStack: View {
     let shelf: Shelf
 
     var body: some View {
-        let files = shelf.files
+        let files = shelf.entries
         let shown = Array(files.suffix(3))
         // Captured when a file is inserted: its landing starts at the drop.
         let from = shelf.lastDrop.map {
             CGSize(width: $0.x - CompactShelf.stackCenter.x, height: $0.y - CompactShelf.stackCenter.y)
         } ?? CGSize(width: 0, height: 24)
         ZStack {
-            ForEach(Array(shown.enumerated()), id: \.element.id) { index, file in
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, entry in
                 let depth = shown.count - 1 - index
-                FileThumbnail(path: file.path, side: 76)
+                EntryThumbnail(entry: entry, side: 76)
                     .shadow(color: .black.opacity(0.3), radius: 3, y: 1.5)
                     .rotationEffect(.degrees(Double(depth) * (depth % 2 == 0 ? 7 : -7)))
                     .offset(y: CGFloat(-depth) * 3)
@@ -245,7 +245,7 @@ private struct ExpandedShelf: View {
         VStack(spacing: 0) {
             ExpandedHeader(shelf: shelf, controller: controller)
             Group {
-                if shelf.files.isEmpty {
+                if shelf.isEmpty {
                     Text("Drop files here")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.9))
@@ -254,9 +254,9 @@ private struct ExpandedShelf: View {
                 } else if shelf.layout == .grid {
                     ScrollView {
                         LazyVGrid(columns: Array(repeating: GridItem(.fixed(96), spacing: 6), count: 3), spacing: 6) {
-                            ForEach(shelf.files) { file in
-                                GridTile(shelf: shelf, file: file)
-                                    .overlay(FileItemArea(controller: controller, file: file))
+                            ForEach(shelf.entries) { entry in
+                                GridTile(shelf: shelf, entry: entry)
+                                    .overlay { ItemArea(controller: controller, entry: entry) }
                                     .transition(.focus)
                             }
                         }
@@ -266,9 +266,9 @@ private struct ExpandedShelf: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 2) {
-                            ForEach(shelf.files) { file in
-                                ListRow(shelf: shelf, file: file)
-                                    .overlay(FileItemArea(controller: controller, file: file))
+                            ForEach(shelf.entries) { entry in
+                                ListRow(shelf: shelf, entry: entry)
+                                    .overlay { ItemArea(controller: controller, entry: entry) }
                                     .transition(.focus)
                             }
                         }
@@ -290,16 +290,27 @@ private struct ExpandedHeader: View {
         HStack(spacing: 8) {
             CircleButton(symbol: "chevron.left", help: "Back") { controller.setExpanded(false) }
             VStack(alignment: .leading, spacing: 1) {
-                Text(shelf.customName ?? ShelfSummary.count(for: shelf.files))
+                Text(shelf.customName ?? ShelfSummary.count(of: shelf.entries.map(\.kind)))
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .contentTransition(.interpolate)
-                Text(subtitle)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-                    .contentTransition(.interpolate)
+                ZStack(alignment: .leading) {
+                    let receiving = !shelf.incoming.isEmpty
+                    // While files come in, what's happening; then their size, coming into focus.
+                    if receiving {
+                        Text(receivingSubtitle)
+                            .modifier(Shimmer())
+                            .transition(.focus)
+                    } else {
+                        Text(subtitle)
+                            .transition(.focus)
+                    }
+                }
+                .font(.system(size: 10.5))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .contentTransition(.interpolate)
             }
             Spacer(minLength: 4)
             LayoutButton(symbol: "square.grid.2x2", isOn: shelf.layout == .grid) {
@@ -315,6 +326,11 @@ private struct ExpandedHeader: View {
         .padding(.bottom, 4)
     }
 
+    private var receivingSubtitle: String {
+        let delivery = controller.delivery
+        return ([delivery.title] + [delivery.detail].compactMap { $0 }).joined(separator: " ") + "\u{2026}"
+    }
+
     private var subtitle: String {
         let selected = shelf.files.filter { shelf.selection.contains($0.id) }
         if !selected.isEmpty {
@@ -327,22 +343,37 @@ private struct ExpandedHeader: View {
 
 private struct GridTile: View {
     let shelf: Shelf
-    let file: ShelfFile
+    let entry: ShelfEntry
 
     var body: some View {
-        let isSelected = shelf.selection.contains(file.id)
+        let isSelected = shelf.selection.contains(entry.id)
         VStack(spacing: 4) {
-            FileThumbnail(path: file.path, side: 52)
-            Text(file.name)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .multilineTextAlignment(.center)
-            if let size = file.size {
-                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.white.opacity(isSelected ? 0.8 : 0.5))
+            EntryThumbnail(entry: entry, side: 52)
+            // A name and size don't exist until the file does; until then, where they'll be.
+            ZStack(alignment: .top) {
+                if case .file(let file) = entry {
+                    VStack(spacing: 4) {
+                        Text(file.name)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .multilineTextAlignment(.center)
+                        if let size = file.size {
+                            Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.white.opacity(isSelected ? 0.8 : 0.5))
+                        }
+                    }
+                    .transition(.focus)
+                } else {
+                    VStack(spacing: 8) {
+                        PlaceholderBar(width: 62)
+                        PlaceholderBar(width: 34)
+                    }
+                    .padding(.top, 4)
+                    .transition(.focus)
+                }
             }
         }
         .padding(6)
@@ -353,23 +384,34 @@ private struct GridTile: View {
 
 private struct ListRow: View {
     let shelf: Shelf
-    let file: ShelfFile
+    let entry: ShelfEntry
 
     var body: some View {
-        let isSelected = shelf.selection.contains(file.id)
+        let isSelected = shelf.selection.contains(entry.id)
         HStack(spacing: 8) {
-            FileThumbnail(path: file.path, side: 22)
-            Text(file.name)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 6)
-            if let size = file.size {
-                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(isSelected ? 0.8 : 0.5))
+            EntryThumbnail(entry: entry, side: 22)
+            ZStack(alignment: .leading) {
+                if case .file(let file) = entry {
+                    HStack(spacing: 6) {
+                        Text(file.name)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 6)
+                        if let size = file.size {
+                            Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.white.opacity(isSelected ? 0.8 : 0.5))
+                        }
+                    }
+                    .transition(.focus)
+                } else {
+                    PlaceholderBar(width: 120)
+                        .transition(.focus)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
@@ -385,7 +427,7 @@ private struct BoltTile: View {
     let size: CGSize
 
     var body: some View {
-        let shown = !shelf.actions.isEmpty && (shelf.files.isEmpty || shelf.isDragInside) && !shelf.showsActions
+        let shown = !shelf.actions.isEmpty && (shelf.isEmpty || shelf.isDragInside) && !shelf.showsActions
         let frame = ShelfGeometry.boltFrame(in: size)
         RoundedRectangle(cornerRadius: 9, style: .continuous)
             .fill(.white.opacity(0.08))
@@ -488,7 +530,7 @@ private struct ShelfShadow: View {
     }
 }
 
-private struct VisualEffect: NSViewRepresentable {
+struct VisualEffect: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .hudWindow
@@ -557,7 +599,7 @@ private struct MenuButton: View {
     }
 }
 
-private struct PressStyle: ButtonStyle {
+struct PressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.88 : 1)
@@ -600,6 +642,150 @@ private extension AnyTransition {
     static func landing(from offset: CGSize) -> AnyTransition {
         ShelfMotion.reduced ? .opacity
             : .modifier(active: Landing(offset: offset, progress: 0), identity: Landing(offset: offset, progress: 1))
+    }
+}
+
+// MARK: Files on their way
+
+/// A file on the shelf, or one still on its way.
+enum ShelfEntry: Identifiable {
+    case file(ShelfFile)
+    case incoming(IncomingFile)
+
+    var id: UUID {
+        switch self {
+        case .file(let file): return file.id
+        case .incoming(let incoming): return incoming.id
+        }
+    }
+
+    var incoming: IncomingFile? {
+        if case .incoming(let incoming) = self { return incoming }
+        return nil
+    }
+
+    var kind: FileKind {
+        switch self {
+        case .file(let file): return file.kind
+        case .incoming(let incoming): return incoming.kind
+        }
+    }
+}
+
+extension Shelf {
+    /// The files, then the ones on their way. A file that lands keeps its
+    /// stand-in's id, so its view stays the same view and comes into focus.
+    var entries: [ShelfEntry] { files.map(ShelfEntry.file) + incoming.map(ShelfEntry.incoming) }
+}
+
+/// Selection, the menu and dragging out, for files that are here.
+private struct ItemArea: View {
+    let controller: ShelfController
+    let entry: ShelfEntry
+
+    var body: some View {
+        if case .file(let file) = entry {
+            FileItemArea(controller: controller, file: file)
+        }
+    }
+}
+
+/// A file's thumbnail; for one still on its way, what was dragged, soft and
+/// breathing. When the file lands, its thumbnail is already there underneath
+/// and the drag image fades off it as the blur clears.
+private struct EntryThumbnail: View {
+    let entry: ShelfEntry
+    let side: CGFloat
+
+    var body: some View {
+        let incoming = entry.incoming
+        ZStack {
+            if case .file(let file) = entry {
+                FileThumbnail(path: file.path, side: side)
+                    .transition(.identity)
+            }
+            if let incoming {
+                Image(nsImage: incoming.preview)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: side, height: side)
+                    .transition(.opacity)
+            }
+        }
+        .modifier(Waiting(isWaiting: incoming != nil, failed: incoming?.failed == true))
+    }
+}
+
+/// Soft, washed out and slowly breathing while a file is on its way. One
+/// that never comes shakes its head and loses its colour.
+private struct Waiting: ViewModifier {
+    let isWaiting: Bool
+    let failed: Bool
+    /// One breath in and out.
+    private static let period: TimeInterval = 2.4
+
+    func body(content: Content) -> some View {
+        let shake: CGFloat = ShelfMotion.reduced ? 0 : 1
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !isWaiting || ShelfMotion.reduced)) { context in
+            let breath = isWaiting && !ShelfMotion.reduced ? Self.breath(at: context.date) : 0
+            content
+                .opacity(isWaiting ? 0.74 + 0.18 * breath : 1)
+                .scaleEffect(isWaiting ? 0.975 + 0.025 * breath : 1)
+        }
+        .blur(radius: isWaiting ? 5 : 0)
+        .saturation(failed ? 0 : (isWaiting ? 0.55 : 1))
+        .keyframeAnimator(initialValue: CGFloat(0), trigger: failed) { content, x in
+            content.offset(x: x)
+        } keyframes: { _ in
+            KeyframeTrack {
+                CubicKeyframe(-5 * shake, duration: 0.06)
+                CubicKeyframe(4.5 * shake, duration: 0.08)
+                CubicKeyframe(-3 * shake, duration: 0.08)
+                CubicKeyframe(1.5 * shake, duration: 0.08)
+                SpringKeyframe(0, duration: 0.2, spring: .init(response: 0.2, dampingRatio: 1))
+            }
+        }
+    }
+
+    /// 0 to 1 and back, easing at both ends.
+    private static func breath(at date: Date) -> CGFloat {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+        return 0.5 - 0.5 * cos(2 * .pi * phase)
+    }
+}
+
+/// Where a name will be once the file has one.
+private struct PlaceholderBar: View {
+    let width: CGFloat
+
+    var body: some View {
+        Capsule()
+            .fill(.white.opacity(0.1))
+            .frame(width: width, height: 6)
+            .modifier(Shimmer(strength: 0.22))
+    }
+}
+
+/// A slow band of light passing through, for things still on their way.
+private struct Shimmer: ViewModifier {
+    var strength = 0.45
+    private static let period: TimeInterval = 1.8
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            TimelineView(.animation(minimumInterval: 1 / 60, paused: ShelfMotion.reduced)) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period) / Self.period
+                GeometryReader { proxy in
+                    let band = max(proxy.size.width * 0.45, 24)
+                    LinearGradient(colors: [.clear, .white.opacity(strength), .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: band)
+                        .offset(x: -band + (proxy.size.width + band * 2) * phase)
+                }
+            }
+            .mask(content)
+            .allowsHitTesting(false)
+        }
     }
 }
 

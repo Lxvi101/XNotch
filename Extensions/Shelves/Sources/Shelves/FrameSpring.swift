@@ -14,6 +14,10 @@ enum ShelfMotion {
     static var content: Animation { reduced ? .easeInOut(duration: 0.18) : .spring(response: 0.34, dampingFraction: 0.86) }
     /// The bolt blooming into actions, and folding back.
     static var bloom: Animation { reduced ? .easeInOut(duration: 0.18) : .spring(response: 0.36, dampingFraction: 0.8) }
+    /// A file that was on its way coming into focus as itself.
+    static var arrive: Animation { reduced ? .easeOut(duration: 0.2) : .spring(response: 0.62, dampingFraction: 0.86) }
+    /// The receiving tray sliding out from under the shelf.
+    static var tray: Animation { reduced ? .easeOut(duration: 0.18) : .spring(response: 0.42, dampingFraction: 0.8) }
     /// Hover and highlight changes under the pointer.
     static var hover: Animation { reduced ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.82) }
     /// A tile's share of the bloom, a few milliseconds after the one before.
