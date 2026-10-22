@@ -7,7 +7,14 @@ use axum::{
 };
 use chrono::Utc;
 use http_body_util::BodyExt;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tempfile::TempDir;
 use tower::ServiceExt;
 use xnotch_cloud::{AppState, SharedState, app, config::Config, model::DropMeta, password, storage::Storage};
@@ -63,6 +70,38 @@ async fn auth_and_management_share_budget_before_token_validation() {
         StatusCode::OK
     );
     assert_eq!(h.get("/", PEER, &[]).await.status(), StatusCode::OK);
+}
+#[tokio::test]
+async fn exhausted_api_budget_rejects_upload_without_polling_body() {
+    let h = Harness::new(&[("RATE_LIMIT_API_PER_MINUTE", "1"), ("RATE_LIMIT_API_BURST", "1")]);
+    h.state.storage.save(&DropMeta::new("abcdefgh".into(), None, Utc::now(), 3600)).await.unwrap();
+    let auth = format!("Bearer {TOKEN}");
+    assert_eq!(h.get("/api/info", PEER, &[("authorization", &auth)]).await.status(), StatusCode::OK);
+
+    // Count when the body is polled, rather than when it is constructed or dropped.
+    let polls = Arc::new(AtomicUsize::new(0));
+    for (peer, expected_polls) in [(PEER, 0), ("192.0.2.2:1000", 1)] {
+        let body_polls = polls.clone();
+        let body = Body::from_stream(futures_util::stream::once(async move {
+            body_polls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, std::io::Error>("upload bytes")
+        }));
+        let request = Harness::request(
+            Method::PUT,
+            "/api/drops/abcdefgh/files/test.txt",
+            peer,
+            &[("authorization", &auth)],
+            body,
+        );
+        let response = h.send(request).await;
+        if expected_polls == 0 {
+            throttled(&response);
+        } else {
+            // A fresh client proves the same valid upload really consumes the body.
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        assert_eq!(polls.load(Ordering::SeqCst), expected_polls);
+    }
 }
 #[tokio::test]
 async fn password_posts_share_budget_across_drops_before_form_parsing() {

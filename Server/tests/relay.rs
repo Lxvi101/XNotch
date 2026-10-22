@@ -260,6 +260,35 @@ async fn forwards_messages_both_ways() {
 }
 
 #[tokio::test]
+async fn exhausted_admission_budget_preserves_upgraded_relay_pair() {
+    let s = start(&[("RATE_LIMIT_RELAY_PER_MINUTE", "1"), ("RATE_LIMIT_RELAY_BURST", "2")], |_| {}).await;
+    let a = room('a');
+    assert_eq!(s.register(&a).await, StatusCode::NO_CONTENT);
+
+    // Both real upgrades succeed and exhaust the shared loopback client's budget.
+    let (mut mac, mut phone) = s.pair(&a).await;
+    for role in ["mac", "phone"] {
+        match timeout(WAIT, tokio_tungstenite::connect_async(s.url(&a, role))).await.unwrap() {
+            Err(tungstenite::Error::Http(response)) => {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+                assert!(response.headers()[header::RETRY_AFTER].to_str().unwrap().parse::<u64>().unwrap() >= 1);
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            }
+            other => panic!("expected admission rejection, got {:?}", other.map(|(_, r)| r.status())),
+        }
+    }
+
+    // Rejected upgrades do not interrupt byte forwarding on the admitted sockets.
+    let bytes = vec![0, 1, 127, 128, 255];
+    mac.send(Message::binary(bytes.clone())).await.unwrap();
+    assert_eq!(next_data(&mut phone).await, Message::binary(bytes.clone()));
+    phone.send(Message::binary(bytes.clone())).await.unwrap();
+    assert_eq!(next_data(&mut mac).await, Message::binary(bytes));
+    phone.close(None).await.unwrap();
+    assert_eq!(closed(&mut mac).await.0, 1000);
+}
+
+#[tokio::test]
 async fn phone_waits_for_a_mac() {
     let s = start(&[], |c| c.relay.phone_wait = Duration::from_millis(300)).await;
     let a = room('a');
