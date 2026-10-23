@@ -143,6 +143,8 @@ struct SwitcherLayer: View {
                                                            y: -0.04)))
                 }
             }
+            // As with the bucket: a closing switcher doesn't take clicks.
+            .allowsHitTesting(state.showsSwitcher)
         }
     }
 }

@@ -475,6 +475,9 @@ private struct BucketLayer: View {
                         .transition(.bloom(from: UnitPoint(x: (state.bucketCenter.x - 10) / max(width, 1), y: -0.04)))
                 }
             }
+            // A closing drawer stays in the tree until its spring settles; read
+            // live, so a click meanwhile reaches the text instead of reopening it.
+            .allowsHitTesting(state.showsBucket)
         }
     }
 }
