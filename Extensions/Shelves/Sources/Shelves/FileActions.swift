@@ -74,6 +74,20 @@ enum PasteboardReader {
         return found
     }
 
+    /// A drop's file URLs, from Finder and the like, each with the image that
+    /// was dragged for it; empty when there are none.
+    static func files(in info: NSDraggingInfo) -> [(url: URL, preview: NSImage?)] {
+        var found: [(url: URL, preview: NSImage?)] = []
+        info.enumerateDraggingItems(options: [], for: nil, classes: [NSURL.self],
+                                    searchOptions: [.urlReadingFileURLsOnly: true]) { item, _, _ in
+            guard let url = item.item as? URL else { return }
+            let components = item.imageComponents ?? []
+            let contents = (components.first { $0.key == .icon } ?? components.first)?.contents
+            found.append((url, image(from: contents)))
+        }
+        return found
+    }
+
     private static func image(from contents: Any?) -> NSImage? {
         if let image = contents as? NSImage { return image }
         guard let contents, CFGetTypeID(contents as CFTypeRef) == CGImage.typeID else { return nil }
@@ -222,24 +236,37 @@ enum Thumbnails {
         return image
     }
 
-    /// Calls back once every file has its thumbnail, or after `limit` seconds
-    /// for slow ones; at once when they're all made already.
-    static func prepare(_ paths: [String], limit: TimeInterval = 0.35, then done: @escaping @MainActor () -> Void) {
+    /// Returns once every file has its thumbnail and icon, or after `limit`
+    /// seconds for slow ones; at once when they're all made already.
+    static func prepare(_ paths: [String], limit: TimeInterval = 0.35) async {
         let missing = paths.filter { thumbnails[$0] == nil }
-        guard !missing.isEmpty else { return done() }
-        var isDone = false
-        let finish = {
-            guard !isDone else { return }
-            isDone = true
-            done()
-        }
-        Task {
-            await withTaskGroup(of: Void.self) { group in
-                for path in missing { group.addTask { _ = await thumbnail(for: path) != nil } }
+        guard !missing.isEmpty else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            var isDone = false
+            let finish = {
+                guard !isDone else { return }
+                isDone = true
+                continuation.resume()
             }
-            finish()
+            Task {
+                await withTaskGroup(of: Void.self) { group in
+                    for path in missing {
+                        group.addTask { _ = await thumbnail(for: path) }
+                        // The icon is the fallback while there's no thumbnail.
+                        group.addTask { await loadIcon(path) }
+                    }
+                }
+                finish()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + limit) { MainActor.assumeIsolated { finish() } }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + limit) { MainActor.assumeIsolated { finish() } }
+    }
+
+    /// Fetches the icon off the main thread: on a network volume it's a round trip.
+    private static func loadIcon(_ path: String) async {
+        guard icons[path] == nil else { return }
+        let icon = await Task.detached(priority: .userInitiated) { NSWorkspace.shared.icon(forFile: path) }.value
+        if icons[path] == nil { icons[path] = icon }
     }
 
     private static func generate(_ path: String) async -> NSImage? {

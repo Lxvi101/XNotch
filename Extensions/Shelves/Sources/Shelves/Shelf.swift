@@ -72,6 +72,18 @@ struct ShelfFile: Codable, Identifiable, Hashable {
             }
     }
 
+    /// Reads files off the main thread: on a network volume, checking one is
+    /// there and bookmarking it are round trips.
+    static func load(_ url: URL, isOwned: Bool = false) async -> ShelfFile? {
+        await Task.detached(priority: .userInitiated) { ShelfFile(url: url, isOwned: isOwned) }.value
+    }
+
+    static func load(_ urls: [URL], owned: Set<URL> = []) async -> [ShelfFile] {
+        await Task.detached(priority: .userInitiated) {
+            urls.compactMap { ShelfFile(url: $0, isOwned: owned.contains($0)) }
+        }.value
+    }
+
     /// The file where it is now, following the bookmark when it moved; nil once it's gone.
     func resolved() -> ShelfFile? {
         if FileManager.default.fileExists(atPath: path) { return self }
@@ -87,7 +99,8 @@ struct ShelfFile: Codable, Identifiable, Hashable {
     }
 }
 
-/// A file another app promised and is still sending. It's shown as what was
+/// A dropped file still on its way: promised by another app and being
+/// written, or being read off a slow volume. It's shown as what was
 /// dragged until it lands, when it becomes a `ShelfFile` with the same id.
 struct IncomingFile: Identifiable {
     let id = UUID()
@@ -177,7 +190,7 @@ final class Shelf: Identifiable {
     var landings = 0
     /// Where the last drop let go, in shelf coordinates, so files fly in from there.
     var lastDrop: CGPoint?
-    /// Files on their way in from another app, after `files`.
+    /// Dropped files still on their way, after `files`.
     var incoming: [IncomingFile] = []
 
     init(record: ShelfRecord = ShelfRecord()) {
@@ -213,20 +226,6 @@ final class Shelf: Identifiable {
     func targets(for file: ShelfFile) -> [ShelfFile] {
         guard selection.contains(file.id), selection.count > 1 else { return [file] }
         return files.filter { selection.contains($0.id) }
-    }
-
-    /// Adds files not already here; returns how many were added.
-    @discardableResult
-    func add(_ urls: [URL], owned: Set<URL> = []) -> Int {
-        var known = Set(files.map(\.path))
-        let added = urls.compactMap { url -> ShelfFile? in
-            guard let file = ShelfFile(url: url, isOwned: owned.contains(url)), known.insert(file.path).inserted else { return nil }
-            return file
-        }
-        guard !added.isEmpty else { return 0 }
-        files += added
-        updatedAt = Date()
-        return added.count
     }
 
     /// Takes another shelf's files, keeping what they know (ownership, bookmarks),

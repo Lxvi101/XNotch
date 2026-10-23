@@ -353,11 +353,14 @@ final class ShelfController: NSObject {
         }
         guard !isOwn else { return false }
         let promises = PasteboardReader.promises(in: info)
-        if promises.isEmpty {
+        let files = promises.isEmpty ? PasteboardReader.files(in: info) : []
+        if !promises.isEmpty {
+            receive(promises, droppedAt: point)
+        } else if !files.isEmpty {
+            receive(files, droppedAt: point)
+        } else {
             shelf.lastDrop = point
             add(from: pasteboard)
-        } else {
-            receive(promises, droppedAt: point)
         }
         return true
     }
@@ -381,22 +384,25 @@ final class ShelfController: NSObject {
     }
 
     /// Waits for the files' thumbnails, so they land as themselves rather than
-    /// as icons that change a moment later.
+    /// as icons that change a moment later. The files are read off the main
+    /// thread: on a network volume each one is a round trip.
     func add(_ urls: [URL], owned: Set<URL> = [], then done: @escaping @MainActor () -> Void = {}) {
-        Thumbnails.prepare(urls.map(\.standardizedFileURL.path)) { [weak self] in
-            self?.insert(urls, owned: owned)
+        Task {
+            let files = await ShelfFile.load(urls, owned: owned)
+            await Thumbnails.prepare(files.map(\.path))
+            insert(files, tried: urls.count)
             done()
         }
     }
 
-    private func insert(_ urls: [URL], owned: Set<URL>) {
+    private func insert(_ files: [ShelfFile], tried: Int) {
         let count = withAnimation(ShelfMotion.appear) {
-            shelf.add(urls, owned: owned)
+            shelf.merge(files)
         }
         if count > 0 {
             shelf.landings += 1
             library.tick()
-        } else if !urls.isEmpty {
+        } else if tried > 0 {
             NSSound.beep()
         }
         shelf.lastDrop = nil
@@ -404,32 +410,38 @@ final class ShelfController: NSObject {
 
     // MARK: Files on their way
 
-    /// How long promised files can take and still land as themselves, the way
-    /// files from Finder do. Slower ones are stood in for by what was dragged.
+    /// How long dropped files can take and still land as themselves. Slower
+    /// ones (promised files still being written, files on a network volume)
+    /// are stood in for by what was dragged.
     private static let landingGrace: TimeInterval = 0.12
-    /// The tray only comes out for files still on their way after this.
+    /// The tray only comes out for promised files still on their way after this.
     private static let trayDelay: TimeInterval = 0.45
+    /// How long a stand-in waits for its file's thumbnail before landing as the icon.
+    private static let thumbnailLimit: TimeInterval = 3
 
-    /// One drop's promised files, from the drop until the last one lands,
-    /// fails or is let go.
+    /// One drop's files, from the drop until the last one lands, fails or is
+    /// let go.
     private final class Shipment {
         let point: CGPoint
+        /// Promised files are written into the shelf's storage, so they're its
+        /// own and show in the tray; dropped files from Finder are neither.
+        let isPromised: Bool
         var incoming: [IncomingFile] = []
         var folders: [String] = []
-        /// Landed within the grace, before there was a stand-in to land on.
-        var early: [(id: UUID, url: URL)] = []
+        /// Ready within the grace, before there was a stand-in to land on.
+        var early: [(id: UUID, file: ShelfFile)] = []
         var failedEarly: Set<UUID> = []
         /// The files have been put on the shelf, as themselves or as stand-ins.
         var isPlaced = false
         var isCancelled = false
         var settled = 0
-        /// Landing, waiting for their thumbnails.
-        var landing = 0
 
-        init(point: CGPoint) { self.point = point }
+        init(point: CGPoint, isPromised: Bool) {
+            self.point = point
+            self.isPromised = isPromised
+        }
 
-        var isSettled: Bool { settled >= incoming.count }
-        var isFinished: Bool { isSettled && landing == 0 }
+        var isFinished: Bool { settled >= incoming.count }
     }
 
     private func receive(_ promises: [(receiver: NSFilePromiseReceiver, preview: NSImage?)], droppedAt point: CGPoint) {
@@ -437,7 +449,7 @@ final class ShelfController: NSObject {
             delivery.reset()
         }
         pendingTrayHide?.cancel()
-        let shipment = Shipment(point: point)
+        let shipment = Shipment(point: point, isPromised: true)
         shipments.append(shipment)
         let sender = NSWorkspace.shared.frontmostApplication
         delivery.source = sender == .current ? nil : sender?.localizedName
@@ -452,15 +464,13 @@ final class ShelfController: NSObject {
             var slots = standIns.map(\.id)
             let folder = PasteboardReader.receive(receiver, into: library.filesDirectory) { [weak self] url in
                 let id = slots.isEmpty ? nil : slots.removeFirst()
-                self?.settle(url, as: id, in: shipment)
+                self?.prepare(url, as: id, in: shipment)
             }
             shipment.folders.append(folder.lastPathComponent)
         }
         library.receivingFolders.formUnion(shipment.folders)
         delivery.total += shipment.incoming.count
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.landingGrace) { [weak self] in
-            MainActor.assumeIsolated { self?.placeStandIns(for: shipment) }
-        }
+        start(shipment)
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.trayDelay) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.shipments.contains(where: { $0 === shipment }) else { return }
@@ -469,47 +479,83 @@ final class ShelfController: NSObject {
         }
     }
 
-    /// A promised file landed, or nil when the sender couldn't make it.
+    /// Files dropped from Finder and the like. They're here already, but on a
+    /// network volume reading them and making their thumbnails takes a while,
+    /// so they get stand-ins just like promised files.
+    private func receive(_ dropped: [(url: URL, preview: NSImage?)], droppedAt point: CGPoint) {
+        let shipment = Shipment(point: point, isPromised: false)
+        shipments.append(shipment)
+        for (url, preview) in dropped {
+            let type = UTType(filenameExtension: url.pathExtension)
+            let standIn = IncomingFile(kind: FileKind(type: type),
+                                       preview: preview ?? NSWorkspace.shared.icon(for: type ?? .data))
+            shipment.incoming.append(standIn)
+            prepare(url, as: standIn.id, in: shipment)
+        }
+        start(shipment)
+    }
+
+    private func start(_ shipment: Shipment) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.landingGrace) { [weak self] in
+            MainActor.assumeIsolated { self?.placeStandIns(for: shipment) }
+        }
+    }
+
+    /// Reads a file that's here and makes its thumbnail, so it lands as
+    /// itself; nil when the sender couldn't make it.
+    private func prepare(_ url: URL?, as id: UUID?, in shipment: Shipment) {
+        Task {
+            guard let url else { return settle(nil, as: id, in: shipment) }
+            let file = await ShelfFile.load(url, isOwned: shipment.isPromised)
+            if let file {
+                await Thumbnails.prepare([file.path], limit: Self.thumbnailLimit)
+            } else if shipment.isPromised {
+                try? FileManager.default.removeItem(at: url)
+            }
+            settle(file, as: id, in: shipment)
+        }
+    }
+
+    /// A file is ready to land, or nil when it never came or is gone.
     /// `id` is its stand-in's; nil for a file beyond what was promised.
-    private func settle(_ url: URL?, as id: UUID?, in shipment: Shipment) {
+    private func settle(_ file: ShelfFile?, as id: UUID?, in shipment: Shipment) {
         if id != nil { shipment.settled += 1 }
         if shipment.isCancelled || isClosing {
-            if let url { try? FileManager.default.removeItem(at: url) }
+            if let file, shipment.isPromised { try? FileManager.default.removeItem(at: file.url) }
             return
         }
         guard let id else {
-            if let url { add([url], owned: [url]) }
+            if let file { insert([file], tried: 1) }
             return
         }
         guard shipment.isPlaced else {
-            if let url { shipment.early.append((id, url)) } else { shipment.failedEarly.insert(id) }
-            // All in within the grace: they land as themselves, as files from Finder do.
-            if shipment.isSettled { landTogether(shipment) }
+            if let file { shipment.early.append((id, file)) } else { shipment.failedEarly.insert(id) }
+            // All ready within the grace: they land as themselves.
+            if shipment.isFinished { landTogether(shipment) }
             return
         }
-        if let url { land(url, as: id, in: shipment) } else { fail(id, in: shipment) }
+        if let file { land(file, as: id, in: shipment) } else { fail(id, in: shipment) }
+        finish(shipment)
     }
 
     private func landTogether(_ shipment: Shipment) {
         shipment.isPlaced = true
-        let urls = shipment.early.map(\.url)
-        delivery.received += urls.count
-        delivery.failed += shipment.failedEarly.count
-        if urls.isEmpty {
-            NSSound.beep()
-        } else {
-            shelf.lastDrop = shipment.point
-            add(urls, owned: Set(urls))
+        let files = shipment.early.map(\.file)
+        if shipment.isPromised {
+            delivery.received += files.count
+            delivery.failed += shipment.failedEarly.count
         }
+        shelf.lastDrop = shipment.point
+        insert(files, tried: shipment.incoming.count)
         finish(shipment)
     }
 
     /// The drop is taking a while: what was dragged lands now, soft and
-    /// breathing, and turns into each file as it comes in.
+    /// breathing, and turns into each file as it's ready.
     private func placeStandIns(for shipment: Shipment) {
         guard !shipment.isPlaced, !shipment.isCancelled, !isClosing else { return }
         shipment.isPlaced = true
-        delivery.failed += shipment.failedEarly.count
+        if shipment.isPromised { delivery.failed += shipment.failedEarly.count }
         let standIns = shipment.incoming.filter { !shipment.failedEarly.contains($0.id) }
         shelf.lastDrop = shipment.point
         withAnimation(ShelfMotion.appear) { shelf.incoming += standIns }
@@ -521,32 +567,22 @@ final class ShelfController: NSObject {
         }
         let early = shipment.early
         shipment.early = []
-        for (id, url) in early { land(url, as: id, in: shipment) }
+        for (id, file) in early { land(file, as: id, in: shipment) }
         finish(shipment)
     }
 
-    /// Turns a stand-in into its file once the file's thumbnail is ready, so
-    /// it comes into focus as itself.
-    private func land(_ url: URL, as id: UUID, in shipment: Shipment) {
-        shipment.landing += 1
-        Thumbnails.prepare([url.standardizedFileURL.path]) { [weak self] in
-            guard let self else { return }
-            shipment.landing -= 1
-            defer { self.finish(shipment) }
-            guard !shipment.isCancelled, !self.isClosing else {
-                try? FileManager.default.removeItem(at: url)
-                return
-            }
-            guard var file = ShelfFile(url: url, isOwned: true) else { return self.fail(id, in: shipment) }
-            file.id = id
-            let landed = withAnimation(ShelfMotion.arrive) { self.shelf.land(file) }
-            if landed { self.delivery.received += 1 }
-        }
+    /// Turns a stand-in into its file, whose thumbnail is ready, so it comes
+    /// into focus as itself.
+    private func land(_ file: ShelfFile, as id: UUID, in shipment: Shipment) {
+        var file = file
+        file.id = id
+        let landed = withAnimation(ShelfMotion.arrive) { shelf.land(file) }
+        if landed && shipment.isPromised { delivery.received += 1 }
     }
 
     /// A stand-in whose file never came shakes, then goes.
     private func fail(_ id: UUID, in shipment: Shipment) {
-        delivery.failed += 1
+        if shipment.isPromised { delivery.failed += 1 }
         guard let index = shelf.incoming.firstIndex(where: { $0.id == id }) else { return }
         withAnimation(ShelfMotion.hover) { shelf.incoming[index].failed = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
