@@ -110,6 +110,10 @@ final class ShelvesPreferences: ObservableObject {
     @Published var disabledActions: Set<InstantAction> { didSet { store(disabledActions, "disabledActions") } }
     @Published var closeAfterAction: Bool { didSet { defaults.set(closeAfterAction, forKey: "closeAfterAction") } }
     @Published var watchedFolders: [WatchedFolder] { didSet { store(watchedFolders, "watchedFolders") } }
+    /// Dropped links become the files their rules find, not link files.
+    @Published var linksToFiles: Bool { didSet { defaults.set(linksToFiles, forKey: "linksToFiles") } }
+    /// Every link rule, the first that covers a link wins.
+    @Published var linkRules: [LinkRule] { didSet { store(linkRules, "linkRules") } }
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
@@ -128,6 +132,15 @@ final class ShelvesPreferences: ObservableObject {
         disabledActions = Self.load("disabledActions", from: defaults) ?? InstantAction.disabledByDefault
         closeAfterAction = defaults.object(forKey: "closeAfterAction") as? Bool ?? true
         watchedFolders = Self.load("watchedFolders", from: defaults) ?? []
+        linksToFiles = defaults.object(forKey: "linksToFiles") as? Bool ?? true
+        let savedRules: [LinkRule] = Self.load("linkRules", from: defaults) ?? []
+        // Rules added in later versions go to the end.
+        linkRules = savedRules + LinkRule.builtIn.filter { rule in !savedRules.contains { $0.id == rule.id } }
+    }
+
+    /// The rules a drop uses: none while links stay links.
+    var activeLinkRules: [LinkRule] {
+        linksToFiles ? linkRules.filter(\.isEnabled) : []
     }
 
     /// The actions a shelf offers, in order.
@@ -153,6 +166,19 @@ final class ShelvesPreferences: ObservableObject {
 
     func setAction(_ action: InstantAction, enabled: Bool) {
         if enabled { disabledActions.remove(action) } else { disabledActions.insert(action) }
+    }
+
+    /// Adds rules from a file. A rule that's here already, by its id, is
+    /// replaced where it is. Returns how many there were.
+    @discardableResult
+    func importLinkRules(from data: Data) throws -> Int {
+        let imported = try LinkRule.rules(from: data)
+        var rules = linkRules
+        for rule in imported {
+            if let index = rules.firstIndex(where: { $0.id == rule.id }) { rules[index] = rule } else { rules.append(rule) }
+        }
+        linkRules = rules
+        return imported.count
     }
 
     func watch(_ urls: [URL]) {

@@ -4,8 +4,9 @@ import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
 /// Turns whatever is dragged or copied into files: file URLs as they are,
-/// file promises (Mail, Photos, browsers) received into storage, and images
-/// or text written out as files.
+/// file promises (Mail, Photos, browsers) received into storage, links
+/// downloaded by a rule or kept as link files, and images or text written
+/// out as files.
 @MainActor
 enum PasteboardReader {
     static let promiseTypes = NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
@@ -16,13 +17,15 @@ enum PasteboardReader {
         pasteboard.types?.contains(where: readableTypes.contains) ?? false
     }
 
-    /// Calls back with the files and which of them were made here.
-    static func read(_ pasteboard: NSPasteboard, into directory: URL,
+    /// Calls back with the files and which of them were made here. `links`
+    /// are the rules that turn links into files.
+    static func read(_ pasteboard: NSPasteboard, into directory: URL, links: [LinkRule] = [],
                      completion: @escaping @MainActor (_ urls: [URL], _ owned: Set<URL>) -> Void) {
         // Promises come first: Photos also offers a file URL, but to a small
         // preview inside its library, while the promise is the original.
         let promises = (pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver]) ?? []
         if !promises.isEmpty {
+            let changeCount = pasteboard.changeCount
             let destination = freshFolder(in: directory)
             let group = DispatchGroup()
             let lock = NSLock()
@@ -39,18 +42,41 @@ enum PasteboardReader {
                 }
             }
             group.notify(queue: .main) {
-                MainActor.assumeIsolated { completion(received, Set(received)) }
+                MainActor.assumeIsolated {
+                    // Browsers cancel promises they can't keep, but carry the
+                    // image itself too.
+                    if received.isEmpty && pasteboard.changeCount == changeCount {
+                        readContents(pasteboard, into: directory, links: links, completion: completion)
+                    } else {
+                        completion(received, Set(received))
+                    }
+                }
             }
             return
         }
+        readContents(pasteboard, into: directory, links: links, completion: completion)
+    }
 
+    /// What's on the pasteboard besides promises: file URLs, an image, a link, text.
+    private static func readContents(_ pasteboard: NSPasteboard, into directory: URL, links: [LinkRule],
+                                     completion: @escaping @MainActor (_ urls: [URL], _ owned: Set<URL>) -> Void) {
         let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         if !files.isEmpty { return completion(files, []) }
 
-        if let image = NSImage(pasteboard: pasteboard), pasteboard.availableType(from: [.png, .tiff]) != nil,
-           let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-            let url = freshFolder(in: directory).appendingPathComponent("Image.png")
-            if (try? png.write(to: url)) != nil { return completion([url], [url]) }
+        if let url = imageFile(from: pasteboard, into: directory) { return completion([url], [url]) }
+
+        if let link = webLink(on: pasteboard) {
+            let folder = freshFolder(in: directory)
+            guard let rule = LinkResolver.rule(for: link.url, in: links) else {
+                let url = linkFile(for: link.url, title: link.title, in: folder)
+                return completion(url.map { [$0] } ?? [], Set(url.map { [$0] } ?? []))
+            }
+            Task {
+                let file = try? await LinkResolver.download(link.url, with: rule, into: folder)
+                let url = file ?? linkFile(for: link.url, title: link.title, in: folder)
+                completion(url.map { [$0] } ?? [], Set(url.map { [$0] } ?? []))
+            }
+            return
         }
 
         if let text = pasteboard.string(forType: .string) ?? pasteboard.string(forType: .URL),
@@ -59,6 +85,47 @@ enum PasteboardReader {
             if (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil { return completion([url], [url]) }
         }
         completion([], [])
+    }
+
+    /// A web address on the pasteboard, from a dragged link or as the whole of
+    /// its text, with the link's title when there is one.
+    static func webLink(on pasteboard: NSPasteboard) -> (url: URL, title: String?)? {
+        guard let text = (pasteboard.string(forType: .URL) ?? pasteboard.string(forType: .string))?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.contains(where: \.isWhitespace), let url = URL(string: text),
+              ["http", "https"].contains(url.scheme?.lowercased()), url.host() != nil else { return nil }
+        let title = pasteboard.string(forType: .init("public.url-name"))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (url, title?.isEmpty == false ? title : nil)
+    }
+
+    /// A link file, which opens the address, named after its title or host.
+    static func linkFile(for url: URL, title: String?, in folder: URL) -> URL? {
+        let name = (title ?? url.host() ?? "Link").replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let file = folder.appendingPathComponent(String(name.prefix(60)) + ".webloc")
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0),
+              (try? data.write(to: file)) != nil else { return nil }
+        return file
+    }
+
+    /// The image dragged for a drop's first item.
+    static func preview(in info: NSDraggingInfo) -> NSImage? {
+        var found: NSImage?
+        info.enumerateDraggingItems(options: [], for: nil, classes: [NSPasteboardItem.self], searchOptions: [:]) { item, _, stop in
+            let components = item.imageComponents ?? []
+            found = image(from: (components.first { $0.key == .icon } ?? components.first)?.contents)
+            stop.pointee = true
+        }
+        return found
+    }
+
+    /// The pasteboard's image written as a PNG into a fresh folder in
+    /// `directory`; nil when it has none.
+    static func imageFile(from pasteboard: NSPasteboard, into directory: URL) -> URL? {
+        guard let png = pasteboard.data(forType: .png)
+                ?? pasteboard.data(forType: .tiff).flatMap({ NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) })
+        else { return nil }
+        let url = freshFolder(in: directory).appendingPathComponent("Image.png")
+        return (try? png.write(to: url)) != nil ? url : nil
     }
 
     /// A drop's file promises, each with the image that was dragged for it,
@@ -117,7 +184,7 @@ enum PasteboardReader {
         return base + ".txt"
     }
 
-    private static func freshFolder(in directory: URL) -> URL {
+    nonisolated static func freshFolder(in directory: URL) -> URL {
         let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder

@@ -342,7 +342,7 @@ final class ShelfController: NSObject {
         if shelf.showsActions {
             guard let action = shelf.hoveredAction else { return false }
             let wasEmpty = shelf.files.isEmpty
-            PasteboardReader.read(pasteboard, into: library.filesDirectory) { [weak self] urls, _ in
+            PasteboardReader.read(pasteboard, into: library.filesDirectory, links: preferences.activeLinkRules) { [weak self] urls, _ in
                 guard let self else { return }
                 let done = action.perform(with: urls, sendToNotchShelf: self.library.sendToNotchShelf)
                 if done && wasEmpty && self.preferences.closeAfterAction && !self.shelf.isPinned && self.shelf.files.isEmpty {
@@ -355,9 +355,12 @@ final class ShelfController: NSObject {
         let promises = PasteboardReader.promises(in: info)
         let files = promises.isEmpty ? PasteboardReader.files(in: info) : []
         if !promises.isEmpty {
-            receive(promises, droppedAt: point)
+            receive(promises, from: pasteboard, droppedAt: point)
         } else if !files.isEmpty {
             receive(files, droppedAt: point)
+        } else if pasteboard.availableType(from: [.png, .tiff]) == nil, let link = PasteboardReader.webLink(on: pasteboard),
+                  let rule = LinkResolver.rule(for: link.url, in: preferences.activeLinkRules) {
+            receive(link, rule: rule, preview: PasteboardReader.preview(in: info), droppedAt: point)
         } else {
             shelf.lastDrop = point
             add(from: pasteboard)
@@ -378,7 +381,7 @@ final class ShelfController: NSObject {
     }
 
     func add(from pasteboard: NSPasteboard) {
-        PasteboardReader.read(pasteboard, into: library.filesDirectory) { [weak self] urls, owned in
+        PasteboardReader.read(pasteboard, into: library.filesDirectory, links: preferences.activeLinkRules) { [weak self] urls, owned in
             self?.add(urls, owned: owned)
         }
     }
@@ -444,15 +447,17 @@ final class ShelfController: NSObject {
         var isFinished: Bool { settled >= incoming.count }
     }
 
-    private func receive(_ promises: [(receiver: NSFilePromiseReceiver, preview: NSImage?)], droppedAt point: CGPoint) {
-        if shipments.isEmpty && !isTrayShown || delivery.phase != .receiving {
-            delivery.reset()
-        }
-        pendingTrayHide?.cancel()
+    private func receive(_ promises: [(receiver: NSFilePromiseReceiver, preview: NSImage?)],
+                         from pasteboard: NSPasteboard, droppedAt point: CGPoint) {
+        let sender = NSWorkspace.shared.frontmostApplication
+        beginDelivery(from: sender == .current ? nil : sender?.localizedName)
         let shipment = Shipment(point: point, isPromised: true)
         shipments.append(shipment)
-        let sender = NSWorkspace.shared.frontmostApplication
-        delivery.source = sender == .current ? nil : sender?.localizedName
+        // Browsers cancel promises they can't keep, but carry the image itself
+        // too. With one item dragged, that image is the promised file's.
+        let changeCount = pasteboard.changeCount
+        let hasOwnImage = promises.count == 1 && pasteboard.pasteboardItems?.count == 1
+            && pasteboard.availableType(from: [.png, .tiff]) != nil
         for (receiver, preview) in promises {
             let types = receiver.fileTypes.map { UTType($0) }
             let standIns = (types.isEmpty ? [nil] : types).map { type in
@@ -462,15 +467,57 @@ final class ShelfController: NSObject {
             shipment.incoming += standIns
             // A promise's files come back in the order they were promised.
             var slots = standIns.map(\.id)
+            let usesOwnImage = hasOwnImage && standIns.count == 1
             let folder = PasteboardReader.receive(receiver, into: library.filesDirectory) { [weak self] url in
+                guard let self else { return }
                 let id = slots.isEmpty ? nil : slots.removeFirst()
-                self?.prepare(url, as: id, in: shipment)
+                var url = url
+                if url == nil, usesOwnImage, pasteboard.changeCount == changeCount {
+                    url = PasteboardReader.imageFile(from: pasteboard, into: self.library.filesDirectory)
+                }
+                self.prepare(url, as: id, in: shipment)
             }
             shipment.folders.append(folder.lastPathComponent)
         }
         library.receivingFolders.formUnion(shipment.folders)
         delivery.total += shipment.incoming.count
         start(shipment)
+        showTrayIfSlow(shipment)
+    }
+
+    /// A link a rule turns into a file. What was dragged stands in while the
+    /// file downloads; the link itself lands when there's no file to be had.
+    private func receive(_ link: (url: URL, title: String?), rule: LinkRule, preview: NSImage?, droppedAt point: CGPoint) {
+        let host = link.url.host()
+        beginDelivery(from: host?.hasPrefix("www.") == true ? String(host!.dropFirst(4)) : host)
+        let shipment = Shipment(point: point, isPromised: true)
+        shipments.append(shipment)
+        let type = rule.source == .previewImage ? UTType.image : UTType(filenameExtension: link.url.pathExtension) ?? .data
+        let standIn = IncomingFile(kind: FileKind(type: type), preview: preview ?? NSWorkspace.shared.icon(for: type))
+        shipment.incoming.append(standIn)
+        let folder = PasteboardReader.freshFolder(in: library.filesDirectory)
+        shipment.folders.append(folder.lastPathComponent)
+        library.receivingFolders.formUnion(shipment.folders)
+        delivery.total += 1
+        start(shipment)
+        showTrayIfSlow(shipment)
+        Task { [weak self] in
+            let file = try? await LinkResolver.download(link.url, with: rule, into: folder)
+            self?.prepare(file ?? PasteboardReader.linkFile(for: link.url, title: link.title, in: folder), as: standIn.id, in: shipment)
+        }
+    }
+
+    /// A new shipment is on its way from `source`: the tray counts it with
+    /// those still coming, or starts over.
+    private func beginDelivery(from source: String?) {
+        if shipments.isEmpty && !isTrayShown || delivery.phase != .receiving {
+            delivery.reset()
+        }
+        pendingTrayHide?.cancel()
+        delivery.source = source
+    }
+
+    private func showTrayIfSlow(_ shipment: Shipment) {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.trayDelay) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.shipments.contains(where: { $0 === shipment }) else { return }
