@@ -454,10 +454,10 @@ final class ShelfController: NSObject {
         let shipment = Shipment(point: point, isPromised: true)
         shipments.append(shipment)
         // Browsers cancel promises they can't keep, but carry the image itself
-        // too. With one item dragged, that image is the promised file's.
-        let changeCount = pasteboard.changeCount
-        let hasOwnImage = promises.count == 1 && pasteboard.pasteboardItems?.count == 1
-            && pasteboard.availableType(from: [.png, .tiff]) != nil
+        // too. With one item dragged, that image is the promised file's. It's
+        // read now: once the drag is over, the browser no longer serves it.
+        let ownImage = promises.count == 1 && pasteboard.pasteboardItems?.count == 1
+            ? PasteboardReader.imageData(on: pasteboard) : nil
         for (receiver, preview) in promises {
             let types = receiver.fileTypes.map { UTType($0) }
             let standIns = (types.isEmpty ? [nil] : types).map { type in
@@ -467,15 +467,18 @@ final class ShelfController: NSObject {
             shipment.incoming += standIns
             // A promise's files come back in the order they were promised.
             var slots = standIns.map(\.id)
-            let usesOwnImage = hasOwnImage && standIns.count == 1
-            let folder = PasteboardReader.receive(receiver, into: library.filesDirectory) { [weak self] url in
-                guard let self else { return }
+            let ownImage = standIns.count == 1 ? ownImage : nil
+            let directory = library.filesDirectory
+            let folder = PasteboardReader.receive(receiver, into: directory) { [weak self] url in
                 let id = slots.isEmpty ? nil : slots.removeFirst()
-                var url = url
-                if url == nil, usesOwnImage, pasteboard.changeCount == changeCount {
-                    url = PasteboardReader.imageFile(from: pasteboard, into: self.library.filesDirectory)
+                guard url == nil, let ownImage else {
+                    self?.prepare(url, as: id, in: shipment)
+                    return
                 }
-                self.prepare(url, as: id, in: shipment)
+                Task.detached(priority: .userInitiated) {
+                    let url = PasteboardReader.imageFile(from: ownImage, into: directory)
+                    await self?.prepare(url, as: id, in: shipment)
+                }
             }
             shipment.folders.append(folder.lastPathComponent)
         }

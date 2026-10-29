@@ -12,9 +12,28 @@ enum PasteboardReader {
     static let promiseTypes = NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
     static let readableTypes: [NSPasteboard.PasteboardType] =
         [.fileURL] + promiseTypes + [.png, .tiff, .string, .URL]
+    /// Where Firefox keeps the data a page sets on a drag itself. ChatGPT
+    /// drags its generated images with nothing else.
+    static let pageDataType = NSPasteboard.PasteboardType("org.mozilla.custom-clipdata")
+    /// The types a shelf listens for; `canRead` tells which drags it takes.
+    static let draggedTypes = readableTypes + [pageDataType]
 
     static func canRead(_ pasteboard: NSPasteboard) -> Bool {
-        pasteboard.types?.contains(where: readableTypes.contains) ?? false
+        guard let types = pasteboard.types else { return false }
+        return types.contains(where: readableTypes.contains)
+            || types.contains(pageDataType) && hasPageImage(pasteboard)
+    }
+
+    private static var checkedPageData: (name: NSPasteboard.Name, changeCount: Int, hasImage: Bool)?
+
+    /// Whether a page's own drag data holds an image. Looked into once per drag.
+    private static func hasPageImage(_ pasteboard: NSPasteboard) -> Bool {
+        if let checked = checkedPageData, checked.name == pasteboard.name, checked.changeCount == pasteboard.changeCount {
+            return checked.hasImage
+        }
+        let hasImage = pasteboard.data(forType: pageDataType).map(PageDragData.hasImage) ?? false
+        checkedPageData = (pasteboard.name, pasteboard.changeCount, hasImage)
+        return hasImage
     }
 
     /// Calls back with the files and which of them were made here. `links`
@@ -26,6 +45,9 @@ enum PasteboardReader {
         let promises = (pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver]) ?? []
         if !promises.isEmpty {
             let changeCount = pasteboard.changeCount
+            // Browsers cancel promises they can't keep, but carry the image
+            // itself too, and only while the drag lasts.
+            let ownImage = promises.count == 1 ? imageData(on: pasteboard) : nil
             let destination = freshFolder(in: directory)
             let group = DispatchGroup()
             let lock = NSLock()
@@ -43,9 +65,9 @@ enum PasteboardReader {
             }
             group.notify(queue: .main) {
                 MainActor.assumeIsolated {
-                    // Browsers cancel promises they can't keep, but carry the
-                    // image itself too.
-                    if received.isEmpty && pasteboard.changeCount == changeCount {
+                    if received.isEmpty, let ownImage, let url = imageFile(from: ownImage, into: directory) {
+                        completion([url], [url])
+                    } else if received.isEmpty && pasteboard.changeCount == changeCount {
                         readContents(pasteboard, into: directory, links: links, completion: completion)
                     } else {
                         completion(received, Set(received))
@@ -64,6 +86,16 @@ enum PasteboardReader {
         if !files.isEmpty { return completion(files, []) }
 
         if let url = imageFile(from: pasteboard, into: directory) { return completion([url], [url]) }
+
+        // Read now, while the browser still serves it; decoded off the main thread.
+        if pasteboard.types?.contains(pageDataType) == true, hasPageImage(pasteboard),
+           let data = pasteboard.data(forType: pageDataType) {
+            Task.detached(priority: .userInitiated) {
+                let url = PageDragData.image(in: data).flatMap { imageFile(from: $0.data, named: $0.name, into: directory) }
+                await completion(url.map { [$0] } ?? [], Set(url.map { [$0] } ?? []))
+            }
+            return
+        }
 
         if let link = webLink(on: pasteboard) {
             let folder = freshFolder(in: directory)
@@ -118,14 +150,33 @@ enum PasteboardReader {
         return found
     }
 
+    /// The pasteboard's image as PNG or TIFF data; nil when it has none.
+    /// Browsers serve a dragged image only until the drag is over, so a drop
+    /// that might need it reads it before letting go.
+    static func imageData(on pasteboard: NSPasteboard) -> Data? {
+        pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
+    }
+
     /// The pasteboard's image written as a PNG into a fresh folder in
     /// `directory`; nil when it has none.
     static func imageFile(from pasteboard: NSPasteboard, into directory: URL) -> URL? {
-        guard let png = pasteboard.data(forType: .png)
-                ?? pasteboard.data(forType: .tiff).flatMap({ NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) })
+        imageData(on: pasteboard).flatMap { imageFile(from: $0, into: directory) }
+    }
+
+    /// PNG or TIFF data written as a PNG into a fresh folder in `directory`.
+    nonisolated static func imageFile(from data: Data, into directory: URL) -> URL? {
+        let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
+        guard let png = isPNG ? data : NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
         else { return nil }
         let url = freshFolder(in: directory).appendingPathComponent("Image.png")
         return (try? png.write(to: url)) != nil ? url : nil
+    }
+
+    /// An image file as it came, `name` with its extension, into a fresh
+    /// folder in `directory`.
+    nonisolated static func imageFile(from data: Data, named name: String, into directory: URL) -> URL? {
+        let url = freshFolder(in: directory).appendingPathComponent(name)
+        return (try? data.write(to: url)) != nil ? url : nil
     }
 
     /// A drop's file promises, each with the image that was dragged for it,
@@ -188,6 +239,63 @@ enum PasteboardReader {
         let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder
+    }
+}
+
+/// The data a web page sets on a drag itself, as Firefox carries it: entries
+/// of a big-endian UInt32 kind (0 ends them), then a type and a value, each a
+/// big-endian UInt32 byte count and UTF-16 text.
+enum PageDragData {
+    static func entries(in data: Data) -> [(type: String, value: String)] {
+        let bytes = [UInt8](data)
+        var offset = 0
+        func uint32() -> Int? {
+            guard offset + 4 <= bytes.count else { return nil }
+            defer { offset += 4 }
+            return bytes[offset..<offset + 4].reduce(0) { $0 << 8 | Int($1) }
+        }
+        func text() -> String? {
+            guard let count = uint32(), offset + count <= bytes.count else { return nil }
+            defer { offset += count }
+            return String(data: Data(bytes[offset..<offset + count]), encoding: .utf16LittleEndian)
+        }
+        var entries: [(type: String, value: String)] = []
+        while let kind = uint32(), kind != 0, let type = text(), let value = text() {
+            entries.append((type, value))
+        }
+        return entries
+    }
+
+    private static let marker = Data("data:image/".utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] })
+
+    /// Whether the data carries an image, without decoding it.
+    static func hasImage(_ data: Data) -> Bool {
+        data.range(of: marker) != nil
+    }
+
+    /// The first image in the data, from a data URL that is a value or a
+    /// field of one, with a file name: the one the page gave it, or "Image".
+    static func image(in data: Data) -> (data: Data, name: String)? {
+        for entry in entries(in: data) {
+            let object = (try? JSONSerialization.jsonObject(with: Data(entry.value.utf8))) as? [String: Any]
+            let strings = object.map { Array($0.values.compactMap { $0 as? String }) } ?? [entry.value]
+            guard let image = strings.lazy.compactMap(decode).first else { continue }
+            let given = (object?["filename"] ?? object?["name"]) as? String
+            let base = (given.map { ($0 as NSString).deletingPathExtension } ?? "")
+                .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            return (image.data, (base.isEmpty ? "Image" : String(base.prefix(60))) + "." + image.ext)
+        }
+        return nil
+    }
+
+    /// A base64 `data:image/…` URL's bytes and file extension.
+    private static func decode(_ url: String) -> (data: Data, ext: String)? {
+        guard url.hasPrefix("data:image/"), let comma = url.firstIndex(of: ",") else { return nil }
+        let header = url[url.index(url.startIndex, offsetBy: 5)..<comma].split(separator: ";")
+        guard header.contains("base64"), let mime = header.first,
+              let data = Data(base64Encoded: String(url[url.index(after: comma)...]), options: .ignoreUnknownCharacters)
+        else { return nil }
+        return (data, UTType(mimeType: String(mime))?.preferredFilenameExtension ?? "png")
     }
 }
 

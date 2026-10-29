@@ -128,7 +128,7 @@ final class ShelfDropView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        registerForDraggedTypes(PasteboardReader.readableTypes)
+        registerForDraggedTypes(PasteboardReader.draggedTypes)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -171,9 +171,21 @@ final class ShelfDropView: NSView {
         MainActor.assumeIsolated { controller?.dragLeft() }
     }
 
+    /// The drag under way and whether the shelf takes it, worked out once:
+    /// a page's own drag data counts only when it holds an image.
+    private var checkedDrag: (sequence: Int, isReadable: Bool)?
+
+    private func isReadable(_ sender: NSDraggingInfo) -> Bool {
+        if let checkedDrag, checkedDrag.sequence == sender.draggingSequenceNumber { return checkedDrag.isReadable }
+        let isReadable = MainActor.assumeIsolated { PasteboardReader.canRead(sender.draggingPasteboard) }
+        checkedDrag = (sender.draggingSequenceNumber, isReadable)
+        return isReadable
+    }
+
     private func update(_ sender: NSDraggingInfo) -> NSDragOperation {
         let point = shelfPoint(sender)
         let size = shelfRect.size
+        guard isReadable(sender) else { return [] }
         return MainActor.assumeIsolated {
             guard CGRect(origin: .zero, size: size).contains(point) else {
                 controller?.dragLeft()

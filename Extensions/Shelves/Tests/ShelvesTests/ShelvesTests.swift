@@ -125,3 +125,86 @@ final class ShelfGeometryTests: XCTestCase {
 private enum PasteboardReaderNames {
     @MainActor static func name(_ text: String) -> String { PasteboardReader.textFileName(for: text) }
 }
+
+final class DraggedImageTests: XCTestCase {
+    private func bitmap() -> NSBitmapImageRep {
+        NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 3, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    }
+
+    private func directory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    /// A browser's TIFF, read at the drop, lands as a PNG of the same size.
+    func testTIFFBecomesPNG() throws {
+        let url = try XCTUnwrap(PasteboardReader.imageFile(from: bitmap().tiffRepresentation!, into: directory()))
+        let data = try Data(contentsOf: url)
+        XCTAssertTrue(data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        XCTAssertEqual(NSBitmapImageRep(data: data)?.pixelsWide, 4)
+    }
+
+    func testPNGIsKeptAsIs() throws {
+        let png = bitmap().representation(using: .png, properties: [:])!
+        let url = try XCTUnwrap(PasteboardReader.imageFile(from: png, into: directory()))
+        XCTAssertEqual(try Data(contentsOf: url), png)
+    }
+
+    func testNotAnImage() throws {
+        XCTAssertNil(PasteboardReader.imageFile(from: Data("hello".utf8), into: try directory()))
+    }
+}
+
+final class PageDragDataTests: XCTestCase {
+    /// Firefox's layout: big-endian kind, then type and value as counted UTF-16LE.
+    private func pageData(_ entries: [(String, String)]) -> Data {
+        var data = Data()
+        func uint32(_ value: Int) { data.append(contentsOf: withUnsafeBytes(of: UInt32(value).bigEndian, Array.init)) }
+        func text(_ string: String) {
+            let bytes = string.utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
+            uint32(bytes.count)
+            data.append(contentsOf: bytes)
+        }
+        for (type, value) in entries {
+            uint32(1)
+            text(type)
+            text(value)
+        }
+        uint32(0)
+        return data
+    }
+
+    private let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+
+    /// How ChatGPT drags a generated image.
+    func testChatGPTImage() throws {
+        let json = #"{"filename":"generated-image-1","src":"data:image/png;base64,\#(png.base64EncodedString())"}"#
+        let data = pageData([("application/x-codex-image", json)])
+        XCTAssertTrue(PageDragData.hasImage(data))
+        let image = try XCTUnwrap(PageDragData.image(in: data))
+        XCTAssertEqual(image.data, png)
+        XCTAssertEqual(image.name, "generated-image-1.png")
+    }
+
+    func testBareDataURL() throws {
+        let data = pageData([("text/plain", "hi"), ("text/x-image", "data:image/jpeg;base64,\(png.base64EncodedString())")])
+        let image = try XCTUnwrap(PageDragData.image(in: data))
+        XCTAssertEqual(image.name, "Image.jpeg")
+    }
+
+    func testNoImage() {
+        let data = pageData([("application/x-moz-tabbrowser-tab", "tab"), ("text/uri-list", "https://example.com")])
+        XCTAssertFalse(PageDragData.hasImage(data))
+        XCTAssertNil(PageDragData.image(in: data))
+        XCTAssertTrue(PageDragData.entries(in: data).map(\.type) == ["application/x-moz-tabbrowser-tab", "text/uri-list"])
+    }
+
+    func testTruncatedDataStops() {
+        let data = pageData([("a", "b")]).dropLast(6)
+        XCTAssertTrue(PageDragData.entries(in: Data(data)).isEmpty)
+    }
+}
