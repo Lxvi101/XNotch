@@ -18,6 +18,7 @@ struct AIUsageSettingsPane: View {
                     Text("Percent used").tag(false)
                     Text("Percent remaining").tag(true)
                 }
+                Toggle("Today's share of weekly limits", isOn: $store.settings.showsTodayPace)
                 Toggle("Model limits, credits and spend", isOn: $store.settings.showsExtras)
                 Toggle("Account emails", isOn: $store.settings.showsAccountLabels)
                 Toggle("Badge when a limit is 90% used", isOn: $store.settings.badgesNearLimit)

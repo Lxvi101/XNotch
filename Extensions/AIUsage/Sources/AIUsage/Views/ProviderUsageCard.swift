@@ -2,7 +2,8 @@ import SwiftUI
 import XNotchKit
 
 /// A provider at a glance: its name and up to two quotas as big numbers, each with a bar and the
-/// time to its reset (the local reset time while hovered). Click for details. Only connected
+/// time to its reset (the local reset time while hovered). Today's share of a weekly limit marks that
+/// limit's bar, and takes the free lane when there is one. Click for details. Only connected
 /// subscriptions get a tile: setting one up happens in Settings, never in the notch.
 struct ProviderTile: View {
     struct Actions {
@@ -16,6 +17,7 @@ struct ProviderTile: View {
     let provider: AIProviderID
     let state: ProviderState
     let showsRemaining: Bool
+    let showsTodayPace: Bool
     let now: Date
     let namespace: Namespace.ID
     let actions: Actions
@@ -28,9 +30,15 @@ struct ProviderTile: View {
                 header
                 Spacer(minLength: 0)
                 if let snapshot = state.snapshot, !snapshot.coreWindows.isEmpty {
+                    let windows = snapshot.coreWindows.prefix(2)
+                    let pace = showsTodayPace ? snapshot.todayPace(at: now) : nil
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(snapshot.coreWindows.prefix(2)) { window in
-                            WindowGlance(window: window, showsRemaining: showsRemaining, showsResetTime: hovered, now: now)
+                        if let pace, windows.count < 2 {
+                            TodayGlance(pace: pace, showsResetTime: hovered, now: now)
+                        }
+                        ForEach(windows) { window in
+                            WindowGlance(window: window, pace: pace?.windowID == window.id ? pace : nil,
+                                         showsRemaining: showsRemaining, showsResetTime: hovered, now: now)
                         }
                     }
                 } else {
@@ -83,39 +91,42 @@ struct ProviderTile: View {
 }
 
 /// "54%", a bar, and the reset: the countdown, or the local time while hovered.
-private struct WindowGlance: View {
-    let window: QuotaWindow
-    let showsRemaining: Bool
+private struct GlanceLane: View {
+    let percent: Double?
+    let label: String
+    let fraction: Double?
+    var marker: Double?
+    let color: Color
+    let resetsAt: Date?
+    var detail: String?
     let showsResetTime: Bool
     let now: Date
 
     var body: some View {
-        let shown = showsRemaining ? window.displayRemaining : window.displayUsed
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(UsageFormat.percent(shown))
+                Text(UsageFormat.percent(percent))
                     .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(shown == nil ? KitStyle.tertiaryText : KitStyle.primaryText)
+                    .foregroundStyle(percent == nil ? KitStyle.tertiaryText : KitStyle.primaryText)
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Spacer(minLength: 2)
-                let label = window.shortLabel ?? window.label
-                Text(showsRemaining ? "\(label) left" : label)
+                Text(label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(KitStyle.tertiaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            UsageBar(fraction: shown.map { $0 / 100 }, color: Palette.fill(usedPercent: window.displayUsed))
+            UsageBar(fraction: fraction, marker: marker, color: color)
                 .frame(height: 3)
             HStack(spacing: 3) {
-                if let resetsAt = window.resetsAt {
+                if let resetsAt {
                     Image(systemName: "arrow.counterclockwise").font(.system(size: 7.5, weight: .bold))
                     Text(resetsAt <= now ? "now" : showsResetTime ? UsageFormat.resetTime(resetsAt, now: now)
                          : UsageFormat.countdown(to: resetsAt, from: now))
                         .contentTransition(.numericText())
-                } else if let detail = window.detail {
+                } else if let detail {
                     Text(detail)
                 }
             }
@@ -125,9 +136,42 @@ private struct WindowGlance: View {
             .frame(height: 12)
         }
         .animation(KitMotion.content, value: showsResetTime)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(window.label)
-        .accessibilityValue(WindowAccessibility.value(window, showsRemaining: showsRemaining, now: now))
+    }
+}
+
+private struct WindowGlance: View {
+    let window: QuotaWindow
+    let pace: TodayPace?
+    let showsRemaining: Bool
+    let showsResetTime: Bool
+    let now: Date
+
+    var body: some View {
+        let shown = showsRemaining ? window.displayRemaining : window.displayUsed
+        let label = window.shortLabel ?? window.label
+        GlanceLane(percent: shown, label: showsRemaining ? "\(label) left" : label, fraction: shown.map { $0 / 100 },
+                   marker: pace?.marker(showsRemaining: showsRemaining), color: Palette.fill(usedPercent: window.displayUsed),
+                   resetsAt: window.resetsAt, detail: window.detail, showsResetTime: showsResetTime, now: now)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(window.label)
+            .accessibilityValue([WindowAccessibility.value(window, showsRemaining: showsRemaining, now: now),
+                                 pace.map(WindowAccessibility.value)].compactMap { $0 }.joined(separator: ", "))
+    }
+}
+
+/// What's left of today's share of the week, draining from the whole allowance to nothing.
+private struct TodayGlance: View {
+    let pace: TodayPace
+    let showsResetTime: Bool
+    let now: Date
+
+    var body: some View {
+        GlanceLane(percent: pace.over > 0 ? pace.over : pace.left, label: pace.over > 0 ? "over today" : "Today left",
+                   fraction: pace.left / pace.allowance, color: Palette.fill(usedPercent: pace.used / pace.allowance * 100),
+                   resetsAt: pace.dayEndsAt, showsResetTime: showsResetTime, now: now)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Today")
+            .accessibilityValue(WindowAccessibility.value(pace))
     }
 }
 
@@ -152,7 +196,7 @@ struct ProviderDetails: View {
     static func height(state: ProviderState, settings: AIUsageSettings) -> CGFloat {
         var height = 2 * padding + headerHeight
         if showsMessage(state) { height += sectionSpacing + messageHeight }
-        let rows = rows(state.snapshot).count
+        let rows = rows(state.snapshot, showsTodayPace: settings.showsTodayPace).count
         if rows > 0 { height += sectionSpacing + CGFloat(rows) * rowHeight + CGFloat(rows - 1) * rowSpacing }
         return height
     }
@@ -163,21 +207,28 @@ struct ProviderDetails: View {
 
     enum Row: Identifiable {
         case window(QuotaWindow)
+        case today(TodayPace)
         case spend(SpendLine)
         case value(id: String, label: String, value: String, trailing: String?)
 
         var id: String {
             switch self {
             case let .window(window): "w.\(window.id)"
+            case let .today(pace): "t.\(pace.windowID)"
             case let .spend(line): "s.\(line.id)"
             case let .value(id, _, _, _): "v.\(id)"
             }
         }
     }
 
-    static func rows(_ snapshot: ProviderUsageSnapshot?, now: Date = Date()) -> [Row] {
+    static func rows(_ snapshot: ProviderUsageSnapshot?, showsTodayPace: Bool = false, now: Date = Date()) -> [Row] {
         guard let snapshot else { return [] }
-        var rows = snapshot.windows.map(Row.window) + (snapshot.spending?.lines ?? []).map(Row.spend)
+        var rows = snapshot.windows.map(Row.window)
+        if showsTodayPace, let pace = snapshot.todayPace(at: now),
+           let index = snapshot.windows.firstIndex(where: { $0.id == pace.windowID }) {
+            rows.insert(.today(pace), at: index)
+        }
+        rows += (snapshot.spending?.lines ?? []).map(Row.spend)
         if let credits = snapshot.credits {
             if credits.isUnlimited {
                 rows.append(.value(id: "credits", label: "Credits", value: "Unlimited", trailing: nil))
@@ -225,11 +276,12 @@ struct ProviderDetails: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, minHeight: Self.messageHeight, maxHeight: Self.messageHeight, alignment: .topLeading)
             }
-            let rows = Self.rows(state.snapshot, now: now)
+            let rows = Self.rows(state.snapshot, showsTodayPace: settings.showsTodayPace, now: now)
+            let pace = settings.showsTodayPace ? state.snapshot?.todayPace(at: now) : nil
             if !rows.isEmpty {
                 VStack(spacing: Self.rowSpacing) {
                     ForEach(rows) { row in
-                        DetailRow(row: row, showsRemaining: settings.showsRemaining, now: now)
+                        DetailRow(row: row, pace: pace, showsRemaining: settings.showsRemaining, now: now)
                             .frame(height: Self.rowHeight)
                     }
                 }
@@ -277,6 +329,7 @@ struct ProviderDetails: View {
 
 private struct DetailRow: View {
     let row: ProviderDetails.Row
+    let pace: TodayPace?
     let showsRemaining: Bool
     let now: Date
 
@@ -286,10 +339,18 @@ private struct DetailRow: View {
             case let .window(window):
                 label(window.label)
                 let shown = showsRemaining ? window.displayRemaining : window.displayUsed
-                UsageBar(fraction: shown.map { $0 / 100 }, color: Palette.fill(usedPercent: window.displayUsed))
+                UsageBar(fraction: shown.map { $0 / 100 },
+                         marker: pace?.windowID == window.id ? pace?.marker(showsRemaining: showsRemaining) : nil,
+                         color: Palette.fill(usedPercent: window.displayUsed))
                     .frame(height: 3)
                 value(UsageFormat.percent(shown)).frame(width: 44, alignment: .trailing)
                 trailing(window.resetsAt.map { $0 <= now ? "now" : UsageFormat.resetTime($0, now: now) } ?? window.detail ?? "")
+            case let .today(pace):
+                label("Today left")
+                UsageBar(fraction: pace.left / pace.allowance, color: Palette.fill(usedPercent: pace.used / pace.allowance * 100))
+                    .frame(height: 3)
+                value(UsageFormat.percent(pace.left)).frame(width: 44, alignment: .trailing)
+                trailing(pace.over > 0 ? "\(UsageFormat.percent(pace.over)) over" : "to \(UsageFormat.percent(pace.allowance))")
             case let .spend(line):
                 label(line.label)
                 let used = Money.format(line.used, line.currencyCode)
@@ -345,6 +406,12 @@ enum WindowAccessibility {
         if let detail = window.detail { parts.append(detail) }
         return parts.joined(separator: ", ")
     }
+
+    static func value(_ pace: TodayPace) -> String {
+        let allowance = "today's allowance is \(Int(pace.allowance.rounded())) percent of the week"
+        return pace.over > 0 ? "\(Int(pace.over.rounded())) percent over, \(allowance)"
+            : "\(Int(pace.left.rounded())) percent left, \(allowance)"
+    }
 }
 
 enum Palette {
@@ -372,6 +439,8 @@ enum Palette {
 struct UsageBar: View {
     /// 0…1, or nil when unknown (drawn as an empty, dashed track).
     let fraction: Double?
+    /// 0…1, a tick standing out from the bar.
+    var marker: Double?
     let color: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -386,6 +455,14 @@ struct UsageBar: View {
                         .frame(width: max(fraction > 0 ? 3 : 0, proxy.size.width * min(1, max(0, fraction))))
                 } else {
                     Capsule().strokeBorder(Color.white.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if let marker {
+                    Capsule()
+                        .fill(Color.white)
+                        .frame(width: 2, height: proxy.size.height + 5)
+                        .offset(x: min(proxy.size.width - 2, max(0, proxy.size.width * marker - 1)))
                 }
             }
         }

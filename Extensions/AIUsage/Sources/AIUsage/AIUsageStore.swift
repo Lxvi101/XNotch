@@ -13,6 +13,7 @@ struct AIUsageSettings: Equatable, Sendable {
     var claudeKeychainAccess = false
     var cursorSource: CursorSourcePreference = .automatic
     var badgesNearLimit = false
+    var showsTodayPace = false
 
     static let refreshChoices = [1, 2, 5, 10, 15, 30, 60]
 
@@ -33,6 +34,7 @@ struct AIUsageSettings: Equatable, Sendable {
         settings.claudeKeychainAccess = defaults.object(forKey: Keys.claudeKeychainAccess) as? Bool ?? false
         settings.cursorSource = defaults.string(forKey: Keys.cursorSource).flatMap(CursorSourcePreference.init) ?? .automatic
         settings.badgesNearLimit = defaults.object(forKey: Keys.badgesNearLimit) as? Bool ?? settings.badgesNearLimit
+        settings.showsTodayPace = defaults.object(forKey: Keys.showsTodayPace) as? Bool ?? settings.showsTodayPace
         return settings
     }
 
@@ -46,6 +48,7 @@ struct AIUsageSettings: Equatable, Sendable {
         defaults.set(claudeKeychainAccess, forKey: Keys.claudeKeychainAccess)
         defaults.set(cursorSource.rawValue, forKey: Keys.cursorSource)
         defaults.set(badgesNearLimit, forKey: Keys.badgesNearLimit)
+        defaults.set(showsTodayPace, forKey: Keys.showsTodayPace)
     }
 
     enum Keys {
@@ -58,6 +61,7 @@ struct AIUsageSettings: Equatable, Sendable {
         static let claudeKeychainAccess = "claudeKeychainAccess"
         static let cursorSource = "cursorSource"
         static let badgesNearLimit = "badgesNearLimit"
+        static let showsTodayPace = "showsTodayPace"
         static let snapshots = "snapshots.v1"
     }
 }

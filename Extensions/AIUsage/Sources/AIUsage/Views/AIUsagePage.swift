@@ -64,7 +64,8 @@ struct AIUsagePage: View {
                     HStack(spacing: Self.gap) {
                         ForEach(providers) { id in
                             ProviderTile(provider: id, state: store.state(for: id), showsRemaining: store.settings.showsRemaining,
-                                         now: now, namespace: namespace, actions: actions(for: id))
+                                         showsTodayPace: store.settings.showsTodayPace, now: now, namespace: namespace,
+                                         actions: actions(for: id))
                         }
                     }
                     .transition(.opacity)

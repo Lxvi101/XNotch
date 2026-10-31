@@ -82,6 +82,42 @@ struct QuotaWindow: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+/// How far into a weekly limit today may go, with the week cut into seven equal days. The days run
+/// from the window's reset rather than from midnight, which would cut the first and last days short.
+struct TodayPace: Equatable, Sendable {
+    static let week: TimeInterval = 7 * 24 * 3600
+    private static let day: TimeInterval = 24 * 3600
+
+    var windowID: String
+    /// 1…7 within the weekly window.
+    var day: Int
+    /// The share of the week allowed by the end of today: 100 / 7 × `day`.
+    var allowance: Double
+    var used: Double
+    var dayEndsAt: Date
+
+    /// Nil unless the window is a weekly one with a known reading that hasn't reset yet.
+    init?(window: QuotaWindow, now: Date) {
+        guard window.windowSeconds == Self.week, let used = window.displayUsed,
+              let resetsAt = window.resetsAt, resetsAt > now else { return nil }
+        let started = resetsAt.addingTimeInterval(-Self.week)
+        let day = min(7, max(1, Int(now.timeIntervalSince(started) / Self.day) + 1))
+        windowID = window.id
+        self.day = day
+        allowance = 100 * Double(day) / 7
+        self.used = used
+        dayEndsAt = started.addingTimeInterval(Double(day) * Self.day)
+    }
+
+    var left: Double { max(0, allowance - used) }
+    var over: Double { max(0, used - allowance) }
+
+    /// The allowance's position on a window's bar, which runs the other way when showing what remains.
+    func marker(showsRemaining: Bool) -> Double {
+        (showsRemaining ? 100 - allowance : allowance) / 100
+    }
+}
+
 /// Prepaid balances and saved resets. A saved reset is a redeemable credit, not a quota's reset date.
 struct CreditSummary: Codable, Equatable, Sendable {
     /// Monetary or credit balance, with its unit spelled out ("credits", "USD").
@@ -145,6 +181,11 @@ struct ProviderUsageSnapshot: Codable, Equatable, Sendable {
 
     var coreWindows: [QuotaWindow] { windows.filter(\.isCore) }
     var extraWindows: [QuotaWindow] { windows.filter { !$0.isCore } }
+
+    /// Today's share of the first weekly core window, when there is one.
+    func todayPace(at now: Date) -> TodayPace? {
+        coreWindows.lazy.compactMap { TodayPace(window: $0, now: now) }.first
+    }
 
     /// The copy that may be written to defaults: no personal identifiers.
     var cacheable: ProviderUsageSnapshot {

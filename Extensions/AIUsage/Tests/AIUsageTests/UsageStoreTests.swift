@@ -147,10 +147,12 @@ final class UsageStoreTests: XCTestCase {
         let store = store()
         store.settings.showsRemaining = true
         store.settings.refreshMinutes = 15
+        store.settings.showsTodayPace = true
         store.settings.enabled.remove(.cursor)
         let reloaded = self.store()
         XCTAssertTrue(reloaded.settings.showsRemaining)
         XCTAssertEqual(reloaded.settings.refreshMinutes, 15)
+        XCTAssertTrue(reloaded.settings.showsTodayPace)
         XCTAssertFalse(reloaded.settings.isEnabled(.cursor))
         XCTAssertFalse(reloaded.settings.claudeKeychainAccess, "Keychain consent is off until the user turns it on")
     }
@@ -290,6 +292,22 @@ final class UsageStoreTests: XCTestCase {
         store.clear(.codex)
         XCTAssertNil(store.selected)
         XCTAssertLessThan(AIUsagePage.height(for: store), closed, "Nothing connected: just the empty state")
+    }
+
+    func testTodaysShareOpensItsOwnDetailRow() {
+        let snapshot = makeSnapshot(.claude, at: Date())
+        func labels(showing: Bool) -> [String] {
+            ProviderDetails.rows(snapshot, showsTodayPace: showing).map(\.id)
+        }
+        XCTAssertEqual(labels(showing: false), ["w.claude.weekly"])
+        XCTAssertEqual(labels(showing: true), ["t.claude.weekly", "w.claude.weekly"])
+
+        let settings = AIUsageSettings()
+        var showing = settings
+        showing.showsTodayPace = true
+        let state = ProviderState(status: .fresh, snapshot: snapshot)
+        XCTAssertGreaterThan(ProviderDetails.height(state: state, settings: showing),
+                             ProviderDetails.height(state: state, settings: settings))
     }
 
     func testBadgeCountsProvidersNearTheirLimit() {
