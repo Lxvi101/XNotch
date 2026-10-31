@@ -138,6 +138,11 @@ final class ShelfLibrary: ObservableObject {
         }
     }
 
+    /// After files left a watched folder. Every shelf looks, as merged and reopened ones can hold them too.
+    func refreshFiles() {
+        open.forEach { $0.refreshFiles() }
+    }
+
     private func makeController(for shelf: Shelf) -> ShelfController {
         let controller = ShelfController(shelf: shelf, library: self, preferences: preferences)
         open.append(controller)
@@ -285,10 +290,11 @@ final class ShelfLibrary: ObservableObject {
     }
 }
 
-/// Watches folders for new files and hands them to a shelf.
+/// Watches folders for new files, which it hands to a shelf, and for files leaving again.
 @MainActor
 final class FolderMonitor {
     var onNewFiles: (([URL], WatchedFolder) -> Void)?
+    var onFilesRemoved: (() -> Void)?
 
     private final class Watch {
         let folder: WatchedFolder
@@ -358,7 +364,9 @@ final class FolderMonitor {
     private func check(_ watch: Watch) {
         let current = Self.contents(of: watch.folder.url)
         let added = current.subtracting(watch.known)
+        let removed = watch.known.subtracting(current)
         watch.known = current
+        if !removed.isEmpty { onFilesRemoved?() }
         let urls = added.sorted().map { watch.folder.url.appendingPathComponent($0) }
         guard !urls.isEmpty else { return }
         let sizes = urls.map(Self.size)

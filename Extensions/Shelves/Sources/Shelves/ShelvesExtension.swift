@@ -51,6 +51,7 @@ final class ShelvesExtension: XNotchExtension {
         dragMonitor.start()
 
         folderMonitor.onNewFiles = { [weak library] urls, folder in library?.show(urls, from: folder) }
+        folderMonitor.onFilesRemoved = { [weak library] in library?.refreshFiles() }
         folderMonitor.update(preferences.watchedFolders)
         preferences.$watchedFolders.dropFirst().sink { [weak self] folders in
             self?.folderMonitor.update(folders)

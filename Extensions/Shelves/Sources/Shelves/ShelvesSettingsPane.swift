@@ -227,7 +227,7 @@ struct ShelvesSettingsPane: View {
         } header: {
             Text("Folder Monitoring")
         } footer: {
-            Text("New files in these folders appear in a shelf in the top-right corner of the screen, like a download finishing.")
+            Text("New files in these folders appear in a shelf in the top-right corner of the screen, like a download finishing. Delete them and they leave the shelf, which closes once it's empty.")
                 .foregroundStyle(.secondary)
         }
     }

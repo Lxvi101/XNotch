@@ -778,6 +778,14 @@ final class ShelfController: NSObject {
         withAnimation(ShelfMotion.content) { shelf.remove(ids) }
     }
 
+    /// Catches up with files deleted or moved elsewhere, closing the shelf if that emptied it.
+    func refreshFiles() {
+        guard !isClosing else { return }
+        let hadFiles = !shelf.files.isEmpty
+        withAnimation(ShelfMotion.content) { shelf.refresh() }
+        if hadFiles, shelf.isEmpty, !shelf.isPinned { close() }
+    }
+
     // MARK: Menu
 
     func menu(for files: [ShelfFile]) -> NSMenu {

@@ -102,6 +102,91 @@ final class ShelfSummaryTests: XCTestCase {
     }
 }
 
+final class ShelfFileRefreshTests: XCTestCase {
+    private var folder: URL!
+
+    override func setUpWithError() throws {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: folder)
+    }
+
+    private func file(_ name: String) -> ShelfFile {
+        let url = folder.appendingPathComponent(name)
+        FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8))
+        return ShelfFile(url: url)!
+    }
+
+    @MainActor func testDeletedFileLeavesAndTheRestStay() throws {
+        let gone = file("gone.txt"), kept = file("kept.txt")
+        let shelf = Shelf(record: ShelfRecord(files: [gone, kept]))
+        shelf.selection = [gone.id, kept.id]
+        try FileManager.default.removeItem(at: gone.url)
+        shelf.refresh()
+        XCTAssertEqual(shelf.files, [kept])
+        XCTAssertEqual(shelf.selection, [kept.id])
+    }
+
+    @MainActor func testTrashedFileCountsAsDeleted() throws {
+        let trash = folder.appendingPathComponent(".Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let trashed = file("trashed.txt")
+        let shelf = Shelf(record: ShelfRecord(files: [trashed]))
+        try FileManager.default.moveItem(at: trashed.url, to: trash.appendingPathComponent("trashed.txt"))
+        shelf.refresh()
+        XCTAssertTrue(shelf.isEmpty)
+    }
+
+    @MainActor func testMovedFileIsFollowed() throws {
+        let elsewhere = folder.appendingPathComponent("Elsewhere", isDirectory: true)
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        let moved = file("moved.txt")
+        let shelf = Shelf(record: ShelfRecord(files: [moved]))
+        let target = elsewhere.appendingPathComponent("moved.txt")
+        try FileManager.default.moveItem(at: moved.url, to: target)
+        shelf.refresh()
+        XCTAssertEqual(shelf.files.map(\.id), [moved.id])
+        XCTAssertEqual(shelf.files.first.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() }, target.resolvingSymlinksInPath())
+    }
+
+    func testFileDroppedFromTheTrashStays() throws {
+        let trash = folder.appendingPathComponent(".Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let url = trash.appendingPathComponent("old.txt")
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+        let file = try XCTUnwrap(ShelfFile(url: url))
+        XCTAssertEqual(file.resolved(), file)
+    }
+
+    @MainActor func testMonitorReportsRemovalsButNotHiddenFiles() async throws {
+        let kept = file("kept.txt").url, gone = file("gone.txt").url
+        let hidden = folder.appendingPathComponent(".DS_Store")
+        FileManager.default.createFile(atPath: hidden.path, contents: Data())
+        let watched = WatchedFolder(path: folder.path)
+        let monitor = FolderMonitor()
+        defer { monitor.stop() }
+        var removals = 0
+        let removed = expectation(description: "removal reported")
+        monitor.onFilesRemoved = {
+            removals += 1
+            removed.fulfill()
+        }
+        monitor.update([watched])
+
+        try FileManager.default.removeItem(at: hidden)
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertEqual(removals, 0)
+
+        try FileManager.default.removeItem(at: gone)
+        await fulfillment(of: [removed], timeout: 3)
+        XCTAssertEqual(removals, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path))
+    }
+}
+
 final class ShelfGeometryTests: XCTestCase {
     func testFourActionsMakeTwoByTwo() {
         let frames = ShelfGeometry.actionFrames(count: 4, in: ShelfGeometry.compact)

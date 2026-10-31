@@ -85,13 +85,15 @@ struct ShelfFile: Codable, Identifiable, Hashable {
     }
 
     /// The file where it is now, following the bookmark when it moved; nil once it's gone.
+    /// Moved to the Trash counts as gone, or a deleted file would stay on its shelf.
     func resolved() -> ShelfFile? {
         if FileManager.default.fileExists(atPath: path) { return self }
         guard let bookmark else { return nil }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutMounting, .withoutUI],
                                  relativeTo: nil, bookmarkDataIsStale: &stale),
-              FileManager.default.fileExists(atPath: url.path) else { return nil }
+              FileManager.default.fileExists(atPath: url.path),
+              !url.pathComponents.contains(where: { $0 == ".Trash" || $0 == ".Trashes" }) else { return nil }
         var moved = self
         moved.path = url.standardizedFileURL.path
         if stale { moved.bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) }
@@ -261,6 +263,9 @@ final class Shelf: Identifiable {
     /// Drops files that are gone and follows ones that moved.
     func refresh() {
         let current = files.compactMap { $0.resolved() }
-        if current != files { files = current }
+        guard current != files else { return }
+        files = current
+        selection.formIntersection(current.map(\.id))
+        updatedAt = Date()
     }
 }
