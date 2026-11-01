@@ -142,11 +142,11 @@ private struct NoteTitle: View {
     let controller: NoteController
 
     var body: some View {
-        let position = controller.state.positionLabel
+        let flash = controller.state.flashLabel
         let space = controller.spaceName
-        (Text(position ?? controller.note.displayTitle)
-            .foregroundStyle(position == nil ? .white.opacity(0.42) : noteAccent.opacity(0.9))
-         + Text(position == nil && space != nil ? "  ·  \(space!)" : "")
+        (Text(flash ?? controller.note.displayTitle)
+            .foregroundStyle(flash == nil ? .white.opacity(0.42) : noteAccent.opacity(0.9))
+         + Text(flash == nil && space != nil ? "  ·  \(space!)" : "")
             .foregroundStyle(.white.opacity(0.24)))
             .font(.system(size: 12.5, weight: .medium).monospacedDigit())
             .lineLimit(1)

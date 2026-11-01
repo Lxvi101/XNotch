@@ -65,7 +65,7 @@ final class NoteWindowState {
 
     var receded: Bool { showsBucket || showsSwitcher }
     /// "2 of 5", shown in place of the title for a moment as a note opens.
-    var positionLabel: String?
+    var flashLabel: String?
     /// The `@` picker, while it's up.
     var mention: MentionState?
 
@@ -125,6 +125,7 @@ final class NoteController: NSObject {
     private unowned let library: NoteLibrary
     private(set) var isClosing = false
     private var dismissedMentionLocation: Int?
+    private var flashes = 0
 
     init(note: Note, library: NoteLibrary) {
         state = NoteWindowState(note: note)
@@ -249,6 +250,7 @@ final class NoteController: NSObject {
     /// Behind the bucket or the switcher the text recedes; while the window
     /// changes notes it blurs out and back.
     private func updateTextFocus() {
+        editor.textView.codeCopy.isSuspended = state.receded
         if state.receded {
             editor.setFocus(blur: 8, opacity: 0.35, duration: 0.3)
         } else if state.isSwapping {
@@ -332,13 +334,11 @@ final class NoteController: NSObject {
             },
             NoteCommand(id: "pin", title: note.isPinned ? "Unpin Note" : "Pin Note", symbol: note.isPinned ? "pin.slash" : "pin",
                         section: "Note") { [weak self] in self?.library.togglePin(note) },
-            NoteCommand(id: "copy-md", title: "Copy as Markdown", symbol: "doc.on.doc", section: "Note") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(note.text, forType: .string)
+            NoteCommand(id: "copy-md", title: "Copy as Markdown", symbol: "doc.on.doc", shortcut: "⇧⌘C", section: "Note") { [weak self] in
+                self?.copyMarkdown()
             },
             NoteCommand(id: "copy-plain", title: "Copy as Plain Text", symbol: "text.alignleft", section: "Note") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(TaskText.plain(note.text), forType: .string)
+                copyToPasteboard(TaskText.plain(note.text))
             },
             NoteCommand(id: "export", title: "Export Markdown…", symbol: "square.and.arrow.up", section: "Note") { [weak self] in
                 self?.exportMarkdown()
@@ -431,15 +431,28 @@ final class NoteController: NSObject {
         editor.replaceText(text)
     }
 
+    /// ⇧⌘C: the whole note, as the markdown it's saved as.
+    func copyMarkdown() {
+        guard !editor.text.isEmpty else { return }
+        copyToPasteboard(editor.text)
+        flash("Markdown copied")
+    }
+
     /// Shows where the note sits in the ⌘[ / ⌘] cycle, then the title again.
     private func flashPosition() {
         guard library.preferences.showNotePosition, let position = library.position(of: note), position.count > 1 else { return }
-        let label = "\(position.index) of \(position.count)"
-        withAnimation(NoteMotion.content) { state.positionLabel = label }
+        flash("\(position.index) of \(position.count)")
+    }
+
+    /// A word in place of the title for a moment. The latest flash gets its full time.
+    private func flash(_ label: String) {
+        flashes += 1
+        let flash = flashes
+        withAnimation(NoteMotion.content) { state.flashLabel = label }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.state.positionLabel == label else { return }
-                withAnimation(NoteMotion.content) { self.state.positionLabel = nil }
+                guard let self, self.flashes == flash else { return }
+                withAnimation(NoteMotion.content) { self.state.flashLabel = nil }
             }
         }
     }
@@ -565,6 +578,7 @@ final class NoteController: NSObject {
         let responder = panel.firstResponder
         switch (key, modifiers) {
         case ("c", [.command]): responder?.tryToPerform(#selector(NSText.copy(_:)), with: nil)
+        case ("c", [.command, .shift]): copyMarkdown()
         case ("x", [.command]): responder?.tryToPerform(#selector(NSText.cut(_:)), with: nil)
         case ("v", [.command]): responder?.tryToPerform(#selector(NSText.paste(_:)), with: nil)
         case ("v", [.command, .shift]), ("v", [.command, .shift, .option]):
@@ -964,11 +978,9 @@ extension NoteController: NoteFileHandling {
         }
         spaces.submenu = submenu
         menu.addItem(spaces)
-        menu.addItem(ClosureMenuItem("Copy Markdown", symbol: "doc.on.doc") { [weak self] in
-            guard let self else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(self.note.text, forType: .string)
-        })
+        let copy = ClosureMenuItem("Copy Markdown", symbol: "doc.on.doc", key: "c") { [weak self] in self?.copyMarkdown() }
+        copy.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(copy)
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Close Note", symbol: "xmark", key: "w") { [weak self] in self?.close() })
         let delete = ClosureMenuItem("Move Note to Trash", symbol: "trash", key: "\u{8}") { [weak self] in

@@ -66,13 +66,7 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             _ = storage.attribute(.mdCodeBlock, at: run.location, longestEffectiveRange: &block,
                                   in: NSRange(location: 0, length: storage.length))
             guard drawnBlocks.insert(block.location).inserted else { return }
-            let glyphs = glyphRange(forCharacterRange: block, actualCharacterRange: nil)
-            guard glyphs.length > 0 else { return }
-            var rect = boundingRect(forGlyphRange: glyphs, in: container)
-            // The text column exactly: the code keeps its padding inside the card.
-            rect.origin.x = padding
-            rect.size.width = container.size.width - padding * 2
-            rect = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: 0, dy: -1)
+            guard let rect = cardRect(for: block)?.offsetBy(dx: origin.x, dy: origin.y) else { return }
             MarkdownTheme.codeFill.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9).fill()
             NSColor(white: 1, alpha: 0.06).setStroke()
@@ -83,20 +77,16 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 let label = NSAttributedString(string: language.uppercased(), attributes: [
                     .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold), .kern: 0.6,
                     .foregroundColor: NSColor(white: 1, alpha: 0.32)])
-                let size = label.size()
-                label.draw(at: CGPoint(x: rect.maxX - size.width - 10, y: rect.minY + 6))
+                // Left, as a header: the corner opposite is the copy button's.
+                label.draw(at: CGPoint(x: rect.minX + MarkdownStyler.codeInset, y: rect.minY + 6))
             }
         }
 
         storage.enumerateAttribute(.mdCodeSpan, in: characters) { value, run, _ in
             guard value != nil else { return }
-            let glyphs = glyphRange(forCharacterRange: run, actualCharacterRange: nil)
-            enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-                                    in: container) { rect, _ in
-                guard rect.width > 0.5 else { return }
-                let pill = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -3, dy: 1.5).offsetBy(dx: -2, dy: 0)
+            for pill in pillRects(for: run) {
                 MarkdownTheme.codeFill.setFill()
-                NSBezierPath(roundedRect: pill, xRadius: 4.5, yRadius: 4.5).fill()
+                NSBezierPath(roundedRect: pill.offsetBy(dx: origin.x, dy: origin.y), xRadius: 4.5, yRadius: 4.5).fill()
             }
         }
 
@@ -271,8 +261,7 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return nil
     }
 
-    /// The destination of the link under a point, while it reads as a link
-    /// (its syntax hidden); revealed, it's text being edited.
+    /// The destination of the link under a point, for ⌘-click.
     func link(at point: CGPoint) -> String? {
         guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return nil }
         var fraction: CGFloat = 0
@@ -299,6 +288,8 @@ final class NoteTextView: NSTextView {
     }
 
     var markdownLayout: MarkdownLayoutManager? { layoutManager as? MarkdownLayoutManager }
+    /// The copy button on code cards and the highlight on inline code.
+    lazy var codeCopy = CodeCopyOverlay(textView: self)
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -332,6 +323,7 @@ final class NoteTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         let point = containerPoint(for: event)
+        if codeCopy.handlePress(event, at: point) { return }
         if let layout = markdownLayout {
             // A picture keeps showing when clicked: the caret stays where it was.
             if let hit = layout.image(at: point) {
@@ -343,9 +335,17 @@ final class NoteTextView: NSTextView {
                 toggleCheckbox(box)
                 return
             }
-            if let destination = layout.link(at: point) {
-                openLink?(destination)
-                return
+            // Links and inline code are text to edit; ⌘ makes them things to act on.
+            if event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.command], event.clickCount == 1 {
+                if let destination = layout.link(at: point) {
+                    openLink?(destination)
+                    return
+                }
+                if let span = layout.codeSpan(at: point) {
+                    codeCopy.copy(span)
+                    window?.makeFirstResponder(self)
+                    return
+                }
             }
         }
         super.mouseDown(with: event)
@@ -358,16 +358,57 @@ final class NoteTextView: NSTextView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        let point = containerPoint(for: event)
-        if markdownLayout?.image(at: point) != nil {
-            NSCursor.arrow.set()
-            return
-        }
-        if let layout = markdownLayout, layout.checkbox(at: point) != nil || layout.link(at: point) != nil {
-            NSCursor.pointingHand.set()
-            return
-        }
+        if setCursor(at: containerPoint(for: event), command: event.modifierFlags.contains(.command)) { return }
         super.mouseMoved(with: event)
+    }
+
+    /// ⌘ going down or up over a link or inline code changes what a click
+    /// would do, with the pointer standing still.
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        guard let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        guard visibleRect.contains(point) else { return }
+        let origin = textContainerOrigin
+        let inContainer = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        if !setCursor(at: inContainer, command: event.modifierFlags.contains(.command)) { NSCursor.iBeam.set() }
+    }
+
+    /// The cursor for what's under the pointer; false leaves it to the text view.
+    private func setCursor(at point: CGPoint, command: Bool) -> Bool {
+        codeCopy.isCommandHeld = command
+        if codeCopy.pointerMoved(to: point) {
+            NSCursor.pointingHand.set()
+            return true
+        }
+        guard let layout = markdownLayout else { return false }
+        if layout.image(at: point) != nil {
+            NSCursor.arrow.set()
+            return true
+        }
+        if layout.checkbox(at: point) != nil || (command && layout.link(at: point) != nil) {
+            NSCursor.pointingHand.set()
+            return true
+        }
+        return false
+    }
+
+    /// Hover reaches the text in a note that isn't key, too, unlike the
+    /// window's mouse-moved events, which go to the key window's first responder.
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        if event.trackingArea === hoverArea { codeCopy.pointerMoved(to: nil) }
     }
 
     private func containerPoint(for event: NSEvent) -> CGPoint {
@@ -839,6 +880,10 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
                                                object: textView)
 
         scrollView.documentView = textView
+        // Text scrolling out from under a still pointer ends its hover.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
+                                               object: scrollView.contentView)
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -985,6 +1030,7 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
         styler.style(storage, in: clamped, context: context)
         storage.endEditing()
         styledWidth = context.width
+        textView.codeCopy.layoutChanged()
     }
 
     /// Shows syntax where the caret now is and hides it where it was.
@@ -1010,10 +1056,15 @@ final class MarkdownEditor: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
 
     /// Images fit the text's width, so a resize that changes it restyles them.
     @objc private func frameChanged() {
-        defer { caret.update(animated: false) }
+        defer {
+            caret.update(animated: false)
+            textView.codeCopy.layoutChanged()
+        }
         guard abs(context.width - styledWidth) > 1, textView.string.contains("![") else { return }
         restyle(NSRange(location: 0, length: (textView.string as NSString).length))
     }
+
+    @objc private func scrolled() { textView.codeCopy.layoutChanged() }
 
     /// Text storage edits only ever happen on the main thread, from the text view.
     nonisolated func textStorage(_ textStorage: NSTextStorage, willProcessEditing editedMask: NSTextStorageEditActions,

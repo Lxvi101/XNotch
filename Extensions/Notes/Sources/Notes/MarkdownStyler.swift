@@ -18,7 +18,7 @@ extension NSAttributedString.Key {
     static let mdCodeBlock = NSAttributedString.Key("xnotch.md.codeblock")
     /// A collapsed opening fence's language, shown in the card's corner.
     static let mdCodeLanguage = NSAttributedString.Key("xnotch.md.codelanguage")
-    /// A link's destination, opened on click while its syntax is hidden.
+    /// A link's destination, opened on ⌘-click.
     static let mdLink = NSAttributedString.Key("xnotch.md.link")
     /// A line showing an image instead of its markdown. The value is a `NoteImage`.
     static let mdImage = NSAttributedString.Key("xnotch.md.image")
@@ -272,6 +272,27 @@ struct MarkdownStyler {
         return blocks
     }
 
+    /// What's between a block's fences, or after the opening one while it's still open.
+    static func codeBody(of block: NSRange, in string: NSString) -> NSRange {
+        let opening = string.lineRange(for: NSRange(location: block.location, length: 0))
+        var end = NSMaxRange(block)
+        let last = string.lineRange(for: NSRange(location: max(block.location, NSMaxRange(block) - 1), length: 0))
+        if last.location > opening.location, isFence(at: last.location, in: string) { end = last.location }
+        return NSRange(location: NSMaxRange(opening), length: max(0, end - NSMaxRange(opening)))
+    }
+
+    /// A block's code, without its fences or the line break before the closing one.
+    static func code(of block: NSRange, in string: NSString) -> String {
+        var code = string.substring(with: codeBody(of: block, in: string))
+        if code.last?.isNewline == true { code.removeLast() }
+        return code
+    }
+
+    /// Inline code without its backticks. `span` is the styled run, ticks included.
+    static func code(ofSpan span: NSRange, in string: NSString) -> String {
+        string.substring(with: span).trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+    }
+
     // MARK: Styling
 
     var baseAttributes: [NSAttributedString.Key: Any] {
@@ -395,10 +416,7 @@ struct MarkdownStyler {
             guard line.length > 0 else { return }
             let tokens = highlights.byBlock[block.location] ?? {
                 let opening = string.lineRange(for: NSRange(location: block.location, length: 0))
-                var bodyEnd = NSMaxRange(block)
-                let last = string.lineRange(for: NSRange(location: max(block.location, NSMaxRange(block) - 1), length: 0))
-                if last.location > opening.location, MarkdownStyler.isFence(at: last.location, in: string) { bodyEnd = last.location }
-                let body = NSRange(location: NSMaxRange(opening), length: max(0, bodyEnd - NSMaxRange(opening)))
+                let body = MarkdownStyler.codeBody(of: block, in: string)
                 let name = string.substring(with: opening).trimmingCharacters(in: CharacterSet(charactersIn: "` \t\n"))
                 let language = CodeHighlighter.language(named: name.split(separator: " ").first.map(String.init) ?? "")
                 let tokens = CodeHighlighter.tokens(in: string, range: body, language: language)
@@ -568,22 +586,18 @@ struct MarkdownStyler {
                     let destination = string.substring(with: match.range(at: 2))
                     marker(NSRange(location: match.range.location, length: label.location - match.range.location), revealed: revealed)
                     marker(NSRange(location: NSMaxRange(label), length: NSMaxRange(match.range) - NSMaxRange(label)), revealed: revealed)
-                    var attributes: [NSAttributedString.Key: Any] = [
+                    let attributes: [NSAttributedString.Key: Any] = [
                         .foregroundColor: MarkdownTheme.link, .underlineStyle: NSUnderlineStyle.single.rawValue,
-                        .underlineColor: MarkdownTheme.link.withAlphaComponent(0.4)]
-                    // Clickable while it reads as a link; while revealed it's text being edited.
-                    if !revealed { attributes[.mdLink] = destination }
+                        .underlineColor: MarkdownTheme.link.withAlphaComponent(0.4), .mdLink: destination]
                     text.addAttributes(attributes, range: label.length > 0 ? label : match.range(at: 2))
                     take(match.range)
                 }
             }
 
             for match in Self.bareURL.matches(in: snapshot, range: range) where free(match.range) {
-                var attributes: [NSAttributedString.Key: Any] = [
-                    .foregroundColor: MarkdownTheme.link, .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    .underlineColor: MarkdownTheme.link.withAlphaComponent(0.4)]
-                if !touches(match.range) { attributes[.mdLink] = string.substring(with: match.range) }
-                text.addAttributes(attributes, range: match.range)
+                text.addAttributes([.foregroundColor: MarkdownTheme.link, .underlineStyle: NSUnderlineStyle.single.rawValue,
+                                    .underlineColor: MarkdownTheme.link.withAlphaComponent(0.4),
+                                    .mdLink: string.substring(with: match.range)], range: match.range)
                 take(match.range)
             }
 

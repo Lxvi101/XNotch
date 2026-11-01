@@ -53,7 +53,7 @@ final class MarkdownStylerTests: XCTestCase {
         XCTAssertEqual(characters(with: .mdCodeSpan, in: text), "`**not bold**`")
     }
 
-    func testLinkIsClickableOnlyWhileItsSyntaxIsHidden() {
+    func testLinkKeepsItsDestinationWithItsSyntaxShowing() {
         let line = "See [the docs](https://example.com) and https://apple.com."
         let text = styled(line)
         XCTAssertEqual(characters(with: .mdHidden, in: text), "[](https://example.com)")
@@ -61,7 +61,7 @@ final class MarkdownStylerTests: XCTestCase {
         let bare = (line as NSString).range(of: "https://apple.com")
         XCTAssertEqual(text.attribute(.mdLink, at: bare.location, effectiveRange: nil) as? String, "https://apple.com")
         let editing = styled(line, caret: 8)
-        XCTAssertNil(editing.attribute(.mdLink, at: 6, effectiveRange: nil))
+        XCTAssertEqual(editing.attribute(.mdLink, at: 6, effectiveRange: nil) as? String, "https://example.com")
         XCTAssertEqual(characters(with: .mdHidden, in: editing), "")
     }
 

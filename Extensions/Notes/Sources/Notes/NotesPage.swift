@@ -447,6 +447,8 @@ struct NotesSettingsPane: View {
                 ShortcutRow(keys: "⌘N", action: "New note in this window")
                 ShortcutRow(keys: "⇧⌘N", action: "New floating note beside this one")
                 ShortcutRow(keys: "⇧⌘B", action: "Open the bucket")
+                ShortcutRow(keys: "⇧⌘C", action: "Copy the whole note as Markdown")
+                ShortcutRow(keys: "⌘-click", action: "Open a link, or copy inline code")
                 ShortcutRow(keys: "⌘B  ⌘I  ⌘E", action: "Bold, italic, code")
                 ShortcutRow(keys: "⌘L", action: "Checklist item")
                 ShortcutRow(keys: "⌘W", action: "Close note")
