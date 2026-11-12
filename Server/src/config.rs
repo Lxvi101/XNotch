@@ -27,6 +27,7 @@ pub struct Config {
     pub max_expiry: u64,
     pub id_length: usize,
     pub relay: RelayConfig,
+    pub walkie: WalkieConfig,
     pub rate_limit: crate::rate_limit::RateLimitConfig,
 }
 
@@ -83,6 +84,49 @@ impl RelayConfig {
             phone_wait: Duration::from_secs(phone_wait),
             idle_timeout: Duration::from_secs(idle_timeout),
             ping_interval: Duration::from_secs(20),
+        })
+    }
+}
+
+/// Settings for Walkie mailboxes.
+#[derive(Clone, Debug)]
+pub struct WalkieConfig {
+    pub enabled: bool,
+    /// Largest sealed message in bytes (a voice note, or a few files).
+    pub max_message: u64,
+    /// Messages nobody fetched are deleted after this long.
+    pub retention: Duration,
+    /// Messages a mailbox may hold before senders are told to wait.
+    pub max_pending: usize,
+    /// Largest signal (never stored) in bytes.
+    pub max_signal: usize,
+}
+
+impl WalkieConfig {
+    fn from_env(var: &impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        let enabled = match var("WALKIE").as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("on" | "true" | "1" | "yes") => true,
+            Some("off" | "false" | "0" | "no") => false,
+            Some(other) => return Err(format!("WALKIE must be `on` or `off`, got `{other}`")),
+        };
+        let max_message = parse_or(var, "WALKIE_MAX_MESSAGE", 32 * MIB as u64)?;
+        if !(64 * 1024..=GIB).contains(&max_message) {
+            return Err("WALKIE_MAX_MESSAGE must be between 65536 bytes and 1 GiB".into());
+        }
+        let days = parse_or(var, "WALKIE_RETENTION_DAYS", 7u64)?;
+        if !(1..=365).contains(&days) {
+            return Err("WALKIE_RETENTION_DAYS must be between 1 and 365".into());
+        }
+        let max_pending = parse_or(var, "WALKIE_MAX_PENDING", 500usize)?;
+        if max_pending == 0 {
+            return Err("WALKIE_MAX_PENDING must be at least 1".into());
+        }
+        Ok(Self {
+            enabled,
+            max_message,
+            retention: Duration::from_secs(days * 86_400),
+            max_pending,
+            max_signal: 16 * 1024,
         })
     }
 }
@@ -173,6 +217,7 @@ impl Config {
         }
 
         let relay = RelayConfig::from_env(&var)?;
+        let walkie = WalkieConfig::from_env(&var)?;
         let rate_limit = crate::rate_limit::RateLimitConfig::from_env(&var)?;
 
         Ok(Self {
@@ -186,6 +231,7 @@ impl Config {
             max_expiry,
             id_length,
             relay,
+            walkie,
             rate_limit,
         })
     }

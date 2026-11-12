@@ -59,6 +59,11 @@ async fn serve(config: Config) -> Result<(), String> {
     } else {
         tracing::info!("relay disabled");
     }
+    if state.walkie.enabled() {
+        let boxes =
+            state.walkie.load(&state.storage).await.map_err(|e| format!("cannot load walkie mailboxes: {e}"))?;
+        tracing::info!(boxes, "walkie enabled");
+    }
     let sweeper = spawn_sweeper(state.clone());
 
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("cannot bind {addr}: {e}"))?;

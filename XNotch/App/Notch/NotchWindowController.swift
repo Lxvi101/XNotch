@@ -151,7 +151,7 @@ final class NotchWindowController {
             guard model.pillsActive, let row = pillFrames().map(\.1).reduce(nil, { $0?.union($1) ?? $1 }) else { return body }
             return body.union(row.insetBy(dx: -8, dy: -8))
         case .dropZone:
-            return rect(for: NotchMetrics.dropZone).insetBy(dx: -28, dy: -28)
+            return rect(for: model.targetGeometry).insetBy(dx: -28, dy: -28)
         case .open:
             return rect(for: model.targetGeometry)
         }
@@ -368,12 +368,18 @@ final class NotchWindowController {
     }
 
     private func dropTarget(at point: NSPoint) -> DropTarget {
-        point.x < screen.frame.midX ? .shelf : .airDrop
+        let zone = rect(for: model.targetGeometry)
+        let local = CGPoint(x: point.x - zone.minX, y: zone.maxY - point.y)
+        if let index = DropZoneLayout.face(at: local, faces: model.dropFaces.count,
+                                           zoneHeight: zone.height, zoneWidth: zone.width) {
+            return .face(model.dropFaces[index])
+        }
+        return point.x < screen.frame.midX ? .shelf : .airDrop
     }
 
     private func updateDropTarget(at point: NSPoint) {
         guard model.surface == .dropZone else { return }
-        let zone = rect(for: NotchMetrics.dropZone)
+        let zone = rect(for: model.targetGeometry)
         model.setHoveredDropTarget(zone.insetBy(dx: -28, dy: -28).contains(point) ? dropTarget(at: point) : nil)
     }
 

@@ -89,6 +89,21 @@ pub struct RelayRoom {
     pub created_at: DateTime<Utc>,
 }
 
+/// A registered Walkie mailbox (`walkie/boxes/{box}`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WalkieBox {
+    #[serde(with = "rfc3339")]
+    pub created_at: DateTime<Utc>,
+    /// SHA-256 of the send token, domain-separated; see `walkie::post_token_hash`.
+    pub post_token_hash: String,
+    /// Kept only while the owner lists the mailbox in the directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listed_post_token: Option<String>,
+    /// The owner's signed public card, base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+}
+
 /// Effective lifetime of a new drop: the default when unset, clamped to
 /// `[MIN_EXPIRY, max]`.
 pub fn clamp_expiry(requested: Option<i64>, default: u64, max: u64) -> u64 {

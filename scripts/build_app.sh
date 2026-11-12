@@ -73,6 +73,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSLocalNetworkUsageDescription</key><string>XNotch receives files and text from your iPhone and iPad on this network.</string>
     <key>NSBonjourServices</key><array><string>_xnotchlink._tcp</string></array>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>NSMicrophoneUsageDescription</key><string>Walkie records a voice note while you hold someone's face, and sends it end-to-end encrypted.</string>
+    <key>NSSpeechRecognitionUsageDescription</key><string>Walkie writes down your voice notes as you talk, on this Mac.</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>XNotch shows your headphones when they connect, and receives files from your iPhone and iPad over Bluetooth when there's no Wi-Fi.</string>
     <key>CFBundleURLTypes</key>
     <array>
@@ -113,7 +115,8 @@ if [[ "$CODE_SIGN_IDENTITY" != "-" ]]; then
     sign "$FRAMEWORK/Updater.app"
     sign "$APP/Contents/Frameworks/Sparkle.framework"
 fi
-sign "$APP"
+# The app itself carries entitlements (the microphone, for Walkie).
+codesign "${SIGN_FLAGS[@]}" --entitlements scripts/XNotch.entitlements "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 echo "$APP"
 if [[ "${1:-}" == "--run" ]]; then

@@ -121,6 +121,20 @@ final class ExtensionManager: ObservableObject {
         }
     }
 
+    /// Active extensions' faces for the drop zone, in load order (API 1.10.0).
+    var dropTargets: [FaceDropTarget] {
+        entries.flatMap { entry -> [FaceDropTarget] in
+            guard entry.isActive, let provider = entry.instance as? NotchDropTargetProviding else { return [] }
+            return provider.dropTargets.map { FaceDropTarget(extensionID: entry.id, target: $0) }
+        }
+    }
+
+    func performDrop(_ urls: [URL], on face: FaceDropTarget) {
+        guard let entry = entries.first(where: { $0.id == face.extensionID }), entry.isActive,
+              let provider = entry.instance as? NotchDropTargetProviding else { return }
+        provider.performDrop(urls, on: face.target.id)
+    }
+
     struct PendingPermission {
         let extensionID: ExtensionID
         let extensionName: String

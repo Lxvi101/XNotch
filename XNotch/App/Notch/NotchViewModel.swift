@@ -56,6 +56,8 @@ final class NotchViewModel: ObservableObject {
     @Published var isOnScreen = true
 
     @Published private(set) var hoveredDropTarget: DropTarget?
+    /// Extensions' faces in the drop zone, read when a drag reaches the notch.
+    @Published private(set) var dropFaces: [FaceDropTarget] = []
     @Published private(set) var notchSize: CGSize
 
     let services: NotchServices
@@ -184,7 +186,7 @@ final class NotchViewModel: ObservableObject {
     var targetGeometry: NotchShellGeometry {
         switch surface {
         case .closed: return restingGeometry
-        case .dropZone: return NotchMetrics.dropZone
+        case .dropZone: return DropZoneLayout.geometry(faces: dropFaces.count)
         case .open:
             if page == .media { return NotchMetrics.media(notchSize) }
             if let ext = extensionPages.first(where: { $0.page == page }) {
@@ -703,6 +705,7 @@ final class NotchViewModel: ObservableObject {
     func enterDropZone() {
         guard surface == .closed else { return }
         cancelTrayWingsTimer()
+        dropFaces = Array(extensions.dropTargets.prefix(DropZoneLayout.maxFaces))
         surface = .dropZone
         showsTrayWings = false
         withAnimation(Motion.open) {
@@ -746,6 +749,10 @@ final class NotchViewModel: ObservableObject {
             if !isPointerInside { scheduleCollapse() }
         case .airDrop:
             ShelfActions.airDrop(urls)
+            exitDropZone()
+        case .face(let face):
+            extensions.performDrop(urls, on: face)
+            Haptics.tap()
             exitDropZone()
         }
     }

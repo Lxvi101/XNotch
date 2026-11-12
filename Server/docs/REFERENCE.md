@@ -40,6 +40,10 @@ with comments. Empty values count as unset.
 | `RELAY_MAX_WAITING` | `256` | Waiting Mac sockets across all rooms. Beyond this a new Mac socket is closed with `4503`. |
 | `RELAY_PHONE_WAIT` | `10` | Seconds a phone waits for a Mac before it is closed with `4404` (0 to 300). |
 | `RELAY_IDLE_TIMEOUT` | `1800` | Seconds without a data message in either direction before a pair is closed. |
+| `WALKIE` | `on` | `on` or `off`. When off, every [Walkie](WALKIE.md) route returns `404` and `/api/info` says `"walkie": false`. |
+| `WALKIE_MAX_MESSAGE` | `33554432` | Largest sealed Walkie message in bytes (32 MiB), 65536 to 1 GiB: a voice note or a few files. |
+| `WALKIE_RETENTION_DAYS` | `7` | Days a message nobody fetched is kept, 1 to 365. Fetched messages are deleted by the Mac right away. |
+| `WALKIE_MAX_PENDING` | `500` | Messages one mailbox may hold; beyond this senders get `429` until it's fetched. |
 | `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs. Empty uses socket peers only; see below. |
 | `RATE_LIMIT_PUBLIC_PER_MINUTE` / `RATE_LIMIT_PUBLIC_BURST` | `120` / `60` | Public pages, downloads, unknown paths; password posts also use this bucket. |
 | `RATE_LIMIT_PASSWORD_PER_MINUTE` / `RATE_LIMIT_PASSWORD_BURST` | `10` / `5` | Public POST/password attempts across all drop IDs, including invalid forms/drops. |
@@ -180,12 +184,13 @@ No auth. Returns `200` with the text `ok`.
 curl -H "Authorization: Bearer $TOKEN" $URL/api/info
 ```
 ```json
-{"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000,"relay":true,"passwords":true,"e2ee":[1]}
+{"name":"XNotch Cloud","version":"0.1.0","max_file_size":5368709120,"default_expiry_seconds":86400,"max_expiry_seconds":2592000,"relay":true,"passwords":true,"e2ee":[1],"walkie":true,"walkie_max_message":33554432}
 ```
 `relay` is `false` when `RELAY=off`. `passwords` says the server supports drop passwords.
 `e2ee` lists the [end-to-end encryption](E2EE.md) format versions the server can store
 and serve; older servers leave it out. XNotch makes encrypted links only on a server
 that lists it, and never falls back to plaintext while encryption is on.
+`walkie` says the server has [Walkie](WALKIE.md) mailboxes, whose routes are listed there.
 
 ### `POST /api/drops`
 
@@ -345,6 +350,9 @@ drops/{id}/meta.json        id, title, created_at, expires_at, files [{name, siz
 drops/{id}/files/{name}     file contents (ciphertext under opaque names for encrypted drops)
 drops/{id}/manifest         encrypted manifest of an encrypted drop
 relay/rooms/{room}          {"created_at": "..."} for each registered relay room
+walkie/boxes/{box}          a Walkie mailbox: created_at, post_token_hash, its signed card,
+                            and the send token itself only while it is listed
+walkie/mail/{box}/{id}      a sealed message waiting to be fetched
 ```
 
 There is no database; the metadata files are the source of truth. The server

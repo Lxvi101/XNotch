@@ -1,0 +1,12 @@
+{
+  "id": "walkie",
+  "name": "Walkie",
+  "version": "1.0.0",
+  "summary": "Hold a face to talk. Voice notes, files and to-dos, end-to-end encrypted and post-quantum safe.",
+  "description": "Put the people you talk to most in the notch. Hold a face and speak: your voice note is written down as you talk and plays on their Mac the moment you let go. Drop files on a face, send a screenshot, or hand over a to-do with a reminder.\n\nWorks on macOS 14 and later. Everything travels through your own XNotch Cloud server, sealed on your Mac with X-Wing (ML-KEM-768 + X25519) and signed with ML-DSA-65 and Ed25519. The server only ever stores ciphertext.",
+  "symbol": "waveform.circle.fill",
+  "tint": "#FF6A3D",
+  "principalClass": "WalkiePrincipal",
+  "kit": { "abi": 3, "minAPI": "1.10.0" },
+  "creator": { "name": "XNotch" }
+}

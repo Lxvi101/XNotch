@@ -14,6 +14,7 @@ pub mod range;
 pub mod rate_limit;
 pub mod relay;
 pub mod storage;
+pub mod walkie;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +30,7 @@ use tracing::Level;
 use crate::config::Config;
 use crate::relay::Relay;
 use crate::storage::Storage;
+use crate::walkie::Walkie;
 
 /// How often expired drops are swept from storage.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -37,6 +39,7 @@ pub struct AppState {
     pub config: Config,
     pub storage: Storage,
     pub relay: Relay,
+    pub walkie: Walkie,
     pub password_checks: Arc<tokio::sync::Semaphore>,
     pub rate_limiter: rate_limit::RateLimiter,
 }
@@ -46,9 +49,10 @@ pub type SharedState = Arc<AppState>;
 impl AppState {
     pub fn new(config: Config, storage: Storage) -> Self {
         let relay = Relay::new(config.relay.clone());
+        let walkie = Walkie::new(config.walkie.clone());
         let rate_limiter = rate_limit::RateLimiter::new(config.rate_limit.clone());
         let password_checks = Arc::new(tokio::sync::Semaphore::new(config.rate_limit.password_concurrency));
-        Self { config, storage, relay, password_checks, rate_limiter }
+        Self { config, storage, relay, walkie, password_checks, rate_limiter }
     }
 
     pub fn drop_url(&self, id: &str) -> String {
@@ -92,6 +96,13 @@ pub fn spawn_sweeper(state: SharedState) -> tokio::task::JoinHandle<()> {
                 Ok(0) => tracing::debug!("sweep finished, nothing expired"),
                 Ok(removed) => tracing::info!(removed, "swept expired drops"),
                 Err(e) => tracing::warn!(error = %e, "sweep failed"),
+            }
+            if state.walkie.enabled() {
+                match state.walkie.sweep(&state.storage, Utc::now()).await {
+                    Ok(0) => {}
+                    Ok(removed) => tracing::info!(removed, "swept old walkie messages"),
+                    Err(e) => tracing::warn!(error = %e, "walkie sweep failed"),
+                }
             }
         }
     })

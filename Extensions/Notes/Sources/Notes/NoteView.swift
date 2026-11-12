@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import XNotchKit
 
 let noteAccent = Color(nsColor: MarkdownTheme.accent)
 private let noteShape = RoundedRectangle(cornerRadius: NoteGeometry.cornerRadius, style: .continuous)
@@ -33,19 +34,24 @@ struct NoteRootView: View {
 
 // MARK: Surface
 
-/// Mote's glass: near-black at the top, thinning to frosted grey below.
+/// Frosted glass the desktop shows through: Liquid Glass on macOS 26 and
+/// later. A light shade behind the title row and the text keeps them
+/// readable on any wallpaper without hiding the frosting.
 private struct NoteSurface: View {
     let state: NoteWindowState
 
     var body: some View {
         let target = state.isDragTarget
         ZStack {
-            VisualEffect()
-            LinearGradient(stops: [.init(color: .black.opacity(0.94), location: 0),
-                                   .init(color: .black.opacity(0.78), location: 0.32),
-                                   .init(color: .black.opacity(0.42), location: 1)],
+            KitGlass(shape: noteShape, tint: target ? noteAccent : nil, shade: 0.28)
+            LinearGradient(stops: [.init(color: .black.opacity(0.30), location: 0),
+                                   .init(color: .black.opacity(0.12), location: 0.25),
+                                   .init(color: .black.opacity(0.04), location: 1)],
                            startPoint: .top, endPoint: .bottom)
-            noteShape.strokeBorder(target ? noteAccent.opacity(0.9) : .white.opacity(0.11), lineWidth: target ? 1.6 : 1)
+                .clipShape(noteShape)
+            if target {
+                noteShape.strokeBorder(noteAccent.opacity(0.9), lineWidth: 1.6)
+            }
         }
         .animation(NoteMotion.hover, value: target)
     }

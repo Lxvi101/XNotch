@@ -66,6 +66,42 @@ public struct NotchKeyPress: Sendable {
     }
 }
 
+// MARK: Drop targets
+
+/// Someone or something files can be dropped on while they are dragged over
+/// the closed notch, shown as a face in a row under the Tray and AirDrop
+/// cells (API 1.10.0).
+public struct NotchDropTarget: Identifiable, Hashable, Sendable {
+    /// Unique within the extension.
+    public var id: String
+    /// A first name or a word: "Mira".
+    public var title: String
+    /// A picture drawn in a circle, PNG or JPEG; `symbol` on `tint` when nil.
+    public var image: Data?
+    public var symbol: String
+    /// Hex colour behind the symbol, e.g. "#0A84FF".
+    public var tint: String?
+
+    public init(id: String, title: String, image: Data? = nil, symbol: String = "person.fill", tint: String? = nil) {
+        self.id = id
+        self.title = title
+        self.image = image
+        self.symbol = symbol
+        self.tint = tint
+    }
+}
+
+/// Faces that take files dropped on the notch (API 1.10.0). XNotch reads
+/// `dropTargets` when a drag reaches the notch and shows up to six.
+@MainActor
+public protocol NotchDropTargetProviding {
+    var dropTargets: [NotchDropTarget] { get }
+
+    /// The files dropped on one of `dropTargets`. File promises are already
+    /// resolved to files on disk.
+    func performDrop(_ urls: [URL], on target: String)
+}
+
 // MARK: Settings
 
 /// A page in XNotch's Settings window, listed under Extensions.

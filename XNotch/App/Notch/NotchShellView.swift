@@ -60,7 +60,7 @@ struct NotchShellView: View {
                 .padding(.top, model.notchSize.height - 4)
                 .reveal(model.eyesReveal, hiddenScale: 0.6, maxBlur: 4, travel: -12, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
-            DropZoneView(hovered: model.hoveredDropTarget, notchSize: model.notchSize)
+            DropZoneView(hovered: model.hoveredDropTarget, faces: model.dropFaces, notchSize: model.notchSize)
                 .reveal(model.dropReveal, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
             ShelfView(store: model.shelf, extensions: extensions, notchSize: model.notchSize,

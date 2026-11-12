@@ -56,3 +56,64 @@ extension Color {
                   blue: Double(value & 0xFF) / 255)
     }
 }
+
+// MARK: Glass
+
+/// The frosted glass of XNotch's floating surfaces (API 1.10.0): Liquid
+/// Glass on macOS 26 and later, a behind-window blur with a sheen and a lit
+/// rim before. Draw it behind content clipped to the same shape:
+///
+///     content.background { KitGlass(shape: RoundedRectangle(cornerRadius: 28, style: .continuous)) }
+///
+/// `shade` darkens the glass for white text on any wallpaper (0 = clear, 1 = black).
+/// Glass shows the desktop only in a window that isn't opaque
+/// (`isOpaque = false`, `backgroundColor = .clear`).
+public struct KitGlass<S: InsettableShape>: View {
+    private let shape: S
+    private let tint: Color?
+    private let shade: Double
+
+    public init(shape: S, tint: Color? = nil, shade: Double = 0.32) {
+        self.shape = shape
+        self.tint = tint
+        self.shade = shade
+    }
+
+    public var body: some View {
+        ZStack {
+            if #available(macOS 26.0, *) {
+                Color.clear.glassEffect(.regular.tint(glassTint), in: shape)
+            } else {
+                BehindWindowBlur()
+                    .clipShape(shape)
+                shape.fill(Color.black.opacity(shade))
+                if let tint { shape.fill(tint.opacity(0.22)) }
+                // Light catching the top of the pane.
+                shape.fill(LinearGradient(colors: [.white.opacity(0.10), .white.opacity(0)],
+                                          startPoint: .top, endPoint: .center))
+            }
+            // A lit edge, brighter where the light comes from.
+            shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.08), .white.opacity(0.14)],
+                                              startPoint: .top, endPoint: .bottom), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var glassTint: Color {
+        if let tint { return tint.opacity(0.3) }
+        return Color.black.opacity(shade)
+    }
+}
+
+private struct BehindWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}

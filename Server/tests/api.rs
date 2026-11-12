@@ -128,7 +128,9 @@ async fn full_drop_lifecycle() {
             "max_expiry_seconds": 2592000,
             "relay": true,
             "passwords": true,
-            "e2ee": [1]
+            "e2ee": [1],
+            "walkie": true,
+            "walkie_max_message": 32u64 * 1024 * 1024
         })
     );
 

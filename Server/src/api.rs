@@ -16,7 +16,7 @@ use subtle::ConstantTimeEq;
 use crate::error::ApiError;
 use crate::model::{self, DropMeta, FileMeta};
 use crate::storage::WriteError;
-use crate::{SharedState, e2ee, ids, names, password, relay};
+use crate::{SharedState, e2ee, ids, names, password, relay, walkie};
 
 /// Longest stored title, in characters. Longer titles are truncated.
 const MAX_TITLE_CHARS: usize = 200;
@@ -29,12 +29,22 @@ pub fn router(state: SharedState) -> Router<SharedState> {
         .route("/drops/{id}/files/{name}", put(upload_file))
         .route("/drops/{id}/manifest", put(upload_manifest))
         .route("/relay/rooms/{room}", put(relay::register_room).delete(relay::unregister_room))
+        .route("/walkie/boxes/{box}", put(walkie::register).delete(walkie::unregister))
+        .route("/walkie/directory", get(walkie::directory))
         // Explicit catch-all so unknown `/api/...` paths get a JSON 404 instead of
         // falling through to the public `/{id}/{name}` route.
         .route("/{*rest}", any(|| async { ApiError::NotFound("endpoint") }))
         .layer(middleware::from_fn_with_state(state, require_token))
         // Added after the token layer: devices connect with the room id as their credential.
         .route("/relay/rooms/{room}/connect", get(relay::connect))
+        // Walkie mailboxes authenticate with their own send token or secret, so
+        // contacts on other servers can reach them.
+        .route("/walkie/boxes/{box}/card", get(walkie::card))
+        .route("/walkie/boxes/{box}/messages", get(walkie::list_messages).post(walkie::post_message))
+        .route("/walkie/boxes/{box}/messages/{id}", get(walkie::get_message).delete(walkie::delete_message))
+        .route("/walkie/boxes/{box}/signals", axum::routing::post(walkie::post_signal))
+        .route("/walkie/boxes/{box}/listen", get(walkie::listen))
+        .route("/walkie/presence", axum::routing::post(walkie::presence))
 }
 
 async fn require_token(State(state): State<SharedState>, request: Request, next: Next) -> Response {
@@ -62,6 +72,11 @@ struct Info {
     /// End-to-end encryption format versions the server can store and serve.
     /// Clients must not create encrypted drops on servers without this.
     e2ee: &'static [u8],
+    /// Walkie mailboxes are on.
+    walkie: bool,
+    /// Largest sealed Walkie message, when Walkie is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    walkie_max_message: Option<u64>,
 }
 
 async fn info(State(state): State<SharedState>) -> Json<Info> {
@@ -75,6 +90,8 @@ async fn info(State(state): State<SharedState>) -> Json<Info> {
         relay: c.relay.enabled,
         passwords: true,
         e2ee: e2ee::VERSIONS,
+        walkie: state.walkie.enabled(),
+        walkie_max_message: state.walkie.enabled().then(|| state.walkie.max_message()),
     })
 }
 

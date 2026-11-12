@@ -149,6 +149,9 @@ public struct ExtensionWorkspace {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = allowsMultiple
         panel.prompt = prompt
+        // Above the notch window, which floats over normal windows and would catch clicks
+        // meant for the picker while its modal loop runs.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 4)
         NSApp.activate(ignoringOtherApps: true)
         return panel.runModal() == .OK ? panel.urls : []
     }

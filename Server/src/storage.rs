@@ -5,6 +5,8 @@
 //! - `drops/{id}/files/{name}` file contents
 //! - `drops/{id}/manifest`     encrypted manifest of an end-to-end encrypted drop
 //! - `relay/rooms/{room}`      a registered relay room ([`RelayRoom`])
+//! - `walkie/boxes/{box}`      a registered Walkie mailbox ([`WalkieBox`])
+//! - `walkie/mail/{box}/{id}`  a sealed message waiting in a mailbox
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
@@ -24,8 +26,8 @@ use tokio::sync::{Mutex, MutexGuard};
 
 use crate::config::StorageConfig;
 use crate::ids;
-use crate::model::{DropMeta, RelayRoom};
-use crate::relay;
+use crate::model::{DropMeta, RelayRoom, WalkieBox};
+use crate::{relay, walkie};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 type Result<T, E = object_store::Error> = std::result::Result<T, E>;
@@ -49,6 +51,8 @@ pub struct Storage {
     store: Arc<dyn ObjectStore>,
     drops: Path,
     relay_rooms: Path,
+    walkie_boxes: Path,
+    walkie_mail: Path,
     /// Striped locks that serialize metadata read-modify-write per drop.
     locks: Vec<Mutex<()>>,
 }
@@ -59,7 +63,9 @@ impl Storage {
         Self {
             store,
             drops: root.clone().join("drops"),
-            relay_rooms: root.join("relay").join("rooms"),
+            relay_rooms: root.clone().join("relay").join("rooms"),
+            walkie_boxes: root.clone().join("walkie").join("boxes"),
+            walkie_mail: root.join("walkie").join("mail"),
             locks: (0..LOCK_STRIPES).map(|_| Mutex::new(())).collect(),
         }
     }
@@ -343,6 +349,96 @@ impl Storage {
                 Err(e) => return Err(e),
             };
         Ok(objects.iter().filter_map(|p| p.filename()).filter(|r| relay::is_valid_room(r)).map(str::to_owned).collect())
+    }
+}
+
+impl Storage {
+    pub async fn save_walkie_box(&self, id: &str, record: &WalkieBox) -> Result<()> {
+        let json = serde_json::to_vec(record).expect("walkie box serializes");
+        self.store.put(&self.walkie_boxes.clone().join(id), PutPayload::from(json)).await?;
+        Ok(())
+    }
+
+    pub async fn load_walkie_box(&self, id: &str) -> Result<Option<WalkieBox>> {
+        match self.store.get(&self.walkie_boxes.clone().join(id)).await {
+            Ok(result) => {
+                let bytes = result.bytes().await?;
+                serde_json::from_slice(&bytes)
+                    .map(Some)
+                    .map_err(|e| object_store::Error::Generic { store: "walkie", source: Box::new(e) })
+            }
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Every registered mailbox.
+    pub async fn list_walkie_boxes(&self) -> Result<Vec<String>> {
+        let objects: Vec<Path> =
+            match self.store.list(Some(&self.walkie_boxes)).map_ok(|o| o.location).try_collect().await {
+                Ok(objects) => objects,
+                Err(object_store::Error::NotFound { .. }) => return Ok(Vec::new()),
+                Err(e) => return Err(e),
+            };
+        Ok(objects.iter().filter_map(|p| p.filename()).filter(|b| walkie::is_valid_box(b)).map(str::to_owned).collect())
+    }
+
+    /// Deletes a mailbox's record and every message in it.
+    pub async fn purge_walkie_box(&self, id: &str) -> Result<()> {
+        ignore_not_found(self.store.delete(&self.walkie_boxes.clone().join(id)).await)?;
+        for (message, _) in self.list_walkie_messages(id).await? {
+            self.delete_walkie_message(id, &message).await?;
+        }
+        Ok(())
+    }
+
+    fn walkie_message_path(&self, id: &str, message: &str) -> Path {
+        self.walkie_mail.clone().join(id).join(message)
+    }
+
+    pub async fn write_walkie_message<S, E>(
+        &self,
+        id: &str,
+        message: &str,
+        body: S,
+        limit: u64,
+    ) -> Result<u64, WriteError>
+    where
+        S: Stream<Item = std::result::Result<Bytes, E>> + Unpin,
+        E: Into<BoxError>,
+    {
+        self.write_object(&id[..6], self.walkie_message_path(id, message), body, limit).await
+    }
+
+    pub async fn read_walkie_message(&self, id: &str, message: &str) -> Result<Option<Bytes>> {
+        match self.store.get(&self.walkie_message_path(id, message)).await {
+            Ok(result) => Ok(Some(result.bytes().await?)),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn delete_walkie_message(&self, id: &str, message: &str) -> Result<()> {
+        ignore_not_found(self.store.delete(&self.walkie_message_path(id, message)).await)
+    }
+
+    /// The messages waiting in a mailbox, with their sizes, in arrival order.
+    pub async fn list_walkie_messages(&self, id: &str) -> Result<Vec<(String, u64)>> {
+        let prefix = self.walkie_mail.clone().join(id);
+        let objects: Vec<(Path, u64)> =
+            match self.store.list(Some(&prefix)).map_ok(|o| (o.location, o.size)).try_collect().await {
+                Ok(objects) => objects,
+                Err(object_store::Error::NotFound { .. }) => return Ok(Vec::new()),
+                Err(e) => return Err(e),
+            };
+        let mut messages: Vec<(String, u64)> = objects
+            .into_iter()
+            .filter_map(|(p, size)| {
+                p.filename().filter(|m| walkie::is_valid_message_id(m)).map(|m| (m.to_owned(), size))
+            })
+            .collect();
+        messages.sort();
+        Ok(messages)
     }
 }
 

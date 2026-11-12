@@ -134,7 +134,9 @@ enum Class {
 fn classify(request: &Request) -> Class {
     let path = request.uri().path();
     if path == "/api" || path.starts_with("/api/") {
-        if path.starts_with("/api/relay/rooms/") && path.ends_with("/connect") { Class::Relay } else { Class::Api }
+        let socket = (path.starts_with("/api/relay/rooms/") && path.ends_with("/connect"))
+            || (path.starts_with("/api/walkie/boxes/") && path.ends_with("/listen"));
+        if socket { Class::Relay } else { Class::Api }
     } else if request.method() == Method::POST {
         Class::Password
     } else {
