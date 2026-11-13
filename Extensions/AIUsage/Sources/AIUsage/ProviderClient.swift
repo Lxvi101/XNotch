@@ -46,8 +46,10 @@ final class URLSessionTransport: NSObject, HTTPTransport, URLSessionTaskDelegate
     }
 
     func send(_ request: URLRequest) async throws -> HTTPResponse {
-        guard let url = request.url, url.scheme == "https", let host = url.host?.lowercased(),
-              Self.allowedHosts.contains(host) || extraHosts().contains(host) else {
+        // Plain HTTP only reaches a CLIProxyAPI hub on this Mac that the user configured.
+        guard let url = request.url, let host = url.host?.lowercased(),
+              url.scheme == "https" && (Self.allowedHosts.contains(host) || extraHosts().contains(host))
+                || url.scheme == "http" && CLIProxyHubLocator.isLoopback(host) && extraHosts().contains(host) else {
             throw TransportError.hostNotAllowed(request.url?.host ?? "?")
         }
         let (data, response) = try await session.data(for: request, delegate: self)

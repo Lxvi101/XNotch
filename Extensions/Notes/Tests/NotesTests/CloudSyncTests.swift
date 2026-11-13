@@ -171,6 +171,38 @@ final class CloudSyncTests: XCTestCase {
         try FileManager.default.createDirectory(at: cloud.appendingPathComponent("Work"), withIntermediateDirectories: true)
         sync.scanSoon()
         expectNo("removal", for: 5) { if case .removed = $0 { return true }; return false }
+        // Once it's held, they go back up rather than away.
+        wait(for: "detach", timeout: 20) { if case .detached("Work/Note 1.md") = $0 { return true }; return false }
+        XCTAssertFalse(events.contains { if case .removed = $0 { return true }; return false })
+    }
+
+    /// A Mac iCloud hasn't caught up on yet mustn't make an empty folder that
+    /// clashes with the real one.
+    func testStartingDoesNotMakeTheFolder() throws {
+        try FileManager.default.removeItem(at: cloud)
+        sync.start()
+        wait(for: "unavailable") { if case .status(.unavailable) = $0 { return true }; return false }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cloud.path))
+    }
+
+    /// What lost a library's notes: iCloud set "XNotch Notes" aside as
+    /// "XNotch Notes 2" and an empty one took its place.
+    func testAnEmptiedRootNeverDeletesNotes() throws {
+        let id = UUID()
+        pushPlan(id: id)
+        wait(for: "push", pushed("Work/Plan.md"))
+        sync.start()
+        try FileManager.default.moveItem(at: cloud, to: cloud.deletingLastPathComponent().appendingPathComponent("XNotch Notes 2"))
+        try FileManager.default.createDirectory(at: cloud, withIntermediateDirectories: true)
+        sync.scanSoon()
+        wait(for: "detach", timeout: 20) { if case .detached("Work/Plan.md") = $0 { return true }; return false }
+        XCTAssertFalse(events.contains { if case .removed = $0 { return true }; return false })
+
+        // The library pushes it again with no path: it lands in the new folder.
+        events.removeAll()
+        pushPlan(id: id)
+        wait(for: "re-upload", pushed("Work/Plan.md"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cloud.appendingPathComponent("Work/Plan.md").path))
     }
 
     func testABucketFileThatFailedToGoUpIsNeverTrashedAndGoesUpLater() throws {

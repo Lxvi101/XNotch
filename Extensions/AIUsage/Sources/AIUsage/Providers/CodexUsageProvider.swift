@@ -12,12 +12,15 @@ final class CodexUsageProvider: UsageProvider, @unchecked Sendable {
 
     private let transport: HTTPTransport
     private let codexHome: CodexHome
+    private let hubs: CLIProxyHubLocator?
     private let lock = NSLock()
     private var resetGuard = WeeklyResetGuard()
 
-    init(transport: HTTPTransport, codexHome: CodexHome = CodexHome()) {
+    /// With `hubs`, a Codex that sends its requests to a CLIProxyAPI hub is read from that hub's logins.
+    init(transport: HTTPTransport, codexHome: CodexHome = CodexHome(), hubs: CLIProxyHubLocator? = nil) {
         self.transport = transport
         self.codexHome = codexHome
+        self.hubs = hubs
     }
 
     /// The host of a user-configured `chatgpt_base_url`, which may receive Codex's token like Codex itself sends it.
@@ -28,7 +31,18 @@ final class CodexUsageProvider: UsageProvider, @unchecked Sendable {
     }
 
     func fetch(_ context: FetchContext) async throws -> ProviderUsageSnapshot {
-        let credentials = try codexHome.loadCredentials()
+        if let hub = hubs?.hub(for: .codex) { return try await fetchFromHub(hub, context) }
+        let credentials: CodexCredentials
+        do {
+            credentials = try codexHome.loadCredentials()
+        } catch let failure as ProviderFailure where failure.kind == .notConnected {
+            // Codex talks to a proxy, so its auth.json only holds the proxy's key.
+            if let host = hubs?.routedOrigin(for: .codex)?.host {
+                throw ProviderFailure(.notConnected, "Codex sends its requests to \(host), not ChatGPT. If that's a "
+                    + "CLIProxyAPI hub, connect it in Settings → AI Usage.")
+            }
+            throw failure
+        }
         let accountKey = credentials.accountKey
         let fingerprint = credentials.fingerprint
 
@@ -58,17 +72,79 @@ final class CodexUsageProvider: UsageProvider, @unchecked Sendable {
 
             var snapshot = Self.snapshot(from: usage, credentials: credentials, inventory: inventory,
                                          includeExtras: context.includeExtras, now: context.now)
-            lock.withLock {
-                snapshot.windows = snapshot.windows.map {
-                    $0.id == "codex.weekly"
-                        ? resetGuard.review($0, accountKey: accountKey, savedResets: snapshot.credits?.savedResets, now: context.now)
-                        : $0
-                }
-            }
+            guardWeeklyReset(&snapshot, accountKey: accountKey, now: context.now)
             return snapshot
         } catch {
             throw ProviderFailure.from(error, provider: .codex).identified(accountKey: accountKey, fingerprint: fingerprint)
         }
+    }
+
+    private func guardWeeklyReset(_ snapshot: inout ProviderUsageSnapshot, accountKey: String, now: Date) {
+        let saved = snapshot.credits?.savedResets
+        lock.withLock {
+            snapshot.windows = snapshot.windows.map {
+                $0.id == "codex.weekly" ? resetGuard.review($0, accountKey: accountKey, savedResets: saved, now: now) : $0
+            }
+        }
+    }
+
+    // MARK: CLIProxyAPI hub
+
+    /// Every Codex login on the hub, read through its relay. The hub keeps the tokens fresh itself.
+    private func fetchFromHub(_ hub: CLIProxyHub, _ context: FetchContext) async throws -> ProviderUsageSnapshot {
+        let accounts = try await hub.accounts(provider: .codex, transport: transport)
+        guard !accounts.isEmpty else {
+            throw ProviderFailure(.notConnected, "Codex goes through your CLIProxyAPI hub at \(hub.host), which has no "
+                + "Codex login yet. Run `cliproxyapi -codex-device-login` on the hub.")
+        }
+        let readings = await withTaskGroup(of: (Int, Result<ProviderUsageSnapshot, Error>).self) { group in
+            for (offset, account) in accounts.enumerated() {
+                group.addTask {
+                    do { return (offset, .success(try await self.fetchHubAccount(account, hub: hub, context: context))) }
+                    catch { return (offset, .failure(error)) }
+                }
+            }
+            var results: [(Int, Result<ProviderUsageSnapshot, Error>)] = []
+            for await result in group { results.append(result) }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+        try Task.checkCancellation()
+        return try hub.merge(readings, provider: .codex, now: context.now)
+    }
+
+    private func fetchHubAccount(_ account: CLIProxyHub.Account, hub: CLIProxyHub,
+                                 context: FetchContext) async throws -> ProviderUsageSnapshot {
+        let relay = hub.relay(for: account, transport: transport)
+        let anonymous = CodexCredentials(accessToken: CLIProxyHub.tokenPlaceholder, accountID: nil, expiresAt: nil,
+                                         userID: nil, email: account.email, planType: nil)
+        let base = Self.defaultBaseURL
+        async let usageResponse = send(URL(string: base + "/wham/usage")!, credentials: anonymous, timeout: 30, via: relay)
+        async let inventoryResponse = context.includeExtras
+            ? try? sendResetCredits(URL(string: base + "/wham/rate-limit-reset-credits")!, credentials: anonymous, via: relay)
+            : nil
+
+        let response = try await usageResponse
+        try ProviderFailure.check(response, provider: .codex, signInHint: "Sign this login in again on the hub "
+            + "(`cliproxyapi -codex-device-login`).", now: context.now)
+        let usage: CodexUsageResponse
+        do {
+            usage = try JSONDecoder().decode(CodexUsageResponse.self, from: response.data)
+        } catch {
+            throw ProviderFailure(.invalidResponse, "Codex sent usage in an unexpected format.")
+        }
+        let inventory = await inventoryResponse.flatMap { $0.statusCode == 200 ? $0.data : nil }
+            .flatMap { try? CodexResetCredits.decode($0) }
+        // The hub's file name keys a login whose usage doesn't say who it is.
+        var credentials = anonymous
+        credentials.userID = usage.userID ?? "cliproxy:\(hub.host):\(account.id)"
+        credentials.accountID = usage.accountID
+        credentials.email = usage.email ?? account.email
+
+        var snapshot = Self.snapshot(from: usage, credentials: credentials, inventory: inventory,
+                                     includeExtras: context.includeExtras, now: context.now)
+        snapshot.source = .cliProxyHub
+        guardWeeklyReset(&snapshot, accountKey: credentials.accountKey, now: context.now)
+        return snapshot
     }
 
     // MARK: Requests
@@ -99,7 +175,8 @@ final class CodexUsageProvider: UsageProvider, @unchecked Sendable {
         return trimmed
     }
 
-    private func send(_ url: URL, credentials: CodexCredentials, timeout: TimeInterval) async throws -> HTTPResponse {
+    private func send(_ url: URL, credentials: CodexCredentials, timeout: TimeInterval,
+                      via relay: HTTPTransport? = nil) async throws -> HTTPResponse {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -107,10 +184,11 @@ final class CodexUsageProvider: UsageProvider, @unchecked Sendable {
         if let account = credentials.accountID {
             request.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
-        return try await transport.send(request)
+        return try await (relay ?? transport).send(request)
     }
 
-    private func sendResetCredits(_ url: URL, credentials: CodexCredentials) async throws -> HTTPResponse {
+    private func sendResetCredits(_ url: URL, credentials: CodexCredentials,
+                                  via relay: HTTPTransport? = nil) async throws -> HTTPResponse {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -120,7 +198,7 @@ final class CodexUsageProvider: UsageProvider, @unchecked Sendable {
         if let account = credentials.accountID {
             request.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
-        return try await transport.send(request)
+        return try await (relay ?? transport).send(request)
     }
 
     // MARK: Mapping
@@ -327,6 +405,10 @@ struct CodexUsageResponse: Decodable, Sendable {
     }
 
     var planType: String?
+    /// Who the usage belongs to; the CLIProxyAPI hub path has no local token to read this from.
+    var userID: String?
+    var accountID: String?
+    var email: String?
     var rateLimit: RateLimit?
     var codeReviewRateLimit: RateLimit?
     var credits: Credits?
@@ -337,6 +419,9 @@ struct CodexUsageResponse: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: AnyCodingKey.self)
         planType = container.lenient(String.self, "plan_type")
+        userID = container.lenient(String.self, "user_id").nonEmpty
+        accountID = container.lenient(String.self, "account_id").nonEmpty
+        email = container.lenient(String.self, "email").nonEmpty
         rateLimit = container.lenient(RateLimit.self, "rate_limit")
         codeReviewRateLimit = container.lenient(RateLimit.self, "code_review_rate_limit")
         let resets = try? container.nestedContainer(keyedBy: AnyCodingKey.self, forKey: AnyCodingKey("rate_limit_reset_credits"))

@@ -98,6 +98,8 @@ final class AIUsageStore: ObservableObject {
     @Published private(set) var hasSavedCursorCookie = false
     /// True while XNotch waits for the user to finish signing in to Cursor in their browser.
     @Published var isSigningInToCursor = false
+    /// What Claude Code and Codex send their requests to: the provider, a CLIProxyAPI hub, another proxy.
+    @Published private(set) var proxyRoutes: [AIProviderID: ProxyRoute] = [:]
 
     let mirror = SettingsMirror()
     var onSettingsChange: ((AIUsageSettings, AIUsageSettings) -> Void)?
@@ -150,6 +152,10 @@ final class AIUsageStore: ObservableObject {
     /// Whether a switched-on subscription is still being read for the first time.
     var isLoadingFirstReading: Bool {
         visibleProviders.contains { states[$0]?.snapshot == nil && states[$0]?.status == .loading }
+    }
+
+    func setProxyRoute(_ route: ProxyRoute?, for id: AIProviderID) {
+        if proxyRoutes[id] != route { proxyRoutes[id] = route }
     }
 
     func setSavedCursorCookie(_ saved: Bool) {

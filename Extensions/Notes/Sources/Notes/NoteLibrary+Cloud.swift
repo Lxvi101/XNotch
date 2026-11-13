@@ -109,6 +109,12 @@ extension NoteLibrary {
                 trash(note)
                 saveIndex()
             }
+        case let .detached(path):
+            guard let note = notes.first(where: { $0.cloudPath == path }) else { return }
+            note.cloudPath = nil
+            note.syncedHash = nil
+            push(note)
+            saveIndexSoon()
         case let .bucketChanged(path):
             guard let note = notes.first(where: { $0.cloudPath == path }) else { return }
             withAnimation(NoteMotion.content) { note.attachments = Attachments.list(bucketFolder(for: note)) }

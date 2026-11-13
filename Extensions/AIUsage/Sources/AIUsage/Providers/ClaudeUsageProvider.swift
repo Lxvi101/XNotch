@@ -17,27 +17,43 @@ final class ClaudeUsageProvider: UsageProvider, @unchecked Sendable {
     private let transport: HTTPTransport
     private let locator: ClaudeCredentialLocator
     private let keychainAllowed: @Sendable () -> Bool
+    private let hubs: CLIProxyHubLocator?
 
     private let lock = NSLock()
     /// Memory only: saves a Keychain read per poll. Dropped on expiry or rejection.
     private var keychainCredentials: ClaudeOAuthCredentials?
     /// Credential fingerprint → account identity from /api/oauth/profile.
     private var identities: [String: Identity] = [:]
+    /// Hub login id → its profile, looked up once.
+    private var hubProfiles: [String: ClaudeProfileResponse] = [:]
 
     struct Identity: Equatable, Sendable {
         var accountKey: String
         var email: String?
     }
 
+    /// With `hubs`, a Claude Code that sends its requests to a CLIProxyAPI hub is read from that hub's logins.
     init(transport: HTTPTransport, locator: ClaudeCredentialLocator = ClaudeCredentialLocator(),
-         keychainAllowed: @escaping @Sendable () -> Bool) {
+         keychainAllowed: @escaping @Sendable () -> Bool, hubs: CLIProxyHubLocator? = nil) {
         self.transport = transport
         self.locator = locator
         self.keychainAllowed = keychainAllowed
+        self.hubs = hubs
     }
 
     func fetch(_ context: FetchContext) async throws -> ProviderUsageSnapshot {
-        let (credentials, source) = try loadCredentials(context)
+        if let hub = hubs?.hub(for: .claude) { return try await fetchFromHub(hub, context) }
+        let credentials: ClaudeOAuthCredentials
+        let source: CredentialSource
+        do {
+            (credentials, source) = try loadCredentials(context)
+        } catch let failure as ProviderFailure where failure.kind == .notConnected {
+            if let host = hubs?.routedOrigin(for: .claude)?.host {
+                throw ProviderFailure(.notConnected, "Claude Code sends its requests to \(host), not Anthropic. If that's "
+                    + "a CLIProxyAPI hub, connect it in Settings → AI Usage.")
+            }
+            throw failure
+        }
         let fingerprint = credentials.fingerprint
         let knownKey = lock.withLock { identities[fingerprint]?.accountKey }
 
@@ -82,7 +98,9 @@ final class ClaudeUsageProvider: UsageProvider, @unchecked Sendable {
 
     // MARK: Requests
 
-    func fetchUsage(token: String, includeInventory: Bool, now: Date) async throws -> ClaudeUsageResponse {
+    func fetchUsage(token: String, includeInventory: Bool, now: Date,
+                    via relay: HTTPTransport? = nil, signInHint: String? = nil) async throws -> ClaudeUsageResponse {
+        let transport = relay ?? transport
         var components = URLComponents(url: Self.usageURL, resolvingAgainstBaseURL: false)!
         if includeInventory { components.queryItems = [URLQueryItem(name: "cedar_ember", value: "1")] }
         var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
@@ -107,7 +125,8 @@ final class ClaudeUsageProvider: UsageProvider, @unchecked Sendable {
                 + "permission). Sign in again with `claude`.")
         }
         try ProviderFailure.check(response, provider: .claude,
-                                  signInHint: "Use Claude Code once so it can renew its login, then refresh.", now: now)
+                                  signInHint: signInHint ?? "Use Claude Code once so it can renew its login, then refresh.",
+                                  now: now)
         do {
             return try JSONDecoder().decode(ClaudeUsageResponse.self, from: response.data)
         } catch {
@@ -136,6 +155,67 @@ final class ClaudeUsageProvider: UsageProvider, @unchecked Sendable {
             identities[fingerprint] = identity
         }
         return identity
+    }
+
+    // MARK: CLIProxyAPI hub
+
+    /// Every Claude login on the hub, read through its relay. The hub keeps the tokens fresh itself.
+    private func fetchFromHub(_ hub: CLIProxyHub, _ context: FetchContext) async throws -> ProviderUsageSnapshot {
+        let accounts = try await hub.accounts(provider: .claude, transport: transport)
+        guard !accounts.isEmpty else {
+            throw ProviderFailure(.notConnected, "Claude Code goes through your CLIProxyAPI hub at \(hub.host), which has "
+                + "no Claude login yet. Run `cliproxyapi -claude-login` on the hub.")
+        }
+        let readings = await withTaskGroup(of: (Int, Result<ProviderUsageSnapshot, Error>).self) { group in
+            for (offset, account) in accounts.enumerated() {
+                group.addTask {
+                    do { return (offset, .success(try await self.fetchHubAccount(account, hub: hub, context: context))) }
+                    catch { return (offset, .failure(error)) }
+                }
+            }
+            var results: [(Int, Result<ProviderUsageSnapshot, Error>)] = []
+            for await result in group { results.append(result) }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+        try Task.checkCancellation()
+        return try hub.merge(readings, provider: .claude, now: context.now)
+    }
+
+    private func fetchHubAccount(_ account: CLIProxyHub.Account, hub: CLIProxyHub,
+                                 context: FetchContext) async throws -> ProviderUsageSnapshot {
+        let relay = hub.relay(for: account, transport: transport)
+        async let usage = fetchUsage(token: CLIProxyHub.tokenPlaceholder, includeInventory: context.includeExtras,
+                                     now: context.now, via: relay,
+                                     signInHint: "Sign this login in again on the hub (`cliproxyapi -claude-login`).")
+        async let profile = hubProfile(account, relay: relay)
+        let (reading, found) = try await (usage, profile)
+        // The hub's file name stands in for the refresh token, so the fingerprint is stable per login.
+        let credentials = ClaudeOAuthCredentials(accessToken: CLIProxyHub.tokenPlaceholder,
+                                                 refreshToken: "cliproxy:\(hub.host):\(account.id)", expiresAt: nil,
+                                                 scopes: [], rateLimitTier: found?.rateLimitTier,
+                                                 subscriptionType: found?.organizationType)
+        let identity = found.flatMap { profile -> Identity? in
+            guard profile.accountID != nil || profile.organizationID != nil else { return nil }
+            return Identity(accountKey: Hashing.key("claude-account", profile.accountID ?? "", profile.organizationID ?? ""),
+                            email: profile.email ?? account.email)
+        } ?? Identity(accountKey: Hashing.key("claude-login", credentials.fingerprint), email: account.email)
+        return Self.snapshot(from: reading, credentials: credentials, identity: identity, source: .cliProxyHub,
+                             includeExtras: context.includeExtras, now: context.now)
+    }
+
+    private func hubProfile(_ account: CLIProxyHub.Account, relay: HTTPTransport) async -> ClaudeProfileResponse? {
+        if let known = lock.withLock({ hubProfiles[account.id] }) { return known }
+        var request = URLRequest(url: Self.profileURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue("Bearer \(CLIProxyHub.tokenPlaceholder)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(Self.betaHeader, forHTTPHeaderField: "anthropic-beta")
+        guard let response = try? await relay.send(request), response.statusCode == 200,
+              let profile = try? JSONDecoder().decode(ClaudeProfileResponse.self, from: response.data) else { return nil }
+        lock.withLock {
+            if hubProfiles.count > 8 { hubProfiles.removeAll() }
+            hubProfiles[account.id] = profile
+        }
+        return profile
     }
 
     // MARK: Mapping
@@ -372,10 +452,13 @@ struct ClaudeUsageResponse: Decodable, Sendable {
     }
 }
 
-struct ClaudeProfileResponse: Decodable {
+struct ClaudeProfileResponse: Decodable, Sendable {
     var accountID: String?
     var email: String?
     var organizationID: String?
+    /// "claude_max", "claude_pro"… and "default_claude_max_20x": the plan, for logins without Claude Code's own file.
+    var organizationType: String?
+    var rateLimitTier: String?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: AnyCodingKey.self)
@@ -386,5 +469,7 @@ struct ClaudeProfileResponse: Decodable {
             ?? container.lenient(String.self, "email_address", "emailAddress", "email")).nonEmpty
         organizationID = (organization?.lenient(String.self, "uuid")
             ?? container.lenient(String.self, "organizationUuid", "organization_uuid")).nonEmpty
+        organizationType = organization?.lenient(String.self, "organization_type").nonEmpty
+        rateLimitTier = organization?.lenient(String.self, "rate_limit_tier").nonEmpty
     }
 }

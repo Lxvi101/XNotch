@@ -29,6 +29,10 @@ enum CloudEvent: Sendable {
     case moved(from: String, to: String)
     /// A note's file is gone from iCloud.
     case removed(path: String)
+    /// A note's file went along with its whole folder, or with much of it at
+    /// once: that's iCloud moving things, not someone deleting notes. The
+    /// note stays, and goes back up as new.
+    case detached(path: String)
     /// Files arrived in or left a note's bucket from iCloud.
     case bucketChanged(path: String)
     /// A space's folder was renamed, or couldn't be.
@@ -164,7 +168,11 @@ final class CloudSync: @unchecked Sendable {
     func start() {
         queue.async { [self] in
             guard !stopped else { return }
-            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            // Never made here on launch: on a Mac where iCloud hasn't brought the
+            // folder down yet, an empty one of the same name clashes with it,
+            // iCloud sets the real one aside as "XNotch Notes 2", and every Mac
+            // sees its notes gone. The folder is made only when a note goes up;
+            // until it's here, the rescan timer looks for it.
             var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
                                                retain: nil, release: nil, copyDescription: nil)
             let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
@@ -431,6 +439,7 @@ final class CloudSync: @unchecked Sendable {
         guard let folders = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: keys,
                                                                           options: [.skipsHiddenFiles]) else { return }
         var present: [String: Values] = [:]
+        let listed = Set(folders.filter(Self.isDirectory).map(\.lastPathComponent))
         var stubs: Set<String> = []
         var unlisted: Set<String> = []
         var bucketFolders: [String: Double] = [:]
@@ -488,10 +497,16 @@ final class CloudSync: @unchecked Sendable {
         let knownPerFolder = Dictionary(grouping: state.known.keys.filter(Self.isNotePath), by: Self.folder).mapValues(\.count)
         let gonePerFolder = Dictionary(grouping: gone, by: Self.folder).mapValues(\.count)
         let mass = gone.count > 3 || gonePerFolder.contains { $0.value >= 2 && $0.value * 2 > knownPerFolder[$0.key, default: 0] }
-        for old in confirmed(gone, mass: mass) {
+        let vanished = gone.contains { !listed.contains(Self.folder(of: $0)) }
+        for old in confirmed(gone, mass: mass || vanished) {
             if let id = state.known[old]?.id.flatMap(UUID.init(uuidString:)) { pending[id] = nil }
             forget(old)
-            emit(.removed(path: old))
+            // Only a few files gone from a folder that's still there reads as
+            // someone deleting notes. A folder gone whole, the root emptied, or
+            // much of a folder at once is iCloud moving things about (it sets a
+            // folder aside as "XNotch Notes 2" and starts an empty one): the
+            // notes here are the copy left, so they go back up, never away.
+            emit(mass || !listed.contains(Self.folder(of: old)) ? .detached(path: old) : .removed(path: old))
         }
 
         for (path, values) in present {

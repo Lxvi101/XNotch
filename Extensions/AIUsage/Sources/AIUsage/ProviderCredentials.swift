@@ -407,6 +407,38 @@ struct CodexHome: Sendable {
         return try CodexCredentials.parse(data)
     }
 
+    /// Where Codex sends model requests instead of OpenAI: `openai_base_url`, or the selected
+    /// `model_provider`'s `base_url`. Nil when it talks to OpenAI directly.
+    func routedBaseURL() -> String? {
+        if let url = configValue("openai_base_url") { return url }
+        guard let provider = configValue("model_provider"), provider != "openai" else { return nil }
+        return configValue("base_url", section: "model_providers.\(provider)")
+    }
+
+    /// A `key = "value"` from config.toml: top-level by default, or inside `[section]`.
+    func configValue(_ key: String, section: String? = nil) -> String? {
+        guard let contents = try? String(contentsOf: configFile, encoding: .utf8) else { return nil }
+        var current: String?
+        for rawLine in contents.split(whereSeparator: \.isNewline) {
+            let line = (rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+                .trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                current = line.trimmingCharacters(in: CharacterSet(charactersIn: "[] "))
+                    .replacingOccurrences(of: "\"", with: "")
+                continue
+            }
+            guard current == section else { continue }
+            let parts = line.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == key else { continue }
+            var value = parts[1].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2, let first = value.first, first == "\"" || first == "'", value.last == first {
+                value = String(value.dropFirst().dropLast())
+            }
+            return value.nonEmpty
+        }
+        return nil
+    }
+
     /// `chatgpt_base_url` from config.toml, if set.
     func configuredBaseURL() -> String? {
         guard let contents = try? String(contentsOf: configFile, encoding: .utf8) else { return nil }

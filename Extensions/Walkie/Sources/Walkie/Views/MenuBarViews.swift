@@ -368,14 +368,6 @@ struct MenuBarPanelView: View {
                         .modifier(FadeIn())
                         .transition(.settle)
                         .id("chat-\(box)")
-                } else if case .add = ui.panel {
-                    AddPeopleView(store: store, ui: ui)
-                        .padding(16)
-                        .frame(width: FloatingConversation.width)
-                        .background { PanelGlass(shape: RoundedRectangle(cornerRadius: 26, style: .continuous), tone: .composer) }
-                        .modifier(FadeIn())
-                        .transition(.settle)
-                        .id("add")
                 } else if let box = model.hovered, let contact = store.stripContact(box) {
                     // Hangs under its face, wherever the panel sits.
                     NamePill(contact: contact, store: store)

@@ -43,6 +43,8 @@ struct WalkieSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
+            AddPeopleView(store: store)
+
             Section {
                 Toggle("Show faces in the menu bar", isOn: $store.menuBarFaces)
                 Toggle("Play voice notes as they arrive", isOn: $store.autoPlay)

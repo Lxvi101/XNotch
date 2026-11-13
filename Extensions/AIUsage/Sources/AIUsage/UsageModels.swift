@@ -152,6 +152,7 @@ enum CredentialSource: String, Codable, Sendable {
     case cursorDesktop
     case cursorManualCookie
     case codexAuthFile
+    case cliProxyHub
 
     var label: String {
         switch self {
@@ -160,6 +161,7 @@ enum CredentialSource: String, Codable, Sendable {
         case .cursorDesktop: "Cursor app session"
         case .cursorManualCookie: "Saved cursor.com cookie"
         case .codexAuthFile: "Codex auth.json"
+        case .cliProxyHub: "CLIProxyAPI hub"
         }
     }
 }

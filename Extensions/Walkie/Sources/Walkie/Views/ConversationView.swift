@@ -94,13 +94,9 @@ struct ConversationView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
             Spacer()
-            Button("Accept") { store.accept(contact) }
-                .buttonStyle(PillButtonStyle(fill: KitStyle.green, text: .black))
-            Button("Remove") {
-                ui.show(.hint)
-                store.remove(contact)
-            }
-            .buttonStyle(PillButtonStyle(fill: .white.opacity(0.12), text: .white))
+            Text("Manage this request in Settings → Walkie.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.06)))

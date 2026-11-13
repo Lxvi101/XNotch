@@ -14,6 +14,7 @@ final class MenuBarController {
     /// Hover for the panel's controls, which read it the way they do in the notch.
     let pointer = NotchPointer()
     private let store: WalkieStore
+    private let openSettings: () -> Void
     private let tick: () -> Void
     private let statusItem: NSStatusItem
     private let strip: FaceStripView
@@ -33,8 +34,9 @@ final class MenuBarController {
 
     private var barHeight: CGFloat { NSStatusBar.system.thickness }
 
-    init(store: WalkieStore, tick: @escaping () -> Void) {
+    init(store: WalkieStore, openSettings: @escaping () -> Void, tick: @escaping () -> Void) {
         self.store = store
+        self.openSettings = openSettings
         self.tick = tick
         statusItem = NSStatusBar.system.statusItem(withLength: 40)
         strip = FaceStripView()
@@ -123,6 +125,7 @@ final class MenuBarController {
     }
 
     private func open(_ contact: Contact) {
+        guard contact.accepted else { close(); openSettings(); return }
         composer.prepare(for: contact.box)
         store.markRead(contact.box)
         ui.show(.chat(contact.box))
@@ -160,9 +163,10 @@ final class MenuBarController {
         if holding {
             stopRecording()
         } else if contact.box == WalkieStore.selfBox {
-            // Your own face: add someone.
+            // Your own face opens Walkie setup in Settings.
             tick()
-            if case .add = ui.panel { close() } else { ui.show(.add) }
+            close()
+            openSettings()
         } else {
             tick()
             if openBox == contact.box { close() } else { open(contact) }
@@ -384,7 +388,6 @@ final class MenuBarController {
 
     private var showing: Showing {
         if model.dropTarget != nil || openBox != nil || ui.notice != nil { return .interactive }
-        if case .add = ui.panel { return .interactive }
         return model.hovered != nil ? .pill : .nothing
     }
 

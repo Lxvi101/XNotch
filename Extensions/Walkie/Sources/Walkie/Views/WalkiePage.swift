@@ -9,7 +9,6 @@ final class WalkieUI: ObservableObject {
         case hint
         case recording(String)
         case chat(String)
-        case add
     }
 
     @Published private(set) var panel: Panel = .hint
@@ -30,7 +29,6 @@ final class WalkieUI: ObservableObject {
         case .hint: 20
         case .recording: 106
         case .chat: 238
-        case .add: 182
         }
         return Self.facesHeight + below
     }
@@ -79,7 +77,7 @@ struct WalkiePage: View {
     var body: some View {
         VStack(spacing: 0) {
             FacesRow(store: store, ui: ui, onHoldBegan: holdBegan, onHoldEnded: holdEnded, onClick: click,
-                     onAdd: { ui.show(ui.panel == .add ? .hint : .add) })
+                     onSettings: openSettings)
                 .frame(height: WalkieUI.facesHeight)
             panel
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -111,9 +109,6 @@ struct WalkiePage: View {
                                  onHoldBegan: { holdBegan(contact) }, onHoldEnded: { holdEnded(contact, cancel: $0) })
                     .id("chat-\(box)")
             }
-        case .add:
-            AddPeopleView(store: store, ui: ui)
-                .id("add")
         }
     }
 
@@ -138,12 +133,13 @@ struct WalkiePage: View {
 
     private func click(_ contact: Contact) {
         tick()
-        if !contact.accepted { store.accept(contact) }
+        guard contact.accepted else { openSettings(); return }
         store.markRead(contact.box)
         ui.toggleChat(contact.box)
     }
 
     private func holdBegan(_ contact: Contact) {
+        guard contact.accepted else { openSettings(); return }
         Talk.begin(contact, store: store, ui: ui, tick: tick)
     }
 
@@ -160,7 +156,7 @@ private struct FacesRow: View {
     let onHoldBegan: (Contact) -> Void
     let onHoldEnded: (Contact, Bool) -> Void
     let onClick: (Contact) -> Void
-    let onAdd: () -> Void
+    let onSettings: () -> Void
 
     var body: some View {
         NotchHoverReader { hovering in
@@ -169,10 +165,10 @@ private struct FacesRow: View {
                     FaceButton(store: store, ui: ui, player: store.player, contact: contact,
                                onHoldBegan: { onHoldBegan(contact) },
                                onHoldEnded: { onHoldEnded(contact, $0) },
-                               onClick: { onClick(contact) })
+                               onClick: { onClick(contact) }, onSettings: onSettings)
                         .transition(.scale(scale: 0.3).combined(with: .opacity))
                 }
-                AddFace(isOpen: ui.panel == .add, emphasized: store.contacts.isEmpty, action: onAdd)
+                SettingsFace(emphasized: store.contacts.isEmpty, action: onSettings)
             }
             .frame(maxWidth: .infinity)
             .animation(.smooth(duration: 0.48, extraBounce: 0.12), value: hovering)
@@ -194,6 +190,7 @@ private struct FaceButton: View {
     let onHoldBegan: () -> Void
     let onHoldEnded: (Bool) -> Void
     let onClick: () -> Void
+    let onSettings: () -> Void
 
     @State private var pressedAt: Date?
     @State private var holdWork: DispatchWorkItem?
@@ -336,14 +333,8 @@ private struct FaceButton: View {
         var items: [NotchMenuItem] = [
             .action("Open Conversation", symbol: "bubble.left.and.bubble.right") { onClick() }
         ]
-        if !contact.accepted {
-            items.append(.action("Accept \(contact.firstName)", symbol: "checkmark.circle") { store.accept(contact) })
-        }
         items.append(.separator)
-        items.append(.action("Remove \(contact.firstName)", symbol: "trash", isDestructive: true) {
-            if ui.panel == .chat(contact.box) { ui.show(.hint) }
-            withAnimation(.smooth(duration: 0.46, extraBounce: 0.12)) { store.remove(contact) }
-        })
+        items.append(.action("Manage People in Settings…", symbol: "gearshape") { onSettings() })
         return items
     }
 }
@@ -363,8 +354,7 @@ private struct RecordingHalo: View {
     }
 }
 
-private struct AddFace: View {
-    let isOpen: Bool
+private struct SettingsFace: View {
     let emphasized: Bool
     let action: () -> Void
 
@@ -372,22 +362,20 @@ private struct AddFace: View {
         NotchHoverReader { hovering in
             Button(action: action) {
                 VStack(spacing: 4) {
-                    Image(systemName: "plus")
+                    Image(systemName: "gearshape")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(hovering || isOpen ? 0.95 : 0.55))
-                        .rotationEffect(.degrees(isOpen ? 45 : 0))
+                        .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.55))
                         .frame(width: 42, height: 42)
-                        .background(Circle().fill(.white.opacity(hovering || isOpen ? 0.16 : 0.07)))
+                        .background(Circle().fill(.white.opacity(hovering ? 0.16 : 0.07)))
                         .overlay(Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.2, dash: emphasized ? [3, 3] : [])).foregroundStyle(.white.opacity(0.25)))
                         .scaleEffect(hovering ? 1.08 : 1)
-                    Text(emphasized ? "Add someone" : "Add")
+                    Text(emphasized ? "Set up in Settings" : "Settings")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.white.opacity(hovering ? 0.9 : 0.45))
                 }
             }
             .buttonStyle(PressScaleStyle(scale: 0.9))
             .animation(.smooth(duration: 0.34, extraBounce: 0.12), value: hovering)
-            .animation(.smooth(duration: 0.4, extraBounce: 0.12), value: isOpen)
         }
     }
 }
@@ -414,7 +402,8 @@ private struct HintLine: View {
                 Text(reason).lineLimit(1)
             case .online:
                 if store.contacts.isEmpty {
-                    Text("Add someone, then hold their face to talk")
+                    Button("Add people in Settings", action: openSettings)
+                        .buttonStyle(.plain)
                 } else {
                     Image(systemName: "lock.fill").font(.system(size: 8, weight: .bold))
                     Text("Hold to talk · Click to open · Drop files on a face")

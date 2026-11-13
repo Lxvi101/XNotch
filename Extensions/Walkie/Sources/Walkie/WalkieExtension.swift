@@ -60,7 +60,7 @@ final class WalkieExtension: XNotchExtension, NotchPageProviding, SettingsPanePr
         menuBarSetting = store.$menuBarFaces.removeDuplicates().sink { [weak self, weak host, weak store] on in
             guard let self, let store else { return }
             if on, self.menuBar == nil {
-                let menuBar = MenuBarController(store: store, tick: { host?.feedback.tick() })
+                let menuBar = MenuBarController(store: store, openSettings: { host?.notch.openSettings() }, tick: { host?.feedback.tick() })
                 menuBar.onDropToSelf = { urls in host?.shelf.add(urls) }
                 self.menuBar = menuBar
             } else if !on {
