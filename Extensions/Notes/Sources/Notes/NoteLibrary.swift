@@ -456,10 +456,13 @@ final class NoteLibrary {
 
     func space(_ id: UUID) -> NoteSpace? { spaces.first { $0.id == id } }
 
+    /// Between a space and its sub-space, in names and in iCloud folder names.
+    static let pathSeparator = " › "
+
     /// "Work › Clients", for a sub-space.
     func path(of space: NoteSpace) -> String {
         guard let parent = space.parentID.flatMap(self.space) else { return space.name }
-        return "\(parent.name) › \(space.name)"
+        return parent.name + Self.pathSeparator + space.name
     }
 
     /// The space and its sub-spaces.
@@ -474,11 +477,13 @@ final class NoteLibrary {
     }
 
     /// Moves a space among its siblings, `offset` places along; sub-spaces travel with their parent.
-    func reorder(_ space: NoteSpace, by offset: Int) {
+    /// False when it's already at that end.
+    @discardableResult
+    func reorder(_ space: NoteSpace, by offset: Int) -> Bool {
         let siblings = spaces.filter { $0.parentID == space.parentID }
-        guard let from = siblings.firstIndex(where: { $0.id == space.id }) else { return }
+        guard let from = siblings.firstIndex(where: { $0.id == space.id }) else { return false }
         let to = min(max(from + offset, 0), siblings.count - 1)
-        guard to != from else { return }
+        guard to != from else { return false }
         var order = siblings
         order.insert(order.remove(at: from), at: to)
         withAnimation(NoteMotion.content) {
@@ -492,36 +497,88 @@ final class NoteLibrary {
         }
         saveIndex()
         tick()
+        return true
+    }
+
+    /// The top-level space just before this one, which ⌘] puts it inside.
+    func spaceBefore(_ space: NoteSpace) -> NoteSpace? {
+        let top = spaces.filter { $0.parentID == nil }
+        guard space.parentID == nil, let index = top.firstIndex(where: { $0.id == space.id }), index > 0 else { return nil }
+        return top[index - 1]
+    }
+
+    /// ⌘]: inside the space to its left, as its last sub-space. False when it can't go:
+    /// it's a sub-space already, has sub-spaces of its own, or is first.
+    @discardableResult
+    func indent(_ space: NoteSpace) -> Bool {
+        guard children(of: space.id).isEmpty, let parent = spaceBefore(space) else { return false }
+        nest(space, in: parent)
+        tick()
+        return true
+    }
+
+    /// ⌘[: out of its parent, to sit just after it.
+    @discardableResult
+    func outdent(_ space: NoteSpace) -> Bool {
+        guard space.parentID != nil else { return false }
+        nest(space, in: nil)
+        tick()
+        return true
     }
 
     /// Puts a space inside another, or back at the top level with nil.
     func nest(_ space: NoteSpace, in parent: NoteSpace?) {
         guard let index = spaces.firstIndex(where: { $0.id == space.id }), parent?.id != space.id,
               parent?.parentID == nil, children(of: space.id).isEmpty || parent == nil else { return }
+        let old = folders(of: [space.id])
         withAnimation(NoteMotion.content) {
             var moved = spaces.remove(at: index)
+            let oldParent = moved.parentID
             moved.parentID = parent?.id
-            if let parent, let last = spaces.lastIndex(where: { $0.id == parent.id || $0.parentID == parent.id }) {
+            // Into a space: after its sub-spaces. Out of one: just after it and its sub-spaces.
+            let anchor = parent?.id ?? oldParent
+            if let anchor, let last = spaces.lastIndex(where: { $0.id == anchor || $0.parentID == anchor }) {
                 spaces.insert(moved, at: last + 1)
             } else {
                 spaces.append(moved)
             }
         }
+        moveFolders(from: old)
         saveIndex()
     }
 
-    func rename(_ space: NoteSpace, to name: String) {
-        guard let index = spaces.firstIndex(of: space), !name.isEmpty else { return }
-        let old = spaces[index].name
-        spaces[index].name = name
-        // The space's folder in iCloud follows its name, and its notes' paths with it.
-        let from = CloudSync.fileName(old) + "/", to = CloudSync.fileName(name) + "/"
-        if from != to {
-            cloud?.renameFolder(from: old, to: name)
-            for note in notes where note.spaceID == space.id {
-                if let path = note.cloudPath, path.hasPrefix(from) { note.cloudPath = to + path.dropFirst(from.count) }
+    /// A space's folder in iCloud: "Work", or "Work › Clients" for a sub-space,
+    /// so two sub-spaces of the same name in different spaces never share one.
+    func folder(of space: NoteSpace) -> String { CloudSync.fileName(path(of: space)) }
+
+    /// The folders of these spaces and their sub-spaces, before a change moves them.
+    private func folders(of ids: [UUID]) -> [UUID: String] {
+        var result: [UUID: String] = [:]
+        for id in ids {
+            for member in family(of: id) { if let space = space(member) { result[member] = folder(of: space) } }
+        }
+        return result
+    }
+
+    /// Spaces' folders in iCloud follow a new name or place, and their notes' paths with them.
+    private func moveFolders(from old: [UUID: String]) {
+        for (id, from) in old {
+            guard let space = space(id) else { continue }
+            let to = folder(of: space)
+            guard from != to else { continue }
+            cloud?.renameFolder(from: from, to: to)
+            for note in notes where note.spaceID == id {
+                if let path = note.cloudPath, path.hasPrefix(from + "/") { note.cloudPath = to + "/" + path.dropFirst(from.count + 1) }
             }
         }
+    }
+
+    func rename(_ space: NoteSpace, to name: String) {
+        guard let index = spaces.firstIndex(where: { $0.id == space.id }), !name.isEmpty else { return }
+        // Its sub-spaces' folders carry its name too.
+        let old = folders(of: [space.id])
+        spaces[index].name = name
+        moveFolders(from: old)
         saveIndex()
     }
 
@@ -538,12 +595,14 @@ final class NoteLibrary {
             }
             trash(note)
         }
-        cloud?.removeFolder(space.name)
+        cloud?.removeFolder(folder(of: space))
+        let children = folders(of: children(of: space.id).map(\.id))
         withAnimation(NoteMotion.content) {
             spaces.removeAll { $0.id == space.id }
             // Its sub-spaces stay, at the top level.
             for index in spaces.indices where spaces[index].parentID == space.id { spaces[index].parentID = nil }
         }
+        moveFolders(from: children)
         saveIndex()
     }
 

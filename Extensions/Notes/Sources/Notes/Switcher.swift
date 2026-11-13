@@ -131,6 +131,7 @@ final class SwitcherModel {
             cycleScope(by: event.modifierFlags.contains(.shift) ? -1 : 1)
             return true
         }
+        if !isCommandMode, handleSpaceKey(event) { return true }
         // ⌘0 for every space, ⌘1 to ⌘9 for the chips after it.
         if command, !isCommandMode, let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (0...9).contains(digit) {
             let all = scopes
@@ -155,6 +156,54 @@ final class SwitcherModel {
         default:
             return false
         }
+        return true
+    }
+
+    /// The space keys, as VS Code moves lines and indents them:
+    /// ← → step through the chips while nothing's typed (Tab and ⌘0–9 always),
+    /// ⌥← ⌥→ move the chosen space along, ⌘] puts it inside the space to its
+    /// left and ⌘[ takes it back out, F2 (or ⌘R) renames it, ⌥⌘N makes a new one.
+    private func handleSpaceKey(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let key = event.keyCode
+        // On a German keyboard "[" and "]" are ⌥5 and ⌥6: the character counts, not only the key.
+        let typed = event.characters ?? ""
+        let indent = modifiers.contains(.command) && modifiers.isSubset(of: [.command, .option])
+            && ((modifiers == [.command] && key == 30) || typed == "]")
+        let outdent = modifiers.contains(.command) && modifiers.isSubset(of: [.command, .option])
+            && ((modifiers == [.command] && key == 33) || typed == "[")
+        // With something typed, ⌥← ⌥→ jump by words in the search, as anywhere.
+        let move = modifiers == [.option] && query.isEmpty && (key == 123 || key == 124)
+        let rename = key == 120 && modifiers.isEmpty || key == 15 && modifiers == [.command] // F2, ⌘R
+        if modifiers.isEmpty, query.isEmpty, key == 123 || key == 124, library.spaces.count > 1 {
+            cycleScope(by: key == 123 ? -1 : 1)
+            return true
+        }
+        if modifiers == [.command, .option], event.charactersIgnoringModifiers?.lowercased() == "n" {
+            DispatchQueue.main.async { [self] in
+                MainActor.assumeIsolated {
+                    guard let name = ask("New Space", message: "A space groups notes, like a folder.", value: "",
+                                         placeholder: "Work", button: "Create") else { return }
+                    setScope(.space(library.addSpace(named: name).id))
+                }
+            }
+            return true
+        }
+        guard indent || outdent || move || rename else { return false }
+        // Every space at once: nothing to move or rename.
+        guard case .space(let id) = scope, let space = library.space(id) else {
+            NSSound.beep()
+            return true
+        }
+        if rename {
+            // After this key is done with: the prompt runs its own loop.
+            DispatchQueue.main.async { [library] in MainActor.assumeIsolated { askToRename(space, library: library) } }
+            return true
+        }
+        let moved = indent ? library.indent(space)
+            : outdent ? library.outdent(space)
+            : library.reorder(space, by: key == 123 ? -1 : 1)
+        if !moved { NSSound.beep() }
         return true
     }
 
@@ -286,6 +335,7 @@ private struct SwitcherCard: View {
                     KeyHint(title: "Actions", keys: [">"])
                     if model.library.spaces.count > 1 {
                         KeyHint(title: "Spaces", keys: ["⇥"])
+                            .help("← → or Tab: other spaces. ⌥← ⌥→: move this space. ⌘] ⌘[: put it inside the one to its left, or take it out. F2: rename. ⌥⌘N: new space.")
                     }
                 }
                 Spacer(minLength: 0)
@@ -546,6 +596,10 @@ private struct SpaceStrip: View {
             .onChange(of: model.scope) { _, scope in
                 withAnimation(NoteMotion.content) { reader.scrollTo(scope, anchor: .center) }
             }
+            // A space moved by the keys stays in view.
+            .onChange(of: library.orderedSpaces.map(\.id)) { _, _ in
+                withAnimation(NoteMotion.content) { reader.scrollTo(model.scope, anchor: .center) }
+            }
             .onAppear { reader.scrollTo(model.scope, anchor: .center) }
         }
     }
@@ -617,17 +671,19 @@ private struct SpaceMenu: View {
         let siblings = library.spaces.filter { $0.parentID == space.parentID }
         let index = siblings.firstIndex { $0.id == space.id } ?? 0
         Button("Move Left") { library.reorder(space, by: -1) }
+            .keyboardShortcut(.leftArrow, modifiers: .option)
             .disabled(index == 0)
         Button("Move Right") { library.reorder(space, by: 1) }
+            .keyboardShortcut(.rightArrow, modifiers: .option)
             .disabled(index == siblings.count - 1)
         Divider()
         if space.parentID == nil {
-            Button("New Space Inside…") {
-                guard let name = ask("New Space in “\(space.name)”", message: "It sits inside “\(space.name)”, and shows with it.",
-                                     value: "", placeholder: "Clients", button: "Create") else { return }
-                library.addSpace(named: name, in: space)
-            }
+            Button("New Space Inside…") { askForSpace(in: space, library: library) }
             if library.children(of: space.id).isEmpty {
+                if let before = library.spaceBefore(space) {
+                    Button("Put Inside “\(before.name)”") { library.indent(space) }
+                        .keyboardShortcut("]", modifiers: .command)
+                }
                 let others = library.spaces.filter { $0.parentID == nil && $0.id != space.id }
                 if !others.isEmpty {
                     Menu("Put Inside") {
@@ -638,13 +694,12 @@ private struct SpaceMenu: View {
                 }
             }
         } else {
-            Button("Move Out to Top Level") { library.nest(space, in: nil) }
+            Button("Move Out to Top Level") { library.outdent(space) }
+                .keyboardShortcut("[", modifiers: .command)
         }
         Divider()
-        Button("Rename…") {
-            guard let name = ask("Rename Space", message: "", value: space.name, placeholder: space.name, button: "Rename") else { return }
-            library.rename(space, to: name)
-        }
+        Button("Rename…") { askToRename(space, library: library) }
+            .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF2FunctionKey)!)), modifiers: [])
         if library.spaces.count > 1 {
             Button("Delete…", role: .destructive) { confirmDeleting(space, in: library) }
         }

@@ -172,6 +172,39 @@ final class NoteLibraryTests: XCTestCase {
         XCTAssertEqual(note.frame, record.frame)
     }
 
+    /// A sub-space is its own folder in iCloud, "Work › Clients", so two of
+    /// the same name never meet; the folder follows renames and moves, and a
+    /// folder like that coming in from iCloud makes the sub-space.
+    func testSubSpaceFoldersFollowTheirPlace() {
+        let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        library.load()
+        let work = library.addSpace(named: "Work")
+        let clients = library.addSpace(named: "Clients", in: work)
+        XCTAssertEqual(library.folder(of: clients), "Work › Clients")
+        let note = Note(record: NoteRecord(id: UUID(), spaceID: clients.id, created: Date(), modified: Date(), isPinned: false,
+                                           isOpen: false, frame: nil, cloudPath: "Work › Clients/Acme.md", syncedHash: nil), text: "Acme")
+        library.notes.append(note)
+
+        library.rename(work, to: "Job")
+        XCTAssertEqual(note.cloudPath, "Job › Clients/Acme.md")
+        library.nest(clients, in: nil)
+        XCTAssertEqual(note.cloudPath, "Clients/Acme.md")
+        let job = library.space(work.id)!
+        library.nest(library.space(clients.id)!, in: job)
+        XCTAssertEqual(note.cloudPath, "Job › Clients/Acme.md")
+        library.delete(job)
+        XCTAssertEqual(note.cloudPath, "Clients/Acme.md")
+        XCTAssertNil(library.space(clients.id)?.parentID)
+
+        let design = library.space(forFolder: "Studio › Design")
+        let studio = library.spaces.first { $0.name == "Studio" }
+        XCTAssertNotNil(studio)
+        XCTAssertEqual(design?.name, "Design")
+        XCTAssertEqual(design?.parentID, studio?.id)
+        XCTAssertEqual(library.space(forFolder: "Studio › Design")?.id, design?.id)
+        XCTAssertEqual(library.space(forFolder: "Studio")?.id, studio?.id)
+    }
+
     func testSubSpacesFollowTheirParentAndSurviveAReload() {
         let preferences = NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         let library = NoteLibrary(root: root, preferences: preferences)
@@ -358,5 +391,51 @@ final class CommandBarTests: XCTestCase {
         XCTAssertEqual(model.commands.map(\.id), ["clear"])
         model.query = ">"
         XCTAssertEqual(model.commands.count, 4)
+    }
+
+    /// Spaces by the keys alone, as VS Code moves and indents lines: arrows step
+    /// through the chips while nothing's typed, ⌥ arrows move the chosen space,
+    /// ⌘] puts it inside the one to its left and ⌘[ takes it out.
+    func testSpacesMoveByTheKeys() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SpaceKeys-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        library.load()
+        let work = library.addSpace(named: "Work")
+        library.addSpace(named: "Clients", in: work)
+        let ideas = library.addSpace(named: "Ideas")
+        let model = SwitcherModel(library: library)
+        model.commandSource = { [] }
+        let note = Note(record: NoteRecord(id: UUID(), spaceID: ideas.id, created: Date(), modified: Date(),
+                                           isPinned: false, isOpen: true, frame: nil), text: "x")
+        model.prepare(current: note)
+        XCTAssertEqual(model.scope, .space(ideas.id))
+        func press(_ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags = [], _ characters: String = "") -> Bool {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
+                                         context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                         isARepeat: false, keyCode: keyCode)!
+            return model.handle(event, open: { _, _ in }, close: {})
+        }
+        let names = { library.orderedSpaces.map(\.name) }
+        XCTAssertEqual(names(), ["Personal", "Work", "Clients", "Ideas"])
+
+        XCTAssertTrue(press(30, .command, "]")) // ⌘]: inside Work
+        XCTAssertEqual(library.space(ideas.id)?.parentID, work.id)
+        XCTAssertEqual(names(), ["Personal", "Work", "Clients", "Ideas"])
+        XCTAssertTrue(press(123, .option)) // ⌥←: before Clients
+        XCTAssertEqual(names(), ["Personal", "Work", "Ideas", "Clients"])
+        XCTAssertTrue(press(23, [.command, .option], "[")) // ⌘[ on a German keyboard (⌥⌘5): out, just after Work
+        XCTAssertNil(library.space(ideas.id)?.parentID)
+        XCTAssertEqual(names(), ["Personal", "Work", "Clients", "Ideas"])
+        XCTAssertTrue(press(123, .option)) // ⌥←: before Work, Clients with it
+        XCTAssertEqual(names(), ["Personal", "Ideas", "Work", "Clients"])
+
+        XCTAssertTrue(press(123)) // ←: the chip before
+        XCTAssertEqual(model.scope, .space(library.spaces[0].id))
+        model.query = "acme"
+        XCTAssertFalse(press(123)) // typing: the arrow moves the caret
+        XCTAssertFalse(press(123, .option)) // and ⌥← jumps a word
+        XCTAssertEqual(model.scope, .space(library.spaces[0].id))
     }
 }

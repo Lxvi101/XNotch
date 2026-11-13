@@ -28,31 +28,46 @@ private struct SpaceBar: View {
     var body: some View {
         HStack(spacing: 2) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(library.spaces) { space in
-                        SpaceChip(space: space, count: library.notes.filter { $0.spaceID == space.id }.count,
-                                  isActive: space.id == library.activeSpaceID, highlight: highlight) {
-                            library.switchSpace(to: space.id)
-                        }
-                        .notchContextMenu {
-                            var items: [NotchMenuItem] = [.action("Rename Space…", symbol: "pencil") { renameSpace(space) }]
-                            if library.spaces.count > 1 {
-                                items += [.separator, .action("Delete Space…", symbol: "trash", isDestructive: true) {
-                                    deleteSpace(space)
-                                }]
+                HStack(spacing: 6) {
+                    ForEach(library.spaces.filter { $0.parentID == nil }) { space in
+                        let children = library.children(of: space.id)
+                        // A space and its sub-spaces read as one group, as in the switcher.
+                        HStack(spacing: 0) {
+                            chip(for: space)
+                            ForEach(children) { child in
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.25))
+                                    .frame(width: 12)
+                                chip(for: child)
                             }
-                            return items
+                        }
+                        .background {
+                            if !children.isEmpty {
+                                Capsule().fill(.white.opacity(0.045))
+                                    .overlay(Capsule().strokeBorder(.white.opacity(0.06)))
+                                    .padding(-1)
+                            }
                         }
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                     AddSpaceChip { addSpace() }
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 3)
             }
             Spacer(minLength: 4)
             VisibilityButton(isOn: library.hasVisibleNotes) { library.toggleVisibility() }
         }
         .frame(height: 24)
+    }
+
+    private func chip(for space: NoteSpace) -> some View {
+        SpaceChip(space: space, count: library.notes.filter { $0.spaceID == space.id }.count,
+                  isActive: space.id == library.activeSpaceID, highlight: highlight) {
+            library.switchSpace(to: space.id)
+        }
+        .notchContextMenu { spaceMenuItems(for: space, in: library) }
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
     }
 
     private func addSpace() {
@@ -62,24 +77,63 @@ private struct SpaceBar: View {
         library.switchSpace(to: space.id)
     }
 
-    private func renameSpace(_ space: NoteSpace) {
-        guard let name = ask("Rename Space", message: "", value: space.name, placeholder: space.name, button: "Rename") else { return }
-        library.rename(space, to: name)
-    }
+}
 
-    private func deleteSpace(_ space: NoteSpace) {
-        confirmDeleting(space, in: library)
+/// A space's right-click menu in the notch: its place in the order, its parent, its name.
+@MainActor
+func spaceMenuItems(for space: NoteSpace, in library: NoteLibrary) -> [NotchMenuItem] {
+    let siblings = library.spaces.filter { $0.parentID == space.parentID }
+    let index = siblings.firstIndex { $0.id == space.id } ?? 0
+    var items: [NotchMenuItem] = []
+    if index > 0 { items.append(.action("Move Left", symbol: "arrow.left") { library.reorder(space, by: -1) }) }
+    if index < siblings.count - 1 { items.append(.action("Move Right", symbol: "arrow.right") { library.reorder(space, by: 1) }) }
+    if !items.isEmpty { items.append(.separator) }
+    if space.parentID == nil {
+        items.append(.action("New Space Inside…", symbol: "folder.badge.plus") { askForSpace(in: space, library: library) })
+        if library.children(of: space.id).isEmpty {
+            items += library.spaces.filter { $0.parentID == nil && $0.id != space.id }.map { parent in
+                .action("Put Inside “\(parent.name)”", symbol: "arrow.turn.down.right") { library.nest(space, in: parent) }
+            }
+        }
+    } else {
+        items.append(.action("Move Out to Top Level", symbol: "arrow.turn.up.left") { library.outdent(space) })
     }
+    items += [.separator, .action("Rename Space…", symbol: "pencil") { askToRename(space, library: library) }]
+    if library.spaces.count > 1 {
+        items += [.separator, .action("Delete Space…", symbol: "trash", isDestructive: true) { confirmDeleting(space, in: library) }]
+    }
+    return items
+}
+
+/// Asks for a sub-space's name, then makes it inside `parent`.
+@MainActor
+@discardableResult
+func askForSpace(in parent: NoteSpace, library: NoteLibrary) -> NoteSpace? {
+    guard let name = ask("New Space in “\(parent.name)”", message: "It sits inside “\(parent.name)”, and shows with it.",
+                         value: "", placeholder: "Clients", button: "Create") else { return nil }
+    return library.addSpace(named: name, in: parent)
+}
+
+@MainActor
+func askToRename(_ space: NoteSpace, library: NoteLibrary) {
+    guard let name = ask("Rename Space", message: "", value: space.name, placeholder: space.name, button: "Rename") else { return }
+    library.rename(space, to: name)
 }
 
 /// Asks before a space and its notes go to the Trash.
 @MainActor
 func confirmDeleting(_ space: NoteSpace, in library: NoteLibrary) {
     let count = library.notes.filter { $0.spaceID == space.id }.count
+    let children = library.children(of: space.id)
     let alert = NSAlert()
-    alert.messageText = "Delete “\(space.name)”?"
-    alert.informativeText = count == 0 ? "The space is empty."
+    alert.messageText = "Delete “\(library.path(of: space))”?"
+    var info = count == 0 ? "The space is empty."
         : "Its \(count == 1 ? "note goes" : "\(count) notes go") to the Trash, with \(count == 1 ? "its bucket" : "their buckets")."
+    if !children.isEmpty {
+        let names = ListFormatter.localizedString(byJoining: children.map { "“\($0.name)”" })
+        info += " \(names) \(children.count == 1 ? "stays, as a space" : "stay, as spaces") of \(children.count == 1 ? "its" : "their") own."
+    }
+    alert.informativeText = info
     alert.addButton(withTitle: "Delete")
     alert.addButton(withTitle: "Cancel")
     alert.buttons.first?.hasDestructiveAction = true
@@ -230,11 +284,11 @@ private struct NoteStrip: View {
         if library.isOpen(note) {
             items.append(.action("Close Note", symbol: "xmark") { library.close(note) })
         }
-        let others = library.spaces.filter { $0.id != note.spaceID }
+        let others = library.orderedSpaces.filter { $0.id != note.spaceID }
         if !others.isEmpty {
             items.append(.separator)
             items += others.map { space in
-                .action("Move to “\(space.name)”", symbol: "arrow.right.square") { library.move(note, to: space) }
+                .action("Move to “\(library.path(of: space))”", symbol: "arrow.right.square") { library.move(note, to: space) }
             }
         }
         items += [.separator, .action("Delete Note", symbol: "trash", isDestructive: true) { library.delete(note) }]
@@ -352,7 +406,7 @@ struct NotesSettingsPane: View {
                 }
             }
             Section {
-                ForEach(library.spaces) { space in
+                ForEach(library.orderedSpaces) { space in
                     SpaceRow(space: space, count: library.notes.filter { $0.spaceID == space.id }.count,
                              isActive: space.id == library.activeSpaceID, canDelete: library.spaces.count > 1,
                              onRename: { library.rename(space, to: $0) }, onDelete: { confirmDeleting(space, in: library) })
@@ -363,13 +417,13 @@ struct NotesSettingsPane: View {
             } header: {
                 Text("Spaces")
             } footer: {
-                Text("Spaces group notes, like folders. Notes from any space can float on screen together; the notch shows one space at a time, and new notes go into it.")
+                Text("Spaces group notes, like folders, and a space can hold spaces of its own: right-click one in the notch or in ⌘K to nest or reorder it. Notes from any space can float on screen together; the notch shows one space at a time, and new notes go into it.")
                     .foregroundStyle(.secondary)
             }
             Section {
                 Toggle(isOn: $preferences.syncICloud) {
                     Text("Sync notes with iCloud Drive")
-                    Text("Every note as a Markdown file in iCloud Drive › XNotch Notes, a folder per space, its bucket beside it. Edits made on another Mac or in any editor come back.")
+                    Text("Every note as a Markdown file in iCloud Drive › XNotch Notes, a folder per space (“Work › Clients” for a space inside another), its bucket beside it. Edits made on another Mac or in any editor come back.")
                 }
                 .disabled(library.cloudFolder == nil)
                 LabeledContent {
@@ -444,6 +498,7 @@ struct NotesSettingsPane: View {
                 ShortcutRow(keys: "⌘K", action: "Find a note; type > for actions")
                 ShortcutRow(keys: "⇧⌘P", action: "Actions for this note")
                 ShortcutRow(keys: "⌘[  ⌘]", action: "Previous or next note")
+                ShortcutRow(keys: "⌃⌘[  ⌃⌘]", action: "Previous or next space's notes")
                 ShortcutRow(keys: "⌘N", action: "New note in this window")
                 ShortcutRow(keys: "⇧⌘N", action: "New floating note beside this one")
                 ShortcutRow(keys: "⇧⌘B", action: "Open the bucket")
@@ -452,7 +507,12 @@ struct NotesSettingsPane: View {
                 ShortcutRow(keys: "⌘B  ⌘I  ⌘E", action: "Bold, italic, code")
                 ShortcutRow(keys: "⌘L", action: "Checklist item")
                 ShortcutRow(keys: "⌘W", action: "Close note")
-                ShortcutRow(keys: "⇧⌘⌫", action: "Move note to the Trash")
+                ShortcutRow(keys: "⇧⌘⌫", action: "Move note to the Trash; the window stays")
+                ShortcutRow(keys: "⌘K, then ← →  ⇥  ⌘0–9", action: "Choose a space")
+                ShortcutRow(keys: "⌘K, then ⌥← ⌥→", action: "Move the chosen space left or right")
+                ShortcutRow(keys: "⌘K, then ⌘]  ⌘[", action: "Put it inside the space to its left, or back out")
+                ShortcutRow(keys: "⌘K, then F2  ⌥⌘N", action: "Rename it, or make a new space")
+                ShortcutRow(keys: "⌥↑  ⌥↓", action: "Move lines up or down")
             }
         }
         .formStyle(.grouped)
@@ -483,6 +543,12 @@ private struct SpaceRow: View {
 
     var body: some View {
         HStack {
+            if space.parentID != nil {
+                // Inside the space above it.
+                Image(systemName: "arrow.turn.down.right")
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 6)
+            }
             TextField("Name", text: $name)
                 .labelsHidden()
                 .textFieldStyle(.plain)

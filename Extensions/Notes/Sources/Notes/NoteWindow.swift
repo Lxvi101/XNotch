@@ -410,11 +410,29 @@ final class NoteController: NSObject {
             let parent = current.parentID.flatMap(library.space) ?? current
             list.append(NoteCommand(id: "space-sub", title: "New Space in “\(parent.name)”…", symbol: "folder.badge.plus",
                                     section: "Spaces") { [weak self] in
-                guard let self, let name = ask("New Space in “\(parent.name)”", message: "It sits inside “\(parent.name)”, and shows with it.",
-                                               value: "", placeholder: "Clients", button: "Create") else { return }
-                let space = self.library.addSpace(named: name, in: parent)
+                guard let self, let space = askForSpace(in: parent, library: self.library) else { return }
                 self.library.move(self.note, to: space)
             })
+        }
+        if let current = library.space(note.spaceID) {
+            // The note's own space, for typing "> space" rather than reaching for the chips.
+            list.append(NoteCommand(id: "space-rename", title: "Rename Space “\(current.name)”…", symbol: "pencil",
+                                    section: "Spaces") { [weak self] in
+                guard let self else { return }
+                askToRename(current, library: self.library)
+            })
+            if let before = library.spaceBefore(current), library.children(of: current.id).isEmpty {
+                list.append(NoteCommand(id: "space-indent", title: "Put “\(current.name)” Inside “\(before.name)”",
+                                        symbol: "arrow.turn.down.right", section: "Spaces") { [weak self] in
+                    self?.library.indent(current)
+                })
+            }
+            if current.parentID != nil {
+                list.append(NoteCommand(id: "space-outdent", title: "Move “\(current.name)” Out to Top Level",
+                                        symbol: "arrow.turn.up.left", section: "Spaces") { [weak self] in
+                    self?.library.outdent(current)
+                })
+            }
         }
         list += [
             NoteCommand(id: "space-next", title: "Next Space", symbol: "arrow.right", shortcut: "⌃⌘]", section: "Spaces") { [weak self] in

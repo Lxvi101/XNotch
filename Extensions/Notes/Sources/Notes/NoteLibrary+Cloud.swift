@@ -53,7 +53,7 @@ extension NoteLibrary {
         guard let cloud, note.hasText || !note.attachments.isEmpty,
               let space = spaces.first(where: { $0.id == note.spaceID }) else { return }
         let bucket = bucketFolder(for: note)
-        cloud.push(CloudNote(id: note.id, folder: space.name, title: note.displayTitle, text: note.text,
+        cloud.push(CloudNote(id: note.id, folder: folder(of: space), title: note.displayTitle, text: note.text,
                              path: note.cloudPath, bucket: bucket, copying: Attachments.isCopying(into: bucket),
                              editing: controllers[note.id] != nil))
     }
@@ -77,7 +77,7 @@ extension NoteLibrary {
             guard let note = notes.first(where: { $0.cloudPath == from }) else { return }
             note.cloudPath = to
             let folder = CloudSync.folder(of: to)
-            if CloudSync.fileName(spaces.first { $0.id == note.spaceID }?.name ?? "") != folder {
+            if spaces.first(where: { $0.id == note.spaceID }).map(self.folder(of:)) != folder {
                 if let space = space(forFolder: folder) {
                     withAnimation(NoteMotion.content) { note.spaceID = space.id }
                 } else {
@@ -89,7 +89,7 @@ extension NoteLibrary {
         case let .folderRenamed(from, to, ok):
             // The folder couldn't move: its notes keep their files where they
             // are, and go across one at a time.
-            guard !ok, let space = spaces.first(where: { CloudSync.fileName($0.name) == to }) else { return }
+            guard !ok, let space = spaces.first(where: { folder(of: $0) == to }) else { return }
             for note in notes where note.spaceID == space.id {
                 if let path = note.cloudPath, path.hasPrefix(to + "/") { note.cloudPath = from + path.dropFirst(to.count) }
                 push(note)
@@ -183,10 +183,14 @@ extension NoteLibrary {
 
     /// The space for a folder in iCloud, made if it's new; nil for one
     /// deleted here a moment ago, which a file on its way out doesn't bring back.
-    private func space(forFolder folder: String) -> NoteSpace? {
-        if let space = spaces.first(where: { CloudSync.fileName($0.name) == folder }) { return space }
+    /// "Work › Clients" is the sub-space Clients inside Work, made with it if need be.
+    func space(forFolder folder: String) -> NoteSpace? {
+        if let space = spaces.first(where: { self.folder(of: $0) == folder }) { return space }
         if cloud?.removedRecently(folder: folder) == true { return nil }
-        return addSpace(named: folder)
+        let parts = folder.components(separatedBy: NoteLibrary.pathSeparator)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return addSpace(named: folder) }
+        let parent = spaces.first { $0.parentID == nil && self.folder(of: $0) == parts[0] } ?? addSpace(named: parts[0])
+        return addSpace(named: parts[1], in: parent)
     }
 
     private func saveIndexSoon() {
