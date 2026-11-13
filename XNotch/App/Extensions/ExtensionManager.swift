@@ -156,9 +156,14 @@ final class ExtensionManager: ObservableObject {
 
     /// Active extensions' shelf controls, in load order.
     var shelfAccessoryProviders: [ShelfAccessoryProviding] {
+        shelfMenuProviders.map(\.provider)
+    }
+
+    /// The same, with who provides them, so an extension's own entries can be left out.
+    var shelfMenuProviders: [(id: ExtensionID, provider: ShelfAccessoryProviding)] {
         entries.compactMap { entry in
-            guard entry.isActive else { return nil }
-            return entry.instance as? ShelfAccessoryProviding
+            guard entry.isActive, let provider = entry.instance as? ShelfAccessoryProviding else { return nil }
+            return (entry.id, provider)
         }
     }
 
@@ -295,7 +300,10 @@ private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, 
 
     func sharedShelfActions(for request: ShelfFileRequest) -> [NotchMenuItem] {
         guard let manager, manager.isActive(extensionID) else { return [] }
-        return manager.shelfFileActors.filter { $0.id != extensionID }.flatMap { $0.actor.shelfActions(for: request) }
+        // The same entries as on the notch shelf: plain menu entries, such as
+        // Cloud's links, then the actions whose new files come back.
+        return manager.shelfMenuProviders.filter { $0.id != extensionID }.flatMap { $0.provider.shelfMenuItems(for: request.files) }
+            + manager.shelfFileActors.filter { $0.id != extensionID }.flatMap { $0.actor.shelfActions(for: request) }
     }
 
     var isOpen: Bool { manager?.driver?.isOpen ?? false }

@@ -172,6 +172,33 @@ final class NoteLibraryTests: XCTestCase {
         XCTAssertEqual(note.frame, record.frame)
     }
 
+    func testSubSpacesFollowTheirParentAndSurviveAReload() {
+        let preferences = NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let library = NoteLibrary(root: root, preferences: preferences)
+        library.load()
+        let work = library.addSpace(named: "Work")
+        let ideas = library.addSpace(named: "Ideas")
+        let clients = library.addSpace(named: "Clients", in: work)
+        // A space inside a sub-space goes beside it: one level deep.
+        let design = library.addSpace(named: "Design", in: clients)
+        XCTAssertEqual(design.parentID, work.id)
+        XCTAssertEqual(library.orderedSpaces.map(\.name), ["Personal", "Work", "Clients", "Design", "Ideas"])
+        XCTAssertEqual(library.path(of: clients), "Work › Clients")
+
+        library.reorder(work, by: -1)
+        XCTAssertEqual(library.orderedSpaces.map(\.name), ["Work", "Clients", "Design", "Personal", "Ideas"])
+        library.reorder(design, by: -1)
+        XCTAssertEqual(library.orderedSpaces.map(\.name), ["Work", "Design", "Clients", "Personal", "Ideas"])
+
+        library.nest(ideas, in: work)
+        library.delete(work)
+        let reloaded = NoteLibrary(root: root, preferences: preferences)
+        reloaded.load()
+        // Deleting a space keeps its sub-spaces, at the top level.
+        XCTAssertEqual(reloaded.orderedSpaces.map(\.name), ["Design", "Clients", "Ideas", "Personal"])
+        XCTAssertTrue(reloaded.spaces.allSatisfy { $0.parentID == nil })
+    }
+
     func testUpdateOnlyTouchesWhatChanged() {
         let note = Note(record: NoteRecord(id: UUID(), spaceID: UUID(), created: Date(), modified: .distantPast,
                                            isPinned: false, isOpen: true, frame: nil), text: "# A")

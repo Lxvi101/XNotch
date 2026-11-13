@@ -44,7 +44,14 @@ private struct Presence: ViewModifier {
         content
             // Carried over another shelf, it draws in, ready to go inside.
             .scaleEffect(shelf.isOverShelf && !reduced ? 0.9 : 1)
-            .opacity(shelf.isOverShelf ? 0.92 : 1)
+            // Held up to the notch, it leans in and narrows toward it.
+            .scaleEffect(x: shelf.isOverTray && !reduced ? 0.84 : 1, y: shelf.isOverTray && !reduced ? 0.8 : 1, anchor: .top)
+            .opacity(shelf.isOverShelf || shelf.isOverTray ? 0.92 : 1)
+            // Let go there, it's drawn up into the notch: narrower than it is
+            // short, like something poured through a gap.
+            .scaleEffect(x: shelf.isAbsorbing ? 0.3 : 1, y: shelf.isAbsorbing ? 0.04 : 1, anchor: .top)
+            .blur(radius: shelf.isAbsorbing && !reduced ? 6 : 0)
+            .opacity(shelf.isAbsorbing ? 0 : 1)
             .scaleEffect(scale, anchor: shelf.presenceAnchor)
             .opacity(presented ? 1 : 0)
             .keyframeAnimator(initialValue: CGFloat(1), trigger: shelf.landings) { content, squash in

@@ -72,4 +72,37 @@ final class NoteWindowTests: XCTestCase {
         XCTAssertTrue(controller.editor.textView.string.hasPrefix("[Plan.txt](Plan.txt) Hello"))
         XCTAssertTrue(controller.panel.firstResponder === controller.editor.textView)
     }
+
+    /// ⇧⌘⌫ takes the note away, not its window: the window shows the next
+    /// note in the space, or a fresh one once the space has nothing else.
+    func testDeletingKeepsTheWindow() throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("probe-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        library.load()
+        let frame = CGRect(x: -3000, y: 100, width: 330, height: 360)
+        // Empty notes are discarded rather than trashed, so nothing lands in the real Trash.
+        func make(_ age: TimeInterval) -> Note {
+            let note = Note(record: NoteRecord(id: UUID(), spaceID: library.activeSpaceID, created: Date(), modified: Date().addingTimeInterval(-age),
+                                               isPinned: false, isOpen: false, frame: frame), text: "")
+            library.notes.append(note)
+            return note
+        }
+        let first = make(0), second = make(60)
+        library.open(first, from: nil, focus: false)
+        let controller = try XCTUnwrap(library.controllers[first.id])
+        defer { controller.dismiss() }
+
+        let next = try XCTUnwrap(library.deleteKeepingWindow(first))
+        XCTAssertEqual(next.id, second.id)
+        XCTAssertTrue(library.controllers[second.id] === controller)
+        XCTAssertFalse(library.notes.contains { $0.id == first.id })
+
+        let fresh = try XCTUnwrap(library.deleteKeepingWindow(second))
+        XCTAssertTrue(library.controllers[fresh.id] === controller)
+        XCTAssertEqual(library.notes.map(\.id), [fresh.id])
+        XCTAssertEqual(fresh.spaceID, second.spaceID)
+    }
 }

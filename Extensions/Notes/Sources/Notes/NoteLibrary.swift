@@ -5,6 +5,8 @@ import SwiftUI
 struct NoteSpace: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
+    /// The space it sits in, one level deep; nil for a top-level space.
+    var parentID: UUID?
 }
 
 /// What the index keeps about a note; its text lives in its own .md file.
@@ -337,13 +339,18 @@ final class NoteLibrary {
             controller.bringToFront(focus: true)
             return
         }
-        let record = NoteRecord(id: UUID(), spaceID: controller.note.spaceID, created: Date(), modified: Date(),
+        swap(controller, to: emptyNote(in: controller.note.spaceID))
+        tick()
+    }
+
+    /// An empty note in `spaceID`, not yet in a window.
+    private func emptyNote(in spaceID: UUID) -> Note {
+        let record = NoteRecord(id: UUID(), spaceID: spaceID, created: Date(), modified: Date(),
                                 isPinned: false, isOpen: true, frame: nil)
         let note = Note(record: record, text: "")
         notes.append(note)
         try? "".write(to: bodyURL(for: note.id), atomically: true, encoding: .utf8)
-        swap(controller, to: note)
-        tick()
+        return note
     }
 
     /// Closes a note's window; the note stays in its space, unless it's empty.
@@ -421,11 +428,86 @@ final class NoteLibrary {
     }
 
     @discardableResult
-    func addSpace(named name: String) -> NoteSpace {
-        let space = NoteSpace(id: UUID(), name: name)
-        withAnimation(NoteMotion.content) { spaces.append(space) }
+    func addSpace(named name: String, in parent: NoteSpace? = nil) -> NoteSpace {
+        // One level deep: a space inside a sub-space goes beside it.
+        let parentID = parent.map { $0.parentID ?? $0.id }
+        let space = NoteSpace(id: UUID(), name: name, parentID: parentID)
+        withAnimation(NoteMotion.content) {
+            if let parentID, let last = spaces.lastIndex(where: { $0.id == parentID || $0.parentID == parentID }) {
+                spaces.insert(space, at: last + 1)
+            } else {
+                spaces.append(space)
+            }
+        }
         saveIndex()
         return space
+    }
+
+    // MARK: Space tree
+
+    /// Top-level spaces in their order, each followed by its sub-spaces.
+    var orderedSpaces: [NoteSpace] {
+        spaces.filter { $0.parentID == nil }.flatMap { [$0] + children(of: $0.id) }
+    }
+
+    func children(of id: UUID) -> [NoteSpace] {
+        spaces.filter { $0.parentID == id }
+    }
+
+    func space(_ id: UUID) -> NoteSpace? { spaces.first { $0.id == id } }
+
+    /// "Work › Clients", for a sub-space.
+    func path(of space: NoteSpace) -> String {
+        guard let parent = space.parentID.flatMap(self.space) else { return space.name }
+        return "\(parent.name) › \(space.name)"
+    }
+
+    /// The space and its sub-spaces.
+    func family(of id: UUID) -> Set<UUID> {
+        Set([id] + children(of: id).map(\.id))
+    }
+
+    /// Notes in a space or any of its sub-spaces.
+    func noteCount(inFamily id: UUID) -> Int {
+        let family = family(of: id)
+        return notes.filter { family.contains($0.spaceID) }.count
+    }
+
+    /// Moves a space among its siblings, `offset` places along; sub-spaces travel with their parent.
+    func reorder(_ space: NoteSpace, by offset: Int) {
+        let siblings = spaces.filter { $0.parentID == space.parentID }
+        guard let from = siblings.firstIndex(where: { $0.id == space.id }) else { return }
+        let to = min(max(from + offset, 0), siblings.count - 1)
+        guard to != from else { return }
+        var order = siblings
+        order.insert(order.remove(at: from), at: to)
+        withAnimation(NoteMotion.content) {
+            if space.parentID == nil {
+                spaces = order.flatMap { [$0] + children(of: $0.id) }
+            } else {
+                // Sub-spaces keep their slots in the list, in their new order.
+                var queue = order
+                spaces = spaces.map { $0.parentID == space.parentID ? queue.removeFirst() : $0 }
+            }
+        }
+        saveIndex()
+        tick()
+    }
+
+    /// Puts a space inside another, or back at the top level with nil.
+    func nest(_ space: NoteSpace, in parent: NoteSpace?) {
+        guard let index = spaces.firstIndex(where: { $0.id == space.id }), parent?.id != space.id,
+              parent?.parentID == nil, children(of: space.id).isEmpty || parent == nil else { return }
+        withAnimation(NoteMotion.content) {
+            var moved = spaces.remove(at: index)
+            moved.parentID = parent?.id
+            if let parent, let last = spaces.lastIndex(where: { $0.id == parent.id || $0.parentID == parent.id }) {
+                spaces.insert(moved, at: last + 1)
+            } else {
+                spaces.append(moved)
+            }
+        }
+        saveIndex()
     }
 
     func rename(_ space: NoteSpace, to name: String) {
@@ -457,7 +539,11 @@ final class NoteLibrary {
             trash(note)
         }
         cloud?.removeFolder(space.name)
-        withAnimation(NoteMotion.content) { spaces.removeAll { $0.id == space.id } }
+        withAnimation(NoteMotion.content) {
+            spaces.removeAll { $0.id == space.id }
+            // Its sub-spaces stay, at the top level.
+            for index in spaces.indices where spaces[index].parentID == space.id { spaces[index].parentID = nil }
+        }
         saveIndex()
     }
 
@@ -518,6 +604,28 @@ final class NoteLibrary {
 
     /// ⌘[ and ⌘]: the window steps through its space's notes, passing over
     /// ones open in windows of their own.
+    /// The window jumps to the next space with notes, `step` along the space
+    /// list, showing its first note that isn't open elsewhere.
+    func cycleSpace(_ controller: NoteController, by step: Int) {
+        let order = orderedSpaces
+        guard let current = order.firstIndex(where: { $0.id == controller.note.spaceID }) else { return }
+        var index = current
+        for _ in 0..<order.count {
+            index = (index + step + order.count) % order.count
+            guard index != current else { break }
+            if let note = notes(in: order[index].id).first(where: { controllers[$0.id] == nil }) {
+                swap(controller, to: note)
+                // After the swap's own flash of where the note sits.
+                let name = path(of: order[index])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak controller] in
+                    MainActor.assumeIsolated { controller?.flash(name) }
+                }
+                return
+            }
+        }
+        NSSound.beep()
+    }
+
     func cycle(_ controller: NoteController, by step: Int) {
         let list = notes(in: controller.note.spaceID)
         guard let current = list.firstIndex(where: { $0.id == controller.note.id }) else { return }
@@ -536,6 +644,35 @@ final class NoteLibrary {
     // MARK: Deleting
 
     /// Moves a note and its bucket to the Trash, where it can be put back by hand.
+    /// ⇧⌘⌫ in a note's window: the note goes to the Trash and its window stays,
+    /// showing the next note in the space that isn't open elsewhere, or a fresh
+    /// one when there's none. Returns the note the window shows now.
+    @discardableResult
+    func deleteKeepingWindow(_ note: Note) -> Note? {
+        guard let controller = controllers[note.id] else {
+            delete(note)
+            return nil
+        }
+        let list = notes(in: note.spaceID)
+        let after = list.firstIndex { $0.id == note.id }.map { Array(list[($0 + 1)...] + list[..<$0]) } ?? []
+        let next = after.first { $0.id != note.id && controllers[$0.id] == nil } ?? emptyNote(in: note.spaceID)
+        // An empty note is discarded by the swap itself; anything else goes to the Trash.
+        swap(controller, to: next)
+        if notes.contains(where: { $0.id == note.id }) {
+            if let path = note.cloudPath { cloud?.remove(path: path) }
+            trash(note)
+            saveIndex()
+        }
+        tick()
+        // After the swap's own flash of where the window now sits.
+        if note.hasText {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak controller] in
+                MainActor.assumeIsolated { controller?.flash("Moved to Trash") }
+            }
+        }
+        return next
+    }
+
     func delete(_ note: Note) {
         if let controller = controllers[note.id] {
             detach(controller)

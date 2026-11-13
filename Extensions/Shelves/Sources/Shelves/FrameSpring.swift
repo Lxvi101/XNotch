@@ -18,6 +18,9 @@ enum ShelfMotion {
     static var arrive: Animation { reduced ? .easeOut(duration: 0.2) : .spring(response: 0.62, dampingFraction: 0.86) }
     /// The receiving tray sliding out from under the shelf.
     static var tray: Animation { reduced ? .easeOut(duration: 0.18) : .spring(response: 0.42, dampingFraction: 0.8) }
+    /// Drawn up into the notch: quick and decisive, the pace of islandcn's
+    /// dismiss spring (0.43 / 1), a touch faster since it travels with the window.
+    static var absorb: Animation { reduced ? .easeIn(duration: 0.16) : .spring(response: 0.38, dampingFraction: 1) }
     /// Hover and highlight changes under the pointer.
     static var hover: Animation { reduced ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.82) }
     /// A tile's share of the bloom, a few milliseconds after the one before.

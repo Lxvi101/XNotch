@@ -179,6 +179,10 @@ final class Shelf: Identifiable {
     var isHovered = false
     /// Being moved over another shelf, to merge into it on release.
     var isOverShelf = false
+    /// Being moved up to the notch, to pour its files into the tray on release.
+    var isOverTray = false
+    /// Being drawn into the notch, on its way into the tray.
+    var isAbsorbing = false
     /// The shelf has turned into its instant actions.
     var showsActions = false
     var hoveredAction: InstantAction?

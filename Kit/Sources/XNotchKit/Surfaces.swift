@@ -165,7 +165,9 @@ public protocol ShelfFileActing {
 
 /// Other extensions' `ShelfFileActing` entries, for an extension that keeps
 /// shelves of its own, like Shelves (API 1.6.0). XNotch's `ShelfAccess`
-/// adopts it: `host.shelf as? ShelfActionSharing`.
+/// adopts it: `host.shelf as? ShelfActionSharing`. It also
+/// carries their `ShelfAccessoryProviding.shelfMenuItems`, such as Cloud's
+/// links, first.
 @MainActor
 public protocol ShelfActionSharing: AnyObject {
     /// Every other active extension's entries for the request's files.

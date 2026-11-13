@@ -38,6 +38,32 @@ enum ShelfGeometry {
     static func shelfFrame(inWindow rect: CGRect) -> CGRect { rect.insetBy(dx: margin, dy: margin) }
 }
 
+/// Where the notch is, for pouring a shelf into the tray.
+@MainActor
+enum NotchZone {
+    /// The notch on a screen, or about where XNotch draws one on a screen
+    /// without, in screen coordinates.
+    static func notch(on screen: NSScreen) -> CGRect {
+        let frame = screen.frame
+        let top = screen.safeAreaInsets.top
+        if top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            let width = frame.width - left.width - right.width
+            return CGRect(x: frame.midX - width / 2, y: frame.maxY - top, width: width, height: top)
+        }
+        let height = max(frame.maxY - screen.visibleFrame.maxY, 24)
+        return CGRect(x: frame.midX - 100, y: frame.maxY - height, width: 200, height: height)
+    }
+
+    /// The notch a point is close enough to for a shelf let go there to drop
+    /// into the tray: over it, a hand's breadth to either side, or just below.
+    static func notch(near point: CGPoint) -> CGRect? {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.insetBy(dx: 0, dy: -1).contains(point) }) else { return nil }
+        let notch = notch(on: screen)
+        let area = CGRect(x: notch.minX - 70, y: notch.minY - 60, width: notch.width + 140, height: notch.height + 62)
+        return area.contains(point) ? notch : nil
+    }
+}
+
 /// A borderless panel that floats over everything without activating XNotch.
 /// It can still become key, for Quick Look's space bar and the shelf's keys.
 final class ShelfPanel: NSPanel {

@@ -152,6 +152,26 @@ final class ShelfFileRefreshTests: XCTestCase {
         XCTAssertEqual(shelf.files.first.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() }, target.resolvingSymlinksInPath())
     }
 
+    /// Files the shelf made leave its storage for the tray's, or the sweep
+    /// would delete them from under the tray; other files stay where they are.
+    @MainActor func testHandOffMovesOnlyOwnedFiles() throws {
+        let storage = folder.appendingPathComponent("Shelves", isDirectory: true)
+        let received = folder.appendingPathComponent("Received", isDirectory: true)
+        let library = ShelfLibrary(directory: storage, preferences: ShelvesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        let theirs = file("report.pdf")
+        let made = PasteboardReader.freshFolder(in: library.filesDirectory).appendingPathComponent("Image.png")
+        FileManager.default.createFile(atPath: made.path, contents: Data("png".utf8))
+        let owned = try XCTUnwrap(ShelfFile(url: made, isOwned: true))
+
+        let urls = library.handOff([theirs, owned], into: received)
+        XCTAssertEqual(urls.first, theirs.url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: theirs.path))
+        XCTAssertEqual(urls.last?.lastPathComponent, "Image.png")
+        XCTAssertTrue(urls.last!.path.hasPrefix(received.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: urls.last!.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: made.path))
+    }
+
     func testFileDroppedFromTheTrashStays() throws {
         let trash = folder.appendingPathComponent(".Trash", isDirectory: true)
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)

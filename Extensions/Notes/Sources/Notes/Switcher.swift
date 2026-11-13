@@ -21,13 +21,22 @@ final class SwitcherModel {
     @ObservationIgnored var commandSource: () -> [NoteCommand] = { [] }
     @ObservationIgnored private var cachedCommands: [NoteCommand] = []
 
+    /// Which notes the list shows: every space, or one space with its sub-spaces.
+    enum Scope: Hashable {
+        case all
+        case space(UUID)
+    }
+
     var query = "" {
+        didSet { selection = 0 }
+    }
+    var scope = Scope.all {
         didSet { selection = 0 }
     }
     var selection = 0
     private(set) var currentID: UUID?
     private(set) var currentSpaceID: UUID?
-    @ObservationIgnored private unowned let library: NoteLibrary
+    @ObservationIgnored unowned let library: NoteLibrary
 
     init(library: NoteLibrary) {
         self.library = library
@@ -38,7 +47,34 @@ final class SwitcherModel {
         currentSpaceID = current.spaceID
         cachedCommands = commandSource()
         query = commands ? "> " : ""
+        // Opens on the note's own space; Tab or a chip moves along.
+        scope = library.spaces.count > 1 ? .space(current.spaceID) : .all
         selection = 0
+    }
+
+    /// The chips along the top: every space, sub-spaces after their parent.
+    var scopes: [Scope] { [.all] + library.orderedSpaces.map { .space($0.id) } }
+
+    /// Tab and Shift-Tab step through the chips.
+    func cycleScope(by step: Int) {
+        let all = scopes
+        let index = all.firstIndex(of: scope) ?? 0
+        withAnimation(NoteMotion.hover) { scope = all[(index + step + all.count) % all.count] }
+    }
+
+    func setScope(_ scope: Scope) {
+        guard scope != self.scope else { return }
+        withAnimation(NoteMotion.hover) { self.scope = scope }
+    }
+
+    /// Matches for the query outside the scope, for the empty list's hint.
+    var matchesElsewhere: Int {
+        guard scope != .all else { return 0 }
+        let inScope = Set(sections.flatMap(\.notes).map(\.id))
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        return library.notes.filter { note in
+            !inScope.contains(note.id) && words.allSatisfy { note.title.lowercased().contains($0) || note.text.lowercased().contains($0) }
+        }.count
     }
 
     var isCommandMode: Bool { query.hasPrefix(">") }
@@ -64,10 +100,15 @@ final class SwitcherModel {
         var id: UUID { space.id }
     }
 
-    /// Notes matching the query, grouped by space, the current space first.
+    /// Notes matching the query in the scope, grouped by space in the
+    /// spaces' order, sub-spaces after their parent.
     var sections: [Section] {
         let words = query.lowercased().split(separator: " ").map(String.init)
-        let spaces = library.spaces.filter { $0.id == currentSpaceID } + library.spaces.filter { $0.id != currentSpaceID }
+        let spaces: [NoteSpace]
+        switch scope {
+        case .all: spaces = library.orderedSpaces
+        case .space(let id): spaces = library.orderedSpaces.filter { library.family(of: id).contains($0.id) }
+        }
         return spaces.compactMap { space in
             let notes = library.notes(in: space.id).filter { note in
                 words.allSatisfy { word in
@@ -86,6 +127,16 @@ final class SwitcherModel {
         let actions = commands
         let count = isCommandMode ? actions.count : notes.count
         let command = event.modifierFlags.contains(.command)
+        if event.keyCode == 48, !isCommandMode { // tab
+            cycleScope(by: event.modifierFlags.contains(.shift) ? -1 : 1)
+            return true
+        }
+        // ⌘0 for every space, ⌘1 to ⌘9 for the chips after it.
+        if command, !isCommandMode, let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (0...9).contains(digit) {
+            let all = scopes
+            if all.indices.contains(digit) { setScope(all[digit]) } else { NSSound.beep() }
+            return true
+        }
         switch event.keyCode {
         case 125: // down
             if count > 0 { withAnimation(NoteMotion.hover) { selection = (selection + 1) % count } }
@@ -115,7 +166,12 @@ final class SwitcherModel {
     }
 
     func delete(_ note: Note) {
-        library.delete(note)
+        // The window's own note: the window stays and the list follows it.
+        if note.id == currentID, let next = library.deleteKeepingWindow(note) {
+            currentID = next.id
+        } else {
+            library.delete(note)
+        }
         selection = min(selection, max(0, flat.count - 1))
     }
 
@@ -168,21 +224,36 @@ private struct SwitcherCard: View {
                 .tint(noteAccent)
                 .padding(.horizontal, 16)
                 .frame(height: 46)
+            if !model.isCommandMode && model.library.spaces.count > 1 {
+                SpaceStrip(model: model)
+            }
             Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
             if model.isCommandMode {
                 CommandList(controller: controller, model: model)
             } else if flat.isEmpty {
-                Text(model.query.isEmpty ? "No notes yet." : "No notes match “\(model.query)”.")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 22)
+                VStack(spacing: 6) {
+                    Text(model.query.isEmpty ? "No notes here yet." : "No notes match “\(model.query)” here.")
+                    let elsewhere = model.query.isEmpty ? 0 : model.matchesElsewhere
+                    if elsewhere > 0 {
+                        Button {
+                            model.setScope(.all)
+                        } label: {
+                            Text("\(elsewhere) in other spaces  ⌘0")
+                                .foregroundStyle(noteAccent.opacity(0.9))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.4))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 22)
             } else {
                 ScrollViewReader { reader in
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(sections) { section in
-                                Text(section.space.name)
+                                Text(model.library.path(of: section.space))
                                     .font(.system(size: 11.5, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.4))
                                     .padding(.horizontal, 10)
@@ -210,15 +281,18 @@ private struct SwitcherCard: View {
                     }
                 }
             }
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 if !model.isCommandMode {
                     KeyHint(title: "Actions", keys: [">"])
+                    if model.library.spaces.count > 1 {
+                        KeyHint(title: "Spaces", keys: ["⇥"])
+                    }
                 }
                 Spacer(minLength: 0)
                 if model.isCommandMode {
                     KeyHint(title: "Run", keys: ["↩"])
                 } else {
-                    KeyHint(title: "Open Note", keys: ["↩"])
+                    KeyHint(title: "Open", keys: ["↩"])
                     KeyHint(title: "New Window", keys: ["⌘", "↩"])
                 }
             }
@@ -326,6 +400,8 @@ private struct KeyHint: View {
             Text(title)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.5))
+                .lineLimit(1)
+                .fixedSize()
             ForEach(keys, id: \.self) { key in
                 Text(key)
                     .font(.system(size: 11, weight: .medium))
@@ -411,5 +487,166 @@ private struct CommandRow: View {
         }
         .contentShape(Rectangle())
         .animation(NoteMotion.hover, value: isSelected)
+    }
+}
+
+// MARK: Spaces
+
+/// The switcher's spaces, as chips under the search field: All, then each
+/// space with its sub-spaces gathered after it. The highlight slides to the
+/// chip in scope; right-click a chip to order, nest or rename it.
+private struct SpaceStrip: View {
+    let model: SwitcherModel
+    @Namespace private var highlight
+
+    var body: some View {
+        let library = model.library
+        let current = library.space(model.currentSpaceID ?? UUID())
+        ScrollViewReader { reader in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ScopeChip(title: "All", count: library.notes.count, isOn: model.scope == .all, isHome: false,
+                              highlight: highlight) { model.setScope(.all) }
+                        .id(SwitcherModel.Scope.all)
+                    ForEach(library.orderedSpaces.filter { $0.parentID == nil }) { space in
+                        let children = library.children(of: space.id)
+                        HStack(spacing: 0) {
+                            chip(for: space, current: current)
+                            ForEach(children) { child in
+                                // Its own slot, so a highlighted neighbour never covers it.
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.25))
+                                    .frame(width: 14)
+                                chip(for: child, current: current)
+                            }
+                        }
+                        .background {
+                            // A space and its sub-spaces read as one group. The outline sits
+                            // outside the chips, so it adds no space and every gap stays even.
+                            if !children.isEmpty {
+                                Capsule().fill(.white.opacity(0.045))
+                                    .overlay(Capsule().strokeBorder(.white.opacity(0.06)))
+                                    .padding(-3)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            }
+            // Chips scrolling off either edge fade out rather than being cut.
+            .mask {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: 12)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 18)
+                }
+            }
+            .onChange(of: model.scope) { _, scope in
+                withAnimation(NoteMotion.content) { reader.scrollTo(scope, anchor: .center) }
+            }
+            .onAppear { reader.scrollTo(model.scope, anchor: .center) }
+        }
+    }
+
+    private func chip(for space: NoteSpace, current: NoteSpace?) -> some View {
+        let library = model.library
+        let scope = SwitcherModel.Scope.space(space.id)
+        let isSub = space.parentID != nil
+        // A parent counts its sub-spaces' notes too.
+        let count = isSub ? library.notes(in: space.id).count : library.noteCount(inFamily: space.id)
+        return ScopeChip(title: space.name, count: count, isOn: model.scope == scope,
+                         isHome: current?.id == space.id, highlight: highlight) {
+            model.setScope(scope)
+        }
+        .id(scope)
+        .contextMenu { SpaceMenu(space: space, library: library) }
+    }
+}
+
+private struct ScopeChip: View {
+    let title: String
+    let count: Int
+    let isOn: Bool
+    /// The space of the note in the window.
+    let isHome: Bool
+    let highlight: Namespace.ID
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if isHome {
+                    Circle().fill(noteAccent).frame(width: 5, height: 5)
+                }
+                Text(title)
+                    .font(.system(size: 12, weight: isOn ? .semibold : .medium))
+                    .foregroundStyle(.white.opacity(isOn ? 0.95 : (hovered ? 0.75 : 0.55)))
+                    .lineLimit(1)
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(isOn ? 0.55 : 0.3))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background {
+                if isOn {
+                    Capsule().fill(.white.opacity(0.14))
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
+                        .matchedGeometryEffect(id: "scope", in: highlight)
+                } else if hovered {
+                    Capsule().fill(.white.opacity(0.06))
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressStyle())
+        .onHover { hovered = $0 }
+        .animation(NoteMotion.hover, value: hovered)
+    }
+}
+
+/// A space chip's right-click menu: its place in the order, its parent, its name.
+private struct SpaceMenu: View {
+    let space: NoteSpace
+    let library: NoteLibrary
+
+    var body: some View {
+        let siblings = library.spaces.filter { $0.parentID == space.parentID }
+        let index = siblings.firstIndex { $0.id == space.id } ?? 0
+        Button("Move Left") { library.reorder(space, by: -1) }
+            .disabled(index == 0)
+        Button("Move Right") { library.reorder(space, by: 1) }
+            .disabled(index == siblings.count - 1)
+        Divider()
+        if space.parentID == nil {
+            Button("New Space Inside…") {
+                guard let name = ask("New Space in “\(space.name)”", message: "It sits inside “\(space.name)”, and shows with it.",
+                                     value: "", placeholder: "Clients", button: "Create") else { return }
+                library.addSpace(named: name, in: space)
+            }
+            if library.children(of: space.id).isEmpty {
+                let others = library.spaces.filter { $0.parentID == nil && $0.id != space.id }
+                if !others.isEmpty {
+                    Menu("Put Inside") {
+                        ForEach(others) { parent in
+                            Button(parent.name) { library.nest(space, in: parent) }
+                        }
+                    }
+                }
+            }
+        } else {
+            Button("Move Out to Top Level") { library.nest(space, in: nil) }
+        }
+        Divider()
+        Button("Rename…") {
+            guard let name = ask("Rename Space", message: "", value: space.name, placeholder: space.name, button: "Rename") else { return }
+            library.rename(space, to: name)
+        }
+        if library.spaces.count > 1 {
+            Button("Delete…", role: .destructive) { confirmDeleting(space, in: library) }
+        }
     }
 }

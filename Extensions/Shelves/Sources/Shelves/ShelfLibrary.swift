@@ -188,6 +188,30 @@ final class ShelfLibrary: ObservableObject {
         update(shelf)
     }
 
+    /// Files leaving for the notch's tray, which keeps references, not copies.
+    /// The ones the shelves made move out of their storage, where the sweep
+    /// would delete them, into the folder the tray keeps received files in.
+    func handOff(_ files: [ShelfFile], into received: URL = ShelfLibrary.trayReceivedDirectory) -> [URL] {
+        files.map { file in
+            guard file.isOwned else { return file.url }
+            let folder = received.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let destination = folder.appendingPathComponent(file.name)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: file.url, to: destination)
+                return destination
+            } catch {
+                return file.url
+            }
+        }
+    }
+
+    /// Where XNotch's tray keeps the files it was given rather than pointed to.
+    nonisolated static var trayReceivedDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("XNotch/Received", isDirectory: true)
+    }
+
     /// The frontmost other shelf under a point on screen, for merging into.
     func shelf(at point: CGPoint, excluding excluded: ShelfController) -> ShelfController? {
         open.filter { $0 !== excluded && !$0.isClosing && $0.panel.isVisible

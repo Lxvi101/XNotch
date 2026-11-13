@@ -141,6 +141,8 @@ final class NoteController: NSObject {
         hosting.autoresizingMask = [.width, .height]
         dropView.addSubview(hosting)
         panel.contentView = dropView
+        // Never drawn on the borderless panel; it names the window for VoiceOver and automation.
+        panel.title = note.displayTitle
         panel.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
         panel.onKeyChange = { [weak self] isKey in
             guard let self else { return }
@@ -294,6 +296,7 @@ final class NoteController: NSObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.state.note = note
+                self.panel.title = note.displayTitle
                 self.state.selectedAttachment = nil
                 self.editor.base = self.library.bucketFolder(for: note)
                 self.editor.load(note.text)
@@ -311,8 +314,8 @@ final class NoteController: NSObject {
 
     /// The note's space, for its header while there's more than one.
     var spaceName: String? {
-        guard library.spaces.count > 1 else { return nil }
-        return library.spaces.first { $0.id == note.spaceID }?.name
+        guard library.spaces.count > 1, let space = library.space(note.spaceID) else { return nil }
+        return library.path(of: space)
     }
 
     // MARK: Command bar
@@ -355,8 +358,7 @@ final class NoteController: NSObject {
             },
             NoteCommand(id: "trash", title: "Move Note to Trash", symbol: "trash", shortcut: "⇧⌘⌫", section: "Note",
                         isDestructive: true) { [weak self] in
-                guard let self else { return }
-                self.library.delete(self.note)
+                self?.trashNote()
             },
             NoteCommand(id: "bucket", title: "Open Bucket", symbol: "tray", shortcut: "⇧⌘B", section: "Bucket") { [weak self] in
                 self?.toggleBucket()
@@ -394,8 +396,8 @@ final class NoteController: NSObject {
                 text.insertText(today, replacementRange: text.selectedRange())
             },
         ]
-        for space in library.spaces where space.id != note.spaceID {
-            list.append(NoteCommand(id: "move-\(space.id)", title: "Move to “\(space.name)”", symbol: "arrow.right.square",
+        for space in library.orderedSpaces where space.id != note.spaceID {
+            list.append(NoteCommand(id: "move-\(space.id)", title: "Move to “\(library.path(of: space))”", symbol: "arrow.right.square",
                                     section: "Spaces") { [weak self] in self?.library.move(note, to: space) })
         }
         list.append(NoteCommand(id: "space-new", title: "New Space…", symbol: "plus.square", section: "Spaces") { [weak self] in
@@ -404,6 +406,26 @@ final class NoteController: NSObject {
             let space = self.library.addSpace(named: name)
             self.library.switchSpace(to: space.id)
         })
+        if let current = library.space(note.spaceID) {
+            let parent = current.parentID.flatMap(library.space) ?? current
+            list.append(NoteCommand(id: "space-sub", title: "New Space in “\(parent.name)”…", symbol: "folder.badge.plus",
+                                    section: "Spaces") { [weak self] in
+                guard let self, let name = ask("New Space in “\(parent.name)”", message: "It sits inside “\(parent.name)”, and shows with it.",
+                                               value: "", placeholder: "Clients", button: "Create") else { return }
+                let space = self.library.addSpace(named: name, in: parent)
+                self.library.move(self.note, to: space)
+            })
+        }
+        list += [
+            NoteCommand(id: "space-next", title: "Next Space", symbol: "arrow.right", shortcut: "⌃⌘]", section: "Spaces") { [weak self] in
+                guard let self else { return }
+                self.library.cycleSpace(self, by: 1)
+            },
+            NoteCommand(id: "space-previous", title: "Previous Space", symbol: "arrow.left", shortcut: "⌃⌘[", section: "Spaces") { [weak self] in
+                guard let self else { return }
+                self.library.cycleSpace(self, by: -1)
+            },
+        ]
         let onTop = library.preferences.floatsOnTop
         list += [
             NoteCommand(id: "float", title: onTop ? "Stop Keeping Notes on Top" : "Keep Notes Above Other Windows",
@@ -445,7 +467,7 @@ final class NoteController: NSObject {
     }
 
     /// A word in place of the title for a moment. The latest flash gets its full time.
-    private func flash(_ label: String) {
+    func flash(_ label: String) {
         flashes += 1
         let flash = flashes
         withAnimation(NoteMotion.content) { state.flashLabel = label }
@@ -480,6 +502,19 @@ final class NoteController: NSObject {
             panel.makeKey()
             switcher.prepare(current: note, commands: commands)
         }
+        toggleSwitcherOpen()
+    }
+
+    /// The switcher, open on one space's notes: the header's space button.
+    func browseSpace(_ id: UUID? = nil) {
+        if state.showsSwitcher { return toggleSwitcher() }
+        panel.makeKey()
+        switcher.prepare(current: note)
+        switcher.scope = .space(id ?? note.spaceID)
+        toggleSwitcherOpen()
+    }
+
+    private func toggleSwitcherOpen() {
         withAnimation(NoteMotion.bloom) {
             state.showsBucket = false
             state.showsSwitcher.toggle()
@@ -500,6 +535,12 @@ final class NoteController: NSObject {
     func newNote() {
         closeDrawers()
         library.newNote(in: self)
+    }
+
+    /// The note to the Trash; the window stays and shows the next note in its space.
+    func trashNote() {
+        closeDrawers()
+        library.deleteKeepingWindow(note)
     }
 
     /// A fresh note in a window of its own, beside this one.
@@ -563,13 +604,18 @@ final class NoteController: NSObject {
         guard modifiers.contains(.command) else { return false }
         // ⌘[ and ⌘], by the key or by the character: on a German keyboard "[" is ⌥5.
         let typed = event.characters ?? ""
+        // ⌃⌘[ and ⌃⌘]: the next space's notes, in this window.
+        if !state.receded, modifiers == [.command, .control] {
+            if event.keyCode == 33 || typed == "[" { library.cycleSpace(self, by: -1); return true }
+            if event.keyCode == 30 || typed == "]" { library.cycleSpace(self, by: 1); return true }
+        }
         if !state.receded, modifiers.isSubset(of: [.command, .option]) {
             if (modifiers == [.command] && event.keyCode == 33) || typed == "[" { library.cycle(self, by: -1); return true }
             if (modifiers == [.command] && event.keyCode == 30) || typed == "]" { library.cycle(self, by: 1); return true }
         }
-        // ⇧⌘⌫: this note to the Trash, its bucket with it.
+        // ⇧⌘⌫: this note to the Trash, its bucket with it. The window stays.
         if event.keyCode == 51, modifiers == [.command, .shift] {
-            library.delete(note)
+            trashNote()
             return true
         }
         let text = editor.textView
@@ -984,8 +1030,7 @@ extension NoteController: NoteFileHandling {
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Close Note", symbol: "xmark", key: "w") { [weak self] in self?.close() })
         let delete = ClosureMenuItem("Move Note to Trash", symbol: "trash", key: "\u{8}") { [weak self] in
-            guard let self else { return }
-            self.library.delete(self.note)
+            self?.trashNote()
         }
         delete.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(delete)

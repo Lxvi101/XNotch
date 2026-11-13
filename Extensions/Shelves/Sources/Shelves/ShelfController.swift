@@ -42,6 +42,8 @@ final class ShelfController: NSObject {
         hosting.autoresizingMask = [.width, .height]
         dropView.addSubview(hosting)
         panel.contentView = dropView
+        // Never drawn on the borderless panel; it names the window for VoiceOver and automation.
+        panel.title = "Shelf"
         panel.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
         frameSpring.onFrame = { [weak self] frame in
             self?.panel.setFrame(frame, display: true)
@@ -129,12 +131,12 @@ final class ShelfController: NSObject {
 
     /// Fades the shelf away, then hands it back to the library. `before` runs
     /// once it's off screen, so its files can go without being seen to.
-    private func leave(before: @escaping @MainActor () -> Void = {}) {
+    private func leave(after delay: TimeInterval? = nil, before: @escaping @MainActor () -> Void = {}) {
         isClosing = true
         hideLabel()
         cancelIncoming()
         withAnimation(ShelfMotion.disappear) { shelf.isPresented = false }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (ShelfMotion.reduced ? 0.16 : 0.24)) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (delay ?? (ShelfMotion.reduced ? 0.16 : 0.24))) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.frameSpring.stop()
@@ -174,8 +176,10 @@ final class ShelfController: NSObject {
         }
         panel.setFrameOrigin(origin)
         trackVelocity(origin)
-        // Files still on their way couldn't follow it into another shelf.
-        let target = shelf.files.isEmpty || !shelf.incoming.isEmpty ? nil : library.shelf(at: mouse, excluding: self)
+        // Files still on their way couldn't follow it into another shelf, or the tray.
+        let canPour = !shelf.files.isEmpty && shelf.incoming.isEmpty
+        let target = canPour ? library.shelf(at: mouse, excluding: self) : nil
+        setOverTray(canPour && target == nil && NotchZone.notch(near: mouse) != nil)
         guard target !== mergeTarget else { return }
         mergeTarget?.setMergeTarget(false)
         mergeTarget = target
@@ -198,6 +202,7 @@ final class ShelfController: NSObject {
     }
 
     func endMove() {
+        if shelf.isOverTray { return pourIntoTray() }
         guard let target = mergeTarget else { return }
         mergeTarget = nil
         target.setMergeTarget(false)
@@ -234,6 +239,50 @@ final class ShelfController: NSObject {
                             in: panel.contentView!)
         // Its files live on in the target, so it leaves nothing in Recent Shelves.
         leave { [weak self] in self?.shelf.files.removeAll() }
+    }
+
+    // MARK: Pouring into the tray
+
+    /// Held up to the notch, the shelf leans toward it, with the label saying
+    /// what letting go will do.
+    private func setOverTray(_ over: Bool) {
+        guard shelf.isOverTray != over else { return }
+        withAnimation(ShelfMotion.hover) { shelf.isOverTray = over }
+        if over {
+            showLabel("Drop into Tray")
+            library.tick()
+        } else {
+            hideLabel()
+        }
+    }
+
+    /// Pours every file into the notch's tray and is drawn up into the notch
+    /// after them, leaving nothing behind in Recent Shelves.
+    private func pourIntoTray() {
+        guard let notch = NotchZone.notch(near: NSEvent.mouseLocation) ?? NotchZone.notch(near: CGPoint(x: shelfFrame.midX, y: shelfFrame.maxY)),
+              !isClosing else {
+            return setOverTray(false)
+        }
+        let files = shelf.files
+        let urls = library.handOff(files)
+        hideLabel()
+        // Into the middle of the notch, top first: the shelf narrows to a sliver
+        // as it slips in.
+        let frame = shelfFrame
+        let destination = CGRect(x: notch.midX - frame.width / 2, y: notch.maxY - frame.height,
+                                 width: frame.width, height: frame.height)
+        shelf.presenceAnchor = .top
+        frameSpring.response = 0.36
+        frameSpring.damping = 1
+        let held = lastMove.map { CACurrentMediaTime() - $0.time > 0.08 } ?? true
+        frameSpring.animate(from: panel.frame, to: ShelfGeometry.windowFrame(forShelf: destination),
+                            initialVelocity: held ? .zero : moveVelocity, in: panel.contentView!)
+        withAnimation(ShelfMotion.absorb) { shelf.isAbsorbing = true }
+        // The notch takes the files just as the shelf reaches it, and gulps.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (ShelfMotion.reduced ? 0.05 : 0.2)) { [weak self] in
+            MainActor.assumeIsolated { self?.library.sendToNotchShelf(urls) }
+        }
+        leave(after: ShelfMotion.reduced ? 0.18 : 0.42) { [weak self] in self?.shelf.files.removeAll() }
     }
 
     /// Takes another shelf's files, flying in from `point` on screen.
@@ -279,7 +328,11 @@ final class ShelfController: NSObject {
         if !labelPanel.isVisible || !labelPanel.model.isVisible {
             let frame = shelfFrame
             let size = ActionLabelPanel.size
-            labelPanel.setFrame(CGRect(x: frame.midX - size.width / 2, y: frame.maxY + 2, width: size.width, height: size.height),
+            // Under the shelf when it's up against the top of the screen, as
+            // it is when held up to the notch.
+            let top = (panel.screen ?? NSScreen.main)?.visibleFrame.maxY ?? .greatestFiniteMagnitude
+            let y = frame.maxY + 2 + size.height > top + 4 ? frame.minY - size.height - 2 : frame.maxY + 2
+            labelPanel.setFrame(CGRect(x: frame.midX - size.width / 2, y: y, width: size.width, height: size.height),
                                 display: false)
             labelPanel.orderFrontRegardless()
         }
@@ -730,8 +783,18 @@ final class ShelfController: NSObject {
 
     // MARK: Clicks
 
+    /// Where the files are now. One renamed or moved since it landed (a
+    /// download that finished, a screenshot leaving its temporary folder) is
+    /// followed by its bookmark, so Quick Look and the rest don't get a path
+    /// that's gone; one that's gone for good leaves the shelf.
+    func current(_ files: [ShelfFile]) -> [URL] {
+        let ids = Set(files.map(\.id))
+        withAnimation(ShelfMotion.content) { shelf.refresh() }
+        return shelf.files.filter { ids.contains($0.id) }.map(\.url)
+    }
+
     func doubleClick(_ files: [ShelfFile]) {
-        let urls = files.map(\.url)
+        let urls = current(files)
         switch preferences.doubleClick {
         case .open: FileActions.open(urls)
         case .reveal: FileActions.reveal(urls)
@@ -747,14 +810,14 @@ final class ShelfController: NSObject {
                 shelf.selection = shelf.selection == [file.id] ? [] : [file.id]
             }
         }
-        QuickLook.shared.follow(shelf.targets.map(\.url))
+        QuickLook.shared.follow(current(shelf.targets))
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         switch (event.keyCode, modifiers) {
         case (49, []): // space
-            QuickLook.shared.toggle(shelf.targets.map(\.url), from: panel)
+            QuickLook.shared.toggle(current(shelf.targets), from: panel)
         case (53, []): // escape
             if shelf.isExpanded { setExpanded(false) } else { close() }
         case (51, []), (117, []): // delete
@@ -763,7 +826,7 @@ final class ShelfController: NSObject {
         case (0, [.command]): // ⌘A
             withAnimation(ShelfMotion.hover) { shelf.selection = Set(shelf.files.map(\.id)) }
         case (8, [.command]): // ⌘C
-            FileActions.copyToPasteboard(shelf.targets.map(\.url))
+            FileActions.copyToPasteboard(current(shelf.targets))
         case (9, [.command]): // ⌘V
             add(from: .general)
         case (13, [.command]): // ⌘W
@@ -790,7 +853,9 @@ final class ShelfController: NSObject {
 
     func menu(for files: [ShelfFile]) -> NSMenu {
         let menu = NSMenu()
-        let urls = files.map(\.url)
+        let urls = current(files)
+        // Under their names now, without any that are gone.
+        let files = shelf.files.filter { urls.contains($0.url) }
         if !files.isEmpty {
             let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
             openWith.image = NSImage(systemSymbolName: "arrow.up.forward.app", accessibilityDescription: nil)
@@ -807,9 +872,6 @@ final class ShelfController: NSObject {
             openWith.isEnabled = !apps.items.isEmpty
             menu.addItem(openWith)
             menu.addItem(ClosureMenuItem("Show in Finder", symbol: "folder") { FileActions.reveal(urls) })
-            menu.addItem(ClosureMenuItem("Quick Look", symbol: "eye") { [weak self] in
-                QuickLook.shared.show(urls, from: self?.panel)
-            })
             menu.addItem(.separator())
             for action in [InstantAction.airDrop, .mail, .messages] where action.isAvailable {
                 let item = ClosureMenuItem(action.title) { [weak self] in
@@ -838,12 +900,6 @@ final class ShelfController: NSObject {
             menu.addItem(ClosureMenuItem(copyTitle, symbol: "doc.on.doc") { FileActions.copyToPasteboard(urls) })
             menu.addItem(ClosureMenuItem(files.count == 1 ? "Copy Path" : "Copy Paths", symbol: "link") {
                 FileActions.copyPaths(urls)
-            })
-            menu.addItem(ClosureMenuItem("Copy to…", symbol: "plus.square.on.square") { [weak self] in
-                self?.transfer(files, move: false)
-            })
-            menu.addItem(ClosureMenuItem("Move to…", symbol: "folder.badge.plus") { [weak self] in
-                self?.transfer(files, move: true)
             })
             menu.addItem(ClosureMenuItem("Send to Tray", symbol: "rectangle.topthird.inset.filled") { [weak self] in
                 self?.library.sendToNotchShelf(urls)
@@ -885,19 +941,6 @@ final class ShelfController: NSObject {
         return menu
     }
 
-    private func transfer(_ files: [ShelfFile], move: Bool) {
-        guard let folder = FileActions.chooseFolder(prompt: move ? "Move" : "Copy") else { return }
-        let moved = FileActions.transfer(files.map(\.url), to: folder, move: move)
-        guard move else { return }
-        // The shelf follows its files to their new home.
-        for (index, file) in shelf.files.enumerated() {
-            if let destination = moved[file.url], var updated = ShelfFile(url: destination, isOwned: false) {
-                updated.id = file.id
-                shelf.files[index] = updated
-            }
-        }
-    }
-
     private func rename() {
         let alert = NSAlert()
         alert.messageText = "Rename Shelf"
@@ -918,6 +961,8 @@ final class ShelfController: NSObject {
     // MARK: Dragging out
 
     func beginDrag(_ files: [ShelfFile], event: NSEvent, from view: NSView, image: NSImage?) {
+        let urls = current(files)
+        let files = shelf.files.filter { urls.contains($0.url) }
         guard !files.isEmpty else { return }
         let side: CGFloat = 56
         let origin = view.convert(event.locationInWindow, from: nil)

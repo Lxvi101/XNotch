@@ -334,48 +334,6 @@ enum FileActions {
         var seen = Set<String>()
         return apps.filter { seen.insert($0.lastPathComponent).inserted }
     }
-
-    static func chooseFolder(prompt: String) -> URL? {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.prompt = prompt
-        NSApp.activate(ignoringOtherApps: true)
-        return panel.runModal() == .OK ? panel.url : nil
-    }
-
-    /// Copies or moves files into a folder, numbering names that are taken.
-    /// Returns where each one ended up.
-    static func transfer(_ urls: [URL], to folder: URL, move: Bool) -> [URL: URL] {
-        var result: [URL: URL] = [:]
-        for url in urls {
-            let destination = available(folder.appendingPathComponent(url.lastPathComponent))
-            do {
-                if move {
-                    try FileManager.default.moveItem(at: url, to: destination)
-                } else {
-                    try FileManager.default.copyItem(at: url, to: destination)
-                }
-                result[url] = destination
-            } catch {
-                NSSound.beep()
-            }
-        }
-        return result
-    }
-
-    private static func available(_ url: URL) -> URL {
-        guard FileManager.default.fileExists(atPath: url.path) else { return url }
-        let base = url.deletingPathExtension().lastPathComponent
-        let ext = url.pathExtension
-        for n in 2... {
-            let name = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
-            let candidate = url.deletingLastPathComponent().appendingPathComponent(name)
-            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-        }
-        return url
-    }
 }
 
 /// Finder icons and Quick Look thumbnails, cached by path.
