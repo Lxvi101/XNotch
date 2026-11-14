@@ -312,12 +312,6 @@ final class NoteController: NSObject {
         library.close(note)
     }
 
-    /// The note's space, for its header while there's more than one.
-    var spaceName: String? {
-        guard library.spaces.count > 1, let space = library.space(note.spaceID) else { return nil }
-        return library.path(of: space)
-    }
-
     // MARK: Command bar
 
     /// What `>` in the switcher offers, for this note as it is now.
@@ -523,15 +517,6 @@ final class NoteController: NSObject {
         toggleSwitcherOpen()
     }
 
-    /// The switcher, open on one space's notes: the header's space button.
-    func browseSpace(_ id: UUID? = nil) {
-        if state.showsSwitcher { return toggleSwitcher() }
-        panel.makeKey()
-        switcher.prepare(current: note)
-        switcher.scope = .space(id ?? note.spaceID)
-        toggleSwitcherOpen()
-    }
-
     private func toggleSwitcherOpen() {
         withAnimation(NoteMotion.bloom) {
             state.showsBucket = false
@@ -547,6 +532,16 @@ final class NoteController: NSObject {
         } else {
             library.swap(self, to: target)
         }
+    }
+
+    /// ⌘↩ in the switcher, or ↩ with nothing to open: a fresh note in the
+    /// space being looked at, titled with the search if there is one.
+    func newNoteFromSwitcher(query: String) {
+        let spaceID: UUID
+        if case .space(let id) = switcher.scope { spaceID = id } else { spaceID = note.spaceID }
+        let title = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        withAnimation(NoteMotion.bloom) { state.showsSwitcher = false }
+        library.newNote(in: self, spaceID: spaceID, text: title.isEmpty ? "" : "# \(title)\n")
     }
 
     /// A fresh note in this window, as the switcher swaps one in.
@@ -611,6 +606,8 @@ final class NoteController: NSObject {
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         if state.showsSwitcher, switcher.handle(event, open: { [weak self] note, newWindow in
             self?.openFromSwitcher(note, inNewWindow: newWindow)
+        }, create: { [weak self] query in
+            self?.newNoteFromSwitcher(query: query)
         }, close: { [weak self] in self?.toggleSwitcher() }) {
             return true
         }

@@ -122,7 +122,7 @@ final class SwitcherModel {
     var flat: [Note] { sections.flatMap(\.notes) }
 
     /// Arrows, Return and Escape; everything else types into the search.
-    func handle(_ event: NSEvent, open: (Note, Bool) -> Void, close: () -> Void) -> Bool {
+    func handle(_ event: NSEvent, open: (Note, Bool) -> Void, create: (String) -> Void, close: () -> Void) -> Bool {
         let notes = flat
         let actions = commands
         let count = isCommandMode ? actions.count : notes.count
@@ -149,8 +149,12 @@ final class SwitcherModel {
                 run(actions[selection], close: close)
                 return true
             }
-            guard notes.indices.contains(selection) else { return true }
-            open(notes[selection], command)
+            // ⌘↩ always makes a note; ↩ does when there's nothing to open.
+            guard !command, notes.indices.contains(selection) else {
+                create(query)
+                return true
+            }
+            open(notes[selection], event.modifierFlags.contains(.option))
         case 53: // escape
             close()
         default:
@@ -282,6 +286,14 @@ private struct SwitcherCard: View {
             } else if flat.isEmpty {
                 VStack(spacing: 6) {
                     Text(model.query.isEmpty ? "No notes here yet." : "No notes match “\(model.query)” here.")
+                    Button {
+                        controller.newNoteFromSwitcher(query: model.query)
+                    } label: {
+                        Text(model.query.isEmpty ? "New Note  ↩" : "New Note “\(model.query)”  ↩")
+                            .lineLimit(1)
+                            .foregroundStyle(noteAccent.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
                     let elsewhere = model.query.isEmpty ? 0 : model.matchesElsewhere
                     if elsewhere > 0 {
                         Button {
@@ -312,7 +324,7 @@ private struct SwitcherCard: View {
                                     let index = flat.firstIndex { $0.id == note.id } ?? 0
                                     SwitcherRow(note: note, isSelected: index == model.selection,
                                                 isCurrent: note.id == model.currentID, model: model) {
-                                        controller.openFromSwitcher(note, inNewWindow: NSEvent.modifierFlags.contains(.command))
+                                        controller.openFromSwitcher(note, inNewWindow: NSEvent.modifierFlags.contains(.option))
                                     }
                                     .id(note.id)
                                     .onHover { if $0 { model.selection = index } }
@@ -333,9 +345,9 @@ private struct SwitcherCard: View {
             // The hints never widen the card: in a narrow note the least needed
             // ones go, rather than pushing the whole card past the note's edge.
             ViewThatFits(in: .horizontal) {
-                footer(spaces: true, newWindow: true)
-                footer(spaces: false, newWindow: true)
-                footer(spaces: false, newWindow: false)
+                footer(spaces: true, newNote: true, canOpen: !flat.isEmpty)
+                footer(spaces: false, newNote: true, canOpen: !flat.isEmpty)
+                footer(spaces: false, newNote: false, canOpen: !flat.isEmpty)
             }
             .padding(.vertical, 10)
         }
@@ -350,7 +362,7 @@ private struct SwitcherCard: View {
         }
     }
 
-    private func footer(spaces: Bool, newWindow: Bool) -> some View {
+    private func footer(spaces: Bool, newNote: Bool, canOpen: Bool) -> some View {
         HStack(spacing: 12) {
             if !model.isCommandMode {
                 KeyHint(title: "Actions", keys: [">"])
@@ -363,9 +375,13 @@ private struct SwitcherCard: View {
             if model.isCommandMode {
                 KeyHint(title: "Run", keys: ["↩"])
             } else {
-                KeyHint(title: "Open", keys: ["↩"])
-                if newWindow {
-                    KeyHint(title: "New Window", keys: ["⌘", "↩"])
+                // With nothing to open, ↩ makes a note, as the empty list says.
+                if canOpen {
+                    KeyHint(title: "Open", keys: ["↩"])
+                        .help("⌥↩ or ⌥-click: open in a new window")
+                }
+                if newNote {
+                    KeyHint(title: "New Note", keys: ["⌘", "↩"])
                 }
             }
         }

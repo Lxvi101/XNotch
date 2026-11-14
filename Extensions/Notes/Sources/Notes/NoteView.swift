@@ -127,13 +127,9 @@ private struct NoteHeader: View {
         let chrome = state.isHovered || state.receded
         ZStack {
             MoveArea(controller: controller)
-            HStack(spacing: 4) {
-                NoteTitle(controller: controller)
-                    .allowsHitTesting(false)
-                    .layoutPriority(1)
-                SpaceButton(controller: controller)
-            }
-            .padding(.horizontal, 96)
+            NoteTitle(controller: controller)
+                .allowsHitTesting(false)
+                .padding(.horizontal, 96)
             HStack(spacing: 0) {
                 CloseButton { controller.close() }
                     .opacity(chrome ? 1 : 0)
@@ -160,38 +156,6 @@ private struct NoteTitle: View {
             .truncationMode(.tail)
             .contentTransition(.opacity)
             .animation(NoteMotion.content, value: controller.note.id)
-    }
-}
-
-/// The note's space beside its title, while there's more than one: a click
-/// opens the switcher on that space, with every space a Tab away.
-private struct SpaceButton: View {
-    let controller: NoteController
-    @State private var hovered = false
-
-    var body: some View {
-        if let space = controller.spaceName, controller.state.flashLabel == nil {
-            Button { controller.browseSpace() } label: {
-                HStack(spacing: 3) {
-                    Text(space)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 7.5, weight: .bold))
-                        .opacity(hovered ? 0.9 : 0.6)
-                }
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.white.opacity(hovered ? 0.8 : 0.32))
-                .padding(.horizontal, 7)
-                .frame(height: 20)
-                .background(Capsule().fill(.white.opacity(hovered ? 0.12 : 0.05)))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(PressStyle())
-            .onHover { hovered = $0 }
-            .animation(NoteMotion.hover, value: hovered)
-            .help("Notes in this space (⌃⌘[ ⌃⌘] for the next)")
-            .transition(.opacity.combined(with: .scale(scale: 0.9)))
-        }
     }
 }
 

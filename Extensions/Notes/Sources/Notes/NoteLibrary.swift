@@ -334,22 +334,23 @@ final class NoteLibrary {
 
     /// A fresh note in `controller`'s window, in place of the one it shows.
     /// An empty note is already a fresh one, so it stays.
-    func newNote(in controller: NoteController) {
-        guard !isDiscardable(controller.note) else {
+    func newNote(in controller: NoteController, spaceID: UUID? = nil, text: String = "") {
+        let spaceID = spaceID ?? controller.note.spaceID
+        guard !isDiscardable(controller.note) || controller.note.spaceID != spaceID || !text.isEmpty else {
             controller.bringToFront(focus: true)
             return
         }
-        swap(controller, to: emptyNote(in: controller.note.spaceID))
+        swap(controller, to: emptyNote(in: spaceID, text: text))
         tick()
     }
 
-    /// An empty note in `spaceID`, not yet in a window.
-    private func emptyNote(in spaceID: UUID) -> Note {
+    /// A fresh note in `spaceID`, not yet in a window.
+    private func emptyNote(in spaceID: UUID, text: String = "") -> Note {
         let record = NoteRecord(id: UUID(), spaceID: spaceID, created: Date(), modified: Date(),
                                 isPinned: false, isOpen: true, frame: nil)
-        let note = Note(record: record, text: "")
+        let note = Note(record: record, text: text)
         notes.append(note)
-        try? "".write(to: bodyURL(for: note.id), atomically: true, encoding: .utf8)
+        try? text.write(to: bodyURL(for: note.id), atomically: true, encoding: .utf8)
         return note
     }
 
