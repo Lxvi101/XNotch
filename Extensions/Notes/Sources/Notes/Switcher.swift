@@ -330,23 +330,13 @@ private struct SwitcherCard: View {
                     }
                 }
             }
-            HStack(spacing: 12) {
-                if !model.isCommandMode {
-                    KeyHint(title: "Actions", keys: [">"])
-                    if model.library.spaces.count > 1 {
-                        KeyHint(title: "Spaces", keys: ["⇥"])
-                            .help("← → or Tab: other spaces. ⌥← ⌥→: move this space. ⌘] ⌘[: put it inside the one to its left, or take it out. F2: rename. ⌥⌘N: new space.")
-                    }
-                }
-                Spacer(minLength: 0)
-                if model.isCommandMode {
-                    KeyHint(title: "Run", keys: ["↩"])
-                } else {
-                    KeyHint(title: "Open", keys: ["↩"])
-                    KeyHint(title: "New Window", keys: ["⌘", "↩"])
-                }
+            // The hints never widen the card: in a narrow note the least needed
+            // ones go, rather than pushing the whole card past the note's edge.
+            ViewThatFits(in: .horizontal) {
+                footer(spaces: true, newWindow: true)
+                footer(spaces: false, newWindow: true)
+                footer(spaces: false, newWindow: false)
             }
-            .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
         .background {
@@ -358,6 +348,28 @@ private struct SwitcherCard: View {
         .onAppear {
             DispatchQueue.main.async { focused = true }
         }
+    }
+
+    private func footer(spaces: Bool, newWindow: Bool) -> some View {
+        HStack(spacing: 12) {
+            if !model.isCommandMode {
+                KeyHint(title: "Actions", keys: [">"])
+                if spaces && model.library.spaces.count > 1 {
+                    KeyHint(title: "Spaces", keys: ["⇥"])
+                        .help("← → or Tab: other spaces. ⌥← ⌥→: move this space. ⌘] ⌘[: put it inside the one to its left, or take it out. F2: rename. ⌥⌘N: new space.")
+                }
+            }
+            Spacer(minLength: 0)
+            if model.isCommandMode {
+                KeyHint(title: "Run", keys: ["↩"])
+            } else {
+                KeyHint(title: "Open", keys: ["↩"])
+                if newWindow {
+                    KeyHint(title: "New Window", keys: ["⌘", "↩"])
+                }
+            }
+        }
+        .padding(.horizontal, 14)
     }
 }
 

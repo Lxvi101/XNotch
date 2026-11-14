@@ -60,6 +60,19 @@ final class DragIntoFolderWatcher {
     nonisolated(unsafe) private var hoveringFlag = false
     nonisolated var isHovering: Bool { hoveringFlag }
 
+    /// The folder a drag over `point` is aimed at: a folder's icon, or the
+    /// drawer it opened. macOS reorders the bar live during a Command-drag,
+    /// so the icon often slides out from under the pointer; the drawer stays.
+    private func dropTarget(at point: CGPoint, controller: BarController) -> UUID? {
+        if let folder = controller.folderFrames.first(where: { $0.frame.insetBy(dx: -6, dy: -4).contains(point) })?.id {
+            return folder
+        }
+        if controller.drawer.isDropTarget, controller.drawer.contains(globalPoint: point) {
+            return controller.drawer.openFolder
+        }
+        return nil
+    }
+
     /// `point` is in global display coordinates (top-left origin), the space
     /// the window server reports item bounds in.
     private func handle(_ type: CGEventType, command: Bool, at point: CGPoint) {
@@ -79,6 +92,11 @@ final class DragIntoFolderWatcher {
             if let over { controller.hoverChanged(true, folder: over) }
             DebugLog.write("hover folder=\(over?.uuidString ?? "none")")
         case .leftMouseDown:
+            // A click anywhere but the drawer and the folders puts a clicked-open drawer away.
+            if !controller.mover.busy, controller.drawer.isPinned, !controller.drawer.contains(globalPoint: point),
+               !controller.folderFrames.contains(where: { $0.frame.contains(point) }) {
+                controller.drawer.close(animated: true)
+            }
             // The mover's own presses happen with the cursor hidden and land
             // off screen; ignore everything while it works.
             guard command, !controller.mover.busy else { return }
@@ -88,11 +106,12 @@ final class DragIntoFolderWatcher {
             target = nil
         case .leftMouseDragged:
             guard dragged != nil else { return }
-            let over = controller.folderFrames.first { $0.frame.insetBy(dx: -6, dy: -4).contains(point) }?.id
+            let over = dropTarget(at: point, controller: controller)
             guard over != target else { return }
             target = over
             dwell?.cancel()
-            if let over {
+            // Over the drawer it's already showing; only a folder's icon opens it.
+            if let over, controller.drawer.openFolder != over || !controller.drawer.isDropTarget {
                 let work = DispatchWorkItem { [weak controller] in controller?.present(over, asDropTarget: true) }
                 dwell = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
@@ -100,10 +119,16 @@ final class DragIntoFolderWatcher {
         case .leftMouseUp:
             dwell?.cancel()
             defer { dragged = nil; target = nil }
-            if dragged != nil { DebugLog.write("release; over folder=\(target?.uuidString ?? "none")") }
-            guard let dragged, let target else { return }
+            guard let dragged else { return }
+            let landed = dropTarget(at: point, controller: controller) ?? target
+            DebugLog.write("release at \(point); into folder=\(landed?.uuidString ?? "none")")
+            guard let landed else {
+                // Let go somewhere else: the drawer that was waiting for it goes away.
+                if controller.drawer.isDropTarget { controller.drawer.close(animated: true) }
+                return
+            }
             controller.drawer.dropLanded()
-            controller.file(dragged, in: target)
+            controller.file(dragged, in: landed)
         default:
             break
         }

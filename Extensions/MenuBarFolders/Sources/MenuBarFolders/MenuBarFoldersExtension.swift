@@ -93,6 +93,7 @@ private struct SettingsPane: View {
                         store.rename(folder.id, to: name)
                         controller?.refreshIcons()
                     }
+                    FolderIconPicker(folder: folder) { symbol in controller?.setSymbol(symbol, for: folder.id) }
                     if folder.items.isEmpty {
                         Text("Empty. Right-click the folder in the menu bar to add icons.")
                             .foregroundStyle(.secondary)
@@ -129,6 +130,41 @@ private struct SettingsPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// The folder's face: what's inside it, or one of a few symbols.
+private struct FolderIconPicker: View {
+    let folder: BarFolder
+    let onPick: (String?) -> Void
+
+    var body: some View {
+        LabeledContent("Icon") {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: 4), count: 9), spacing: 4) {
+                cell(nil, systemImage: "square.grid.2x2", help: "What's inside")
+                ForEach(FolderGlyph.symbols, id: \.name) { symbol in
+                    cell(symbol.name, systemImage: symbol.name, help: symbol.title)
+                }
+            }
+        }
+    }
+
+    private func cell(_ symbol: String?, systemImage: String, help: String) -> some View {
+        let chosen = folder.symbol == symbol
+        return Button { onPick(symbol) } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(chosen ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05)))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(chosen ? Color.accentColor : .clear, lineWidth: 1.5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
 

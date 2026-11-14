@@ -4,6 +4,30 @@ import AppKit
 /// its icons, like a folder on the Home Screen. Drawn when shown, so it picks
 /// up the menu bar's current appearance.
 enum FolderGlyph {
+    /// Symbols a folder can wear instead of its contents.
+    static let symbols: [(name: String, title: String)] = [
+        ("folder.fill", "Folder"), ("tray.fill", "Tray"), ("archivebox.fill", "Box"),
+        ("square.grid.2x2.fill", "Grid"), ("ellipsis.circle.fill", "More"), ("star.fill", "Star"),
+        ("heart.fill", "Heart"), ("bolt.fill", "Bolt"), ("wrench.and.screwdriver.fill", "Tools"),
+        ("hammer.fill", "Hammer"), ("gearshape.fill", "Gear"), ("network", "Network"),
+        ("wifi", "Wi-Fi"), ("lock.fill", "Lock"), ("cloud.fill", "Cloud"), ("music.note", "Music"),
+        ("camera.fill", "Camera"), ("message.fill", "Messages"), ("paperplane.fill", "Send"),
+        ("briefcase.fill", "Work"), ("house.fill", "Home"), ("gamecontroller.fill", "Games"),
+        ("sparkles", "Sparkles"), ("leaf.fill", "Leaf"),
+    ]
+
+    /// The folder's face: its symbol when it has one, else its icons.
+    static func image(for folder: BarFolder, icons: [NSImage]) -> NSImage {
+        if let name = folder.symbol,
+           let symbol = NSImage(systemSymbolName: name, accessibilityDescription: folder.name)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)) {
+            // A template, so it takes the menu bar's colour like the system's icons.
+            symbol.isTemplate = true
+            return symbol
+        }
+        return image(for: icons)
+    }
+
     static func image(for icons: [NSImage]) -> NSImage {
         guard !icons.isEmpty else {
             let empty = NSImage(systemSymbolName: "square.dashed", accessibilityDescription: "Empty folder")

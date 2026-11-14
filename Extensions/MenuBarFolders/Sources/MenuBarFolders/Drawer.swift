@@ -144,6 +144,22 @@ final class DrawerController {
     private var orderOutWork: DispatchWorkItem?
 
     var openFolder: UUID? { model.isOpen ? model.folderID : nil }
+    var isDropTarget: Bool { model.isOpen && model.isDropTarget }
+    /// Clicked open: stays out when the pointer leaves, until a click elsewhere.
+    private(set) var isPinned = false
+
+    func pin() {
+        guard model.isOpen else { return }
+        isPinned = true
+        outsideSince = nil
+    }
+
+    /// Whether `point`, in global display coordinates (top-left origin), is
+    /// on the open drawer, with a little margin.
+    func contains(globalPoint point: CGPoint) -> Bool {
+        guard model.isOpen, let top = NSScreen.screens.first?.frame.maxY else { return false }
+        return drawerRect.insetBy(dx: -10, dy: -10).contains(NSPoint(x: point.x, y: top - point.y))
+    }
 
     /// The panel is sized for the widest drawer up front so opening never
     /// resizes a window mid-spring.
@@ -253,6 +269,7 @@ final class DrawerController {
     func close(animated: Bool) {
         dwell?.cancel()
         stopWatchingPointer()
+        isPinned = false
         guard model.isOpen else { return }
         panel.ignoresMouseEvents = true
         if animated {
@@ -321,7 +338,7 @@ final class DrawerController {
                             width: width, height: DrawerModel.height)
         let inside = anchor.insetBy(dx: -3, dy: -3).contains(mouse) || drawer.insetBy(dx: -4, dy: -4).contains(mouse)
         updateHoveredTile(mouse: mouse, drawer: drawer)
-        if inside || model.draggingID != nil {
+        if inside || isPinned || model.draggingID != nil {
             outsideSince = nil
         } else if let since = outsideSince {
             if Date().timeIntervalSince(since) > 0.24 { close(animated: true) }

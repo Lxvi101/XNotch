@@ -12,6 +12,8 @@ struct BarFolder: Codable, Hashable, Identifiable {
     var id = UUID()
     var name: String
     var items: [FiledItem] = []
+    /// An SF Symbol for the folder's face; nil shows the icons inside it.
+    var symbol: String?
 }
 
 /// The folders and what's in them, plus the last picture of each item.
@@ -81,6 +83,12 @@ final class FolderStore {
     func rename(_ id: UUID, to name: String) {
         guard let index = folders.firstIndex(where: { $0.id == id }) else { return }
         folders[index].name = name.trimmingCharacters(in: .whitespaces).isEmpty ? "Folder" : name
+        save()
+    }
+
+    func setSymbol(_ id: UUID, to symbol: String?) {
+        guard let index = folders.firstIndex(where: { $0.id == id }) else { return }
+        folders[index].symbol = symbol
         save()
     }
 

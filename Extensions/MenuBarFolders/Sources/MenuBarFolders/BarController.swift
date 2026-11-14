@@ -173,43 +173,82 @@ final class BarController: NSObject {
         return (loose + folders).min { $0.1.minX < $1.1.minX }.map { (window: $0.0, bounds: $0.1) }
     }
 
-    /// Puts a divider just left of the boundary icon. It is made 1 pt wide at
-    /// the right end, where it always fits, Command-dragged against the
-    /// icon's left edge, and only then stretched. Saved positions can't place
-    /// it: other apps' are only updated when their icons are dragged, so they
-    /// go stale as the bar reflows. The new divider goes in before the old one
-    /// comes out, so nothing filed flashes into view.
+    /// Puts a divider just left of the boundary icon and stretches it.
     private func seatDivider() async {
-        guard canMoveItems else { return }
+        guard canMoveItems, let staged = await stageDivider() else { return }
+        commit(staged)
+    }
+
+    /// A fresh divider, 1 pt and invisible, right before the boundary icon:
+    /// the line between what hides and what shows, not yet stretched.
+    ///
+    /// It's made where it belongs, from a saved position worked out from the
+    /// icon's place, so nothing on the bar moves. Saved positions only place
+    /// an item when it's made, and other apps' go stale, so where it lands is
+    /// checked; a miss is Command-dragged into place, twice at most.
+    private func stageDivider(excluding excluded: Set<String> = []) async -> (item: NSStatusItem, bar: BarItem)? {
         await waitForBarToSettle()
-        guard let boundary = boundary() else { return }
+        guard var target = boundary(excluding: excluded) else { return nil }
         dividerGeneration += 1
         let name = "MenuBarFolders.Divider.\(dividerGeneration % 2)"
-        UserDefaults.standard.set(0.0, forKey: Self.positionKey(name))
+        // Distance from the screen's right edge to the item's right edge.
+        UserDefaults.standard.set(Double(screenWidth - target.bounds.minX), forKey: Self.positionKey(name))
         // A status item made at zero length can stay without a real window.
         let fresh = NSStatusBar.system.statusItem(withLength: 1)
         fresh.autosaveName = name
         fresh.button?.image = nil
-        try? await Task.sleep(for: .milliseconds(60))
+        try? await Task.sleep(for: .milliseconds(40))
         guard let window = fresh.button?.window, let item = BarItem.own(CGWindowID(window.windowNumber)) else {
             NSStatusBar.system.removeStatusItem(fresh)
-            return
+            return nil
         }
-        let moved = await mover.move(item, to: .left, of: boundary.window)
-        // Only a divider that really ended up against the icon may be
-        // stretched: anywhere else it would hide icons that should show.
-        let now = WindowServer.bounds(of: item.windowID)
-        let landed = moved && now.map { $0.minX > 0 && abs($0.maxX - boundary.bounds.minX) <= 3 } == true
-        DebugLog.write("divider seat beside \(boundary.bounds.minX): moved=\(moved) landed=\(landed) at \(now?.minX ?? -1)")
-        guard landed else {
+        // Only a divider right before the boundary icon may be stretched:
+        // anywhere else it would hide icons that should show. Neighbours are
+        // compared, not positions: a 1 pt item sits a few points shy of the
+        // next icon.
+        func isSeated() -> Bool {
+            Self.rightNeighbour(of: item.windowID) == target.window && (WindowServer.bounds(of: item.windowID)?.minX ?? 0) > 0
+        }
+        var seated = isSeated()
+        DebugLog.write("divider made beside \(target.window): in place=\(seated)")
+        var attempt = 0
+        while !seated && attempt < 2 {
+            attempt += 1
+            let moved = await mover.move(item, to: .left, of: target.window)
+            await waitForBarToSettle()
+            seated = isSeated()
+            DebugLog.write("divider drag #\(attempt) beside \(target.window): moved=\(moved) seated=\(seated)")
+            if !seated, let next = boundary(excluding: excluded) { target = next }
+        }
+        guard seated else {
             NSStatusBar.system.removeStatusItem(fresh)
-            return
+            return nil
         }
-        fresh.length = Self.collapsedLength
+        return (fresh, item)
+    }
+
+    /// Stretches a staged divider, which pushes everything left of it off
+    /// screen, and retires the old one. The new one is in before the old one
+    /// goes, so nothing filed flashes into view.
+    private func commit(_ staged: (item: NSStatusItem, bar: BarItem)) {
+        staged.item.length = Self.collapsedLength
         let old = divider
-        divider = fresh
-        try? await Task.sleep(for: .milliseconds(60))
-        if let old { NSStatusBar.system.removeStatusItem(old) }
+        divider = staged.item
+        if let old {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { NSStatusBar.system.removeStatusItem(old) }
+        }
+    }
+
+    /// The icon right after `window` on the bar, any app's, XNotch's included.
+    private static func rightNeighbour(of window: CGWindowID) -> CGWindowID? {
+        guard let mine = WindowServer.bounds(of: window) else { return nil }
+        return WindowServer.menuBarWindowIDs().compactMap { id -> (CGWindowID, CGRect)? in
+            // The bar's own backdrop spans the screen; icons are narrow.
+            guard id != window, let bounds = WindowServer.bounds(of: id),
+                  bounds.width > 0, bounds.width < 400, bounds.minX > mine.minX else { return nil }
+            return (id, bounds)
+        }
+        .min { $0.1.minX < $1.1.minX }?.0
     }
 
     /// Icons slide into place after a move. Measure the bar only once two
@@ -247,7 +286,7 @@ final class BarController: NSObject {
     private func refreshIcon(for folderID: UUID) {
         guard let folder = store.folders.first(where: { $0.id == folderID }),
               let button = folderItems[folderID]?.button else { return }
-        button.image = FolderGlyph.image(for: folder.items.prefix(4).map { store.image(for: $0) })
+        button.image = FolderGlyph.image(for: folder, icons: folder.items.prefix(4).map { store.image(for: $0) })
     }
 
     @objc private func folderClicked(_ sender: NSStatusBarButton) {
@@ -256,9 +295,11 @@ final class BarController: NSObject {
             drawer.close(animated: true)
             showFolderMenu(for: id, from: sender)
         } else if drawer.openFolder == id {
-            drawer.close(animated: true)
+            // Hover opened it; the click keeps it. A second click puts it away.
+            if drawer.isPinned { drawer.close(animated: true) } else { drawer.pin() }
         } else {
             present(id)
+            drawer.pin()
         }
     }
 
@@ -357,19 +398,20 @@ final class BarController: NSObject {
         }
     }
 
-    /// Hides filed items that are on the bar: each goes against the left edge
-    /// of the boundary icon, then the divider is seated between them.
+    /// Hides filed items that are on the bar. The new divider goes in first,
+    /// right before the first icon that stays; the items are dropped just
+    /// left of it, and it's stretched straight away, so each item is in view
+    /// only for the moment it lands.
     private func stash(_ ids: Set<String>) async {
-        var moved = false
-        for id in ids {
-            await waitForBarToSettle()
-            guard let item = BarItem.current().first(where: { $0.id == id }), item.bounds.minX > 0,
-                  let boundary = boundary(excluding: ids) else { continue }
-            if await mover.move(item, to: .left, of: boundary.window) { moved = true }
+        guard canMoveItems else { return }
+        let showing = { [weak self] in
+            BarItem.current().filter { ids.contains($0.id) && $0.bounds.minX > 0 && $0.id != self?.revealed?.item.id }
         }
-        let stillShowing = BarItem.current().contains { store.filedIDs.contains($0.id) && $0.bounds.minX > 0
-            && $0.id != revealed?.item.id }
-        if moved || stillShowing { await seatDivider() }
+        guard !showing().isEmpty, let staged = await stageDivider(excluding: ids) else { return }
+        for item in showing() {
+            await mover.move(item, to: .left, of: staged.bar.windowID)
+        }
+        commit(staged)
     }
 
     /// Hides filed items that are in view (an app relaunched, or the user
@@ -444,7 +486,7 @@ final class BarController: NSObject {
             var quietPolls = 0
             let start = ContinuousClock.now
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(250))
+                try? await Task.sleep(for: .milliseconds(100))
                 let windows = Self.onScreenWindows()
                 let barBottom = item.liveBounds().maxY
                 if ContinuousClock.now - start < .milliseconds(800) {
@@ -458,7 +500,7 @@ final class BarController: NSObject {
                 sawMenu = sawMenu || open
                 quietPolls = open ? 0 : quietPolls + 1
                 // A click that opened nothing (or opened an app) gets 3 s.
-                if (sawMenu && quietPolls >= 2) || (!sawMenu && ContinuousClock.now - start > .seconds(3)) { break }
+                if (sawMenu && quietPolls >= 3) || (!sawMenu && ContinuousClock.now - start > .seconds(3)) { break }
             }
             guard !Task.isCancelled, let self, self.revealed?.item.id == item.id else { return }
             self.revealed = nil
@@ -481,6 +523,26 @@ final class BarController: NSObject {
 
     // MARK: Menus
 
+    private func iconMenu(for folder: BarFolder) -> NSMenu {
+        let menu = NSMenu()
+        let contents = ClosureMenuItem(title: "What's Inside") { [weak self] in self?.setSymbol(nil, for: folder.id) }
+        contents.state = folder.symbol == nil ? .on : .off
+        menu.addItem(contents)
+        menu.addItem(.separator())
+        for symbol in FolderGlyph.symbols {
+            let entry = ClosureMenuItem(title: symbol.title) { [weak self] in self?.setSymbol(symbol.name, for: folder.id) }
+            entry.image = NSImage(systemSymbolName: symbol.name, accessibilityDescription: nil)
+            entry.state = folder.symbol == symbol.name ? .on : .off
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
+    func setSymbol(_ symbol: String?, for folderID: UUID) {
+        store.setSymbol(folderID, to: symbol)
+        refreshIcon(for: folderID)
+    }
+
     private func showFolderMenu(for folderID: UUID, from button: NSStatusBarButton) {
         guard let folder = store.folders.first(where: { $0.id == folderID }) else { return }
         let menu = NSMenu()
@@ -500,6 +562,9 @@ final class BarController: NSObject {
         }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: "Rename…") { [weak self] in self?.promptRename(folderID) })
+        let icon = NSMenuItem(title: "Icon", action: nil, keyEquivalent: "")
+        icon.submenu = iconMenu(for: folder)
+        menu.addItem(icon)
         menu.addItem(ClosureMenuItem(title: "New Folder") { [weak self] in self?.addFolder() })
         if store.folders.count > 1 {
             menu.addItem(ClosureMenuItem(title: "Remove Folder") { [weak self] in self?.removeFolder(folderID) })
