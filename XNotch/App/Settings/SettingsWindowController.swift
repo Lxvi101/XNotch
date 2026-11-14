@@ -9,13 +9,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let updater: SoftwareUpdater
     private let navigation = SettingsNavigation()
     private let onReplayOnboarding: () -> Void
+    private let onReviewPermissions: () -> Void
 
     init(model: NotchViewModel, lockScreen: LockScreenController, updater: SoftwareUpdater,
-         onReplayOnboarding: @escaping () -> Void) {
+         onReplayOnboarding: @escaping () -> Void, onReviewPermissions: @escaping () -> Void) {
         self.model = model
         self.lockScreen = lockScreen
         self.updater = updater
         self.onReplayOnboarding = onReplayOnboarding
+        self.onReviewPermissions = onReviewPermissions
     }
 
     func show(pane: SettingsPane? = nil) {
@@ -34,7 +36,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                                 onReplayOnboarding: { [weak self] in
                                     self?.window?.orderOut(nil)
                                     self?.onReplayOnboarding()
-                                })
+                                },
+                                onReviewPermissions: { [weak self] in self?.onReviewPermissions() })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 500),
                               styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)

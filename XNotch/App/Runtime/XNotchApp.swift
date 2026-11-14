@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lockScreen: LockScreenController?
     private var settings: SettingsWindowController?
     private var onboarding: OnboardingController?
+    private var checkup: PermissionCheckup?
     private let updater = SoftwareUpdater()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -17,8 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lockScreen = LockScreenController(media: model.media, preferences: model.preferences)
         lockScreen.onLock = { [weak displays] in displays?.close() }
         let onboarding = OnboardingController(model: model, preferences: model.preferences)
+        let checkup = PermissionCheckup(onboarding: onboarding, extensions: model.extensions, preferences: model.preferences)
+        model.extensions.onActivate = { [weak checkup] _ in checkup?.schedule() }
+        onboarding.onEnded = { [weak checkup] in checkup?.schedule(after: 2) }
         let settings = SettingsWindowController(model: model, lockScreen: lockScreen, updater: updater,
-                                                onReplayOnboarding: { [weak onboarding] in onboarding?.start() })
+                                                onReplayOnboarding: { [weak onboarding] in onboarding?.start() },
+                                                onReviewPermissions: { [weak checkup] in checkup?.review() })
         displays.onOpenSettings = { [weak settings] pane in settings?.show(pane: pane) }
         let permissions = PermissionCenter.shared
         permissions.onGuideMoved = { [weak displays] frame in displays?.models.forEach { $0.watchPermissionGuide(frame) } }
@@ -29,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.lockScreen = lockScreen
         self.settings = settings
         self.onboarding = onboarding
+        self.checkup = checkup
+        defer { checkup.start() }
         if model.preferences.hasCompletedOnboarding {
             displays.startServices()
         } else {
@@ -54,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// xnotch://open/<music|tray|extension-id[/page-id]>, xnotch://close,
     /// xnotch://settings[/<pane>], xnotch://lockscreen/preview, xnotch://pills/preview, xnotch://onboarding,
-    /// xnotch://permissions/<fullDiskAccess|accessibility|screenRecording>
+    /// xnotch://permissions/<fullDiskAccess|accessibility|screenRecording>, xnotch://permissions (review what's missing)
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "xnotch" {
             handle(url)
@@ -93,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "permissions":
             if let permission = path.first.flatMap(Permission.init(rawValue:)) {
                 PermissionCenter.shared.request(permission)
+            } else if path.isEmpty {
+                checkup?.review()
             }
         default:
             break

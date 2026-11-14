@@ -1,0 +1,12 @@
+{
+  "id": "menubarfolders",
+  "name": "Menu Bar Folders",
+  "version": "0.1.0",
+  "summary": "Tuck menu bar icons into folders that melt open under the bar.",
+  "description": "Group the icons crowding your menu bar into folders. Hover a folder and a drawer flows out of the menu bar with everything inside it; click an icon and it opens right there. Uses Accessibility to move icons and Screen Recording to draw them.",
+  "symbol": "menubar.rectangle",
+  "tint": "#FF9F0A",
+  "principalClass": "MenuBarFoldersPrincipal",
+  "kit": { "abi": 3, "minAPI": "1.9.0" },
+  "creator": { "name": "XNotch" }
+}

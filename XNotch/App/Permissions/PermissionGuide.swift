@@ -18,6 +18,14 @@ final class PermissionGuideState: ObservableObject {
     @Published var isGranted = false
     @Published var settingsFrontmost = true
     @Published var showsRelaunch = false
+    /// Offered once the grant is overdue: the row in System Settings may
+    /// belong to a copy signed differently.
+    @Published var showsReset = false
+    @Published var reset: ResetState = .offered
+
+    enum ResetState: Equatable {
+        case offered, resetting, done, failed
+    }
 
     init(permission: Permission, subject: PermissionSubject) {
         self.permission = permission
@@ -46,7 +54,7 @@ final class PermissionGuideController {
     /// Room around the card for its shadow.
     static let margin: CGFloat = 22
     static let cardWidth: CGFloat = 440
-    private static let panelSize = CGSize(width: cardWidth + 2 * margin, height: 210)
+    private static let panelSize = CGSize(width: cardWidth + 2 * margin, height: 270)
 
     init(permission: Permission, subject: PermissionSubject, source: NSRect) {
         self.source = source
@@ -57,6 +65,7 @@ final class PermissionGuideController {
             close: { [weak self] in self?.dismiss() },
             reopenSettings: { NSWorkspace.shared.open(permission.settingsURL) },
             relaunch: relaunch,
+            reset: { [weak self] in self?.resetGrant() },
             dragChanged: { [weak self] dragging in
                 self?.state.isDragging = dragging
                 self?.panel.ignoresMouseEvents = dragging
@@ -102,6 +111,10 @@ final class PermissionGuideController {
             let visible = screen.visibleFrame
             launch(to: NSPoint(x: visible.midX - Self.panelSize.width / 2, y: visible.minY + visible.height * 0.18))
         }
+        schedule(after: 12) { [weak self] in
+            guard let self, !state.isGranted else { return }
+            withAnimation(Motion.open) { self.state.showsReset = true }
+        }
         if state.permission.appliesAfterRelaunch {
             schedule(after: 9) { [weak self] in
                 guard let self, !state.isGranted else { return }
@@ -110,11 +123,30 @@ final class PermissionGuideController {
         }
     }
 
+    /// Removes the app's row for this permission, then brings the list back
+    /// for a fresh drag.
+    private func resetGrant() {
+        guard state.reset != .resetting, let bundleID = Bundle(url: state.subject.bundleURL)?.bundleIdentifier else {
+            withAnimation(Motion.content) { state.reset = .failed }
+            return
+        }
+        withAnimation(Motion.content) { state.reset = .resetting }
+        let permission = state.permission
+        Task { @MainActor [weak self] in
+            let worked = await Permission.reset(permission.tccService, bundleID: bundleID)
+            guard let self, !isFinished else { return }
+            withAnimation(Motion.content) { self.state.reset = worked ? .done : .failed }
+            // System Settings shows the list as it was until the pane reloads.
+            if worked { NSWorkspace.shared.open(permission.settingsURL) }
+        }
+    }
+
     func markGranted() {
         guard !state.isGranted, !isFinished else { return }
         withAnimation(.spring(response: 0.42, dampingFraction: 0.62)) {
             state.isGranted = true
             state.showsRelaunch = false
+            state.showsReset = false
         }
         Haptics.tap()
         schedule(after: 1.2) { [weak self] in self?.departIntoNotch() }
@@ -304,6 +336,7 @@ struct PermissionGuideView: View {
         let reopenSettings: () -> Void
         /// nil for another app, which picks the grant up next time it starts.
         let relaunch: (() -> Void)?
+        let reset: () -> Void
         let dragChanged: (Bool) -> Void
     }
 
@@ -330,6 +363,10 @@ struct PermissionGuideView: View {
             }
             if state.showsRelaunch && !state.isGranted {
                 relaunchRow
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if state.showsReset && !state.isGranted {
+                resetRow
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -429,6 +466,36 @@ struct PermissionGuideView: View {
                 Button("Relaunch", action: relaunch)
                     .controlSize(.small)
             }
+        }
+    }
+
+    private var resetRow: some View {
+        HStack(spacing: 10) {
+            Text(resetText)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.interpolate)
+            Spacer(minLength: 0)
+            switch state.reset {
+            case .offered:
+                Button("Reset", action: actions.reset).controlSize(.small)
+            case .resetting:
+                ProgressView().controlSize(.small)
+            case .done, .failed:
+                EmptyView()
+            }
+        }
+    }
+
+    private var resetText: String {
+        switch state.reset {
+        case .offered, .resetting:
+            "On, but nothing happens? Dragging does nothing? macOS may remember another copy of \(appName)."
+        case .done:
+            "Reset. Now drag \(appName) into the list again."
+        case .failed:
+            "Couldn't reset. Select \(appName) in the list, click −, then drag it in again."
         }
     }
 

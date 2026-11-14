@@ -21,6 +21,7 @@ struct SettingsView: View {
     let media: NowPlayingService
     let onPreviewLockScreen: () -> Void
     let onReplayOnboarding: () -> Void
+    let onReviewPermissions: () -> Void
 
     var body: some View {
         // The sidebar always shows, as in System Settings: the window doesn't
@@ -69,7 +70,7 @@ struct SettingsView: View {
         switch navigation.selection {
         case .general:
             GeneralPane(preferences: preferences, permissions: .shared, extensions: extensions,
-                        onReplayOnboarding: onReplayOnboarding)
+                        onReplayOnboarding: onReplayOnboarding, onReviewPermissions: onReviewPermissions)
                 .navigationTitle("General")
         case .music:
             MusicPane(preferences: preferences, media: media).navigationTitle("Music")
@@ -124,7 +125,11 @@ private struct GeneralPane: View {
     @ObservedObject var permissions: PermissionCenter
     @ObservedObject var extensions: ExtensionManager
     let onReplayOnboarding: () -> Void
+    let onReviewPermissions: () -> Void
     @State private var screens = DisplayOption.connected
+    /// What running extensions still lack. Extensions don't announce grants,
+    /// so it's asked again every couple of seconds while the pane shows.
+    @State private var extensionPermissions: [ExtensionManager.PendingPermission] = []
 
     /// Every page the notch can show, in the user's order. Music is listed
     /// whenever it's on, even with nothing playing.
@@ -266,11 +271,23 @@ private struct GeneralPane: View {
                         permissions.request(permission)
                     }
                 }
+                ForEach(extensionPermissions, id: \.key) { pending in
+                    ExtensionPermissionRow(pending: pending, onRequest: onReviewPermissions)
+                }
             } header: {
                 Text("Permissions")
             } footer: {
                 Text("XNotch opens the right place in System Settings and shows you what to drag where.")
                     .foregroundStyle(.secondary)
+            }
+            .task {
+                while !Task.isCancelled {
+                    let pending = extensions.pendingPermissions
+                    if pending.map(\.key) != extensionPermissions.map(\.key) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { extensionPermissions = pending }
+                    }
+                    try? await Task.sleep(for: .seconds(2))
+                }
             }
             Section {
                 LabeledContent("Settings", value: "⌘ ,")
@@ -297,6 +314,30 @@ private struct DisplayOption: Identifiable {
 
     @MainActor static var connected: [DisplayOption] {
         NSScreen.screens.compactMap { screen in screen.displayID.map { DisplayOption(id: $0, name: screen.localizedName) } }
+    }
+}
+
+/// A permission an extension still needs. Allowing it runs the checkup, which asks for it the way
+/// the welcome tour does.
+private struct ExtensionPermissionRow: View {
+    let pending: ExtensionManager.PendingPermission
+    let onRequest: () -> Void
+
+    var body: some View {
+        let permission = pending.permission
+        HStack(spacing: 12) {
+            SettingsIcon(symbol: permission.symbol, color: permission.tint.flatMap(Color.init(hex:)) ?? .gray, size: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(permission.title)")
+                Text("\(pending.extensionName) · \(permission.detail). \(permission.reason)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button("Allow…", action: onRequest)
+        }
+        .padding(.vertical, 2)
     }
 }
 

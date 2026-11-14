@@ -15,6 +15,13 @@ final class OnboardingState: ObservableObject {
         case asking, guiding, granted
     }
 
+    /// The whole welcome tour, or just the permission steps for what has gone
+    /// missing since: an update that needs something new, an extension added
+    /// in Settings, a grant macOS dropped.
+    enum Mode {
+        case tour, checkup
+    }
+
     /// The hero's resting shapes: the physical notch, a face big enough for
     /// its eyes, and the tutorial panel.
     enum Form {
@@ -55,8 +62,12 @@ final class OnboardingState: ObservableObject {
     @Published var extensionPermissions: [ExtensionManager.PendingPermission] = []
     @Published var grantedPermissions: Set<String> = []
     @Published var extensionAccess: Access = .asking
+    @Published var mode: Mode = .tour
 
-    let permission = Permission.fullDiskAccess
+    /// XNotch's own permission the access step asks for.
+    @Published var permission = Permission.fullDiskAccess
+    /// The checkup's own permissions still to ask for, the current one first.
+    var ownPermissions: [Permission] = []
     let notchSize: CGSize
 
     init(notchSize: CGSize) {
@@ -130,6 +141,8 @@ final class OnboardingController {
     /// Called once the Full Disk Access step is behind the user, so services
     /// that read files can start without macOS asking folder by folder.
     var onSettled: (() -> Void)?
+    /// Called once the tour or a checkup has folded away.
+    var onEnded: (() -> Void)?
 
     private let model: NotchViewModel
     private let preferences: Preferences
@@ -138,6 +151,14 @@ final class OnboardingController {
     private var script: Task<Void, Never>?
     private var keyMonitor: Any?
     private var faceMonitors: [Any] = []
+    /// Notices grants made outside the flow, in System Settings or by macOS's own prompt.
+    private var livePoll: Timer?
+    /// Bumped to disown extension requests still in flight, once the user has called them off.
+    private var requestGeneration = 0
+    /// The window's level while macOS's prompts are put in front of it.
+    private var guidingLevel: NSWindow.Level?
+    /// Set once the hero is folding away; nothing can interrupt that.
+    private var isFinishing = false
 
     /// Set while the permission step is in progress, so a "Quit & Reopen"
     /// from System Settings comes back to it.
@@ -170,6 +191,31 @@ final class OnboardingController {
         if !state.offeredExtensions.isEmpty, let done = state.steps.firstIndex(of: .done) {
             state.steps.insert(.extensions, at: done)
         }
+        eyes.expression = .asleep
+        present(state, on: screen) { try await $0.arrive(thenOpen: firstStep) }
+    }
+
+    /// Just the permission steps of the tour, for permissions that have gone
+    /// missing since: XNotch's own first, then the extensions'. The notch grows
+    /// out of its place, asks, and folds back. Returns whether it showed.
+    @discardableResult
+    func startCheckup(own: [Permission], extensions: [ExtensionManager.PendingPermission]) -> Bool {
+        guard window == nil, !own.isEmpty || !extensions.isEmpty,
+              let screen = NotchDisplays.mainScreen() else { return false }
+        let state = OnboardingState(notchSize: model.notchSize)
+        state.mode = .checkup
+        state.ownPermissions = own
+        if let first = own.first { state.permission = first }
+        state.extensionPermissions = extensions
+        state.steps = (own.isEmpty ? [] : [.access]) + (extensions.isEmpty ? [] : [.extensionAccess])
+        let firstStep = state.steps[0]
+        eyes.expression = .neutral
+        present(state, on: screen) { try await $0.emerge(thenOpen: firstStep) }
+        return true
+    }
+
+    private func present(_ state: OnboardingState, on screen: NSScreen,
+                         entrance: @escaping @MainActor (OnboardingController) async throws -> Void) {
         let window = OnboardingWindow(screen: screen)
         let actions = OnboardingView.Actions(
             primary: { [weak self] in self?.primaryAction() },
@@ -181,17 +227,20 @@ final class OnboardingController {
         window.contentView = host
         self.state = state
         self.window = window
+        isFinishing = false
 
         model.setPresentingOnboarding(true)
         eyes.focus = nil
-        eyes.expression = .asleep
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let handled = MainActor.assumeIsolated { self?.handleKey(event) ?? false }
             return handled ? nil : event
         }
-        run { try await $0.arrive(thenOpen: firstStep) }
+        livePoll = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollGrants() }
+        }
+        run(entrance)
     }
 
     // MARK: Script
@@ -251,6 +300,24 @@ final class OnboardingController {
         open(firstStep)
     }
 
+    /// The checkup's entrance: no flight, the notch is already here. It grows a
+    /// face out of its own place, looks up, and opens.
+    private func emerge(thenOpen firstStep: OnboardingState.Step) async throws {
+        guard let state else { return }
+        // The hero starts exactly on the real notch, which it replaces.
+        set { state.presence = 1 }
+        withAnimation(.easeOut(duration: 0.5)) { state.dim = 1 }
+        if Motion.reduceMotion {
+            withAnimation(.easeOut(duration: 0.25)) { state.form = .face }
+        } else {
+            withAnimation(.spring(response: 0.48, dampingFraction: 0.74)) { state.form = .face }
+        }
+        try await pause(0.42)
+        eyes.flash(.happy, for: 0.5)
+        try await pause(0.4)
+        open(firstStep)
+    }
+
     /// The notch locks in: a squash along the impact, a rebound, a ring of
     /// light, and the glow drains away.
     private func snap() {
@@ -284,6 +351,7 @@ final class OnboardingController {
     private func open(_ step: OnboardingState.Step) {
         guard let state else { return }
         if step == .access { prepareAccess() }
+        if step == .extensionAccess { refreshExtensionGrants(animated: false) }
         withAnimation(.spring(response: 0.55, dampingFraction: 0.84)) {
             state.form = .panel
             state.step = step
@@ -294,6 +362,7 @@ final class OnboardingController {
     private func go(to step: OnboardingState.Step) {
         guard let state, state.step != step else { return }
         if step == .access { prepareAccess() }
+        if step == .extensionAccess { refreshExtensionGrants(animated: false) }
         if step == .shelf {
             set {
                 state.fileX = state.shelfSlot.x + 150
@@ -380,7 +449,7 @@ final class OnboardingController {
     }
 
     private func primaryAction() {
-        guard let state, state.form == .panel else { return }
+        guard let state, state.form == .panel, !isFinishing else { return }
         switch state.step {
         case .access:
             switch state.access {
@@ -394,7 +463,7 @@ final class OnboardingController {
             switch state.extensionAccess {
             case .asking: requestExtensionPermissions()
             case .guiding: break
-            case .granted: go(to: .done)
+            case .granted: leaveExtensionAccess()
             }
         case .done:
             finish()
@@ -405,12 +474,18 @@ final class OnboardingController {
         }
     }
 
+    /// "Not Now" is remembered, so a checkup doesn't ask again for what was
+    /// turned down. Settings can still ask.
     private func secondaryAction() {
-        guard let state, state.form == .panel else { return }
+        guard let state, state.form == .panel, !isFinishing else { return }
         switch state.step {
-        case .access: leaveAccess()
+        case .access:
+            if state.access != .granted { PermissionCheckup.decline(state.permission) }
+            leaveAccess()
         case .extensions: break
-        case .extensionAccess: go(to: .done)
+        case .extensionAccess:
+            declineExtensionPermissions()
+            leaveExtensionAccess()
         case .done: break
         default: go(to: .access)
         }
@@ -423,7 +498,11 @@ final class OnboardingController {
             primaryAction()
             return true
         case 53: // Escape
-            if state.step.rawValue < OnboardingState.Step.access.rawValue { secondaryAction() }
+            if state.mode == .checkup {
+                dismissCheckup()
+            } else if state.step.rawValue < OnboardingState.Step.access.rawValue {
+                secondaryAction()
+            }
             return true
         default:
             return false
@@ -434,7 +513,8 @@ final class OnboardingController {
 
     private func prepareAccess() {
         guard let state else { return }
-        UserDefaults.standard.set(true, forKey: Self.resumeKey)
+        // A "Quit & Reopen" mid-checkup comes back through the checkup itself.
+        if state.mode == .tour { UserDefaults.standard.set(true, forKey: Self.resumeKey) }
         PermissionCenter.shared.refresh()
         state.access = PermissionCenter.shared.isGranted(state.permission) ? .granted : .asking
     }
@@ -488,17 +568,24 @@ final class OnboardingController {
     }
 
     private func handleFaceEvent(_ event: NSEvent) -> Bool {
-        guard let state, let window, state.access == .guiding else { return false }
+        guard let state, let window, !isFinishing,
+              state.access == .guiding || state.extensionAccess == .guiding else { return false }
         let onFace = faceFrame.contains(NSEvent.mouseLocation)
         window.ignoresMouseEvents = !onFace
         guard onFace, event.type == .leftMouseDown else { return false }
         PermissionCenter.shared.cancel()
+        if state.extensionAccess == .guiding {
+            // An extension's request may never come back (a prompt of its own
+            // left open), so the flow doesn't wait for it.
+            requestGeneration += 1
+            extensionRequestsEnded()
+        }
         return true
     }
 
     private func accessRequestEnded(granted: Bool) {
         unwatchFace()
-        guard let state, let window else { return }
+        guard let state, let window, !isFinishing, state.step == .access else { return }
         window.ignoresMouseEvents = false
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -524,8 +611,24 @@ final class OnboardingController {
     }
 
     /// Full Disk Access is settled, so services and extensions can start; offer extensions next.
+    /// A checkup moves on to its next permission instead.
     private func leaveAccess() {
-        guard let state else { return }
+        guard let state, !isFinishing else { return }
+        if state.mode == .checkup {
+            state.ownPermissions.removeAll { $0 == state.permission }
+            if let next = state.ownPermissions.first {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
+                    state.permission = next
+                    prepareAccess()
+                }
+                play(.access)
+            } else if state.steps.contains(.extensionAccess) {
+                go(to: .extensionAccess)
+            } else {
+                foldAway()
+            }
+            return
+        }
         settle()
         if state.steps.contains(.extensions) { go(to: .extensions) } else { leaveExtensions() }
     }
@@ -563,7 +666,7 @@ final class OnboardingController {
     // MARK: Extension permissions
 
     /// Like Full Disk Access: the panel folds into a face and steps back so macOS's own prompt is in
-    /// front, and the eyes watch it. Each permission is asked in turn.
+    /// front, and the eyes watch it. Each permission is asked in turn. Clicking the face calls it off.
     private func requestExtensionPermissions() {
         guard let state, let window else { return }
         script?.cancel()
@@ -573,30 +676,43 @@ final class OnboardingController {
             state.dim = 0
         }
         window.ignoresMouseEvents = true
-        let level = window.level
+        guidingLevel = window.level
         // Keychain prompts come from another process; make sure they aren't under the tour.
         window.level = .normal
         eyes.expression = .attentive
         eyes.focus = CGPoint(x: window.frame.midX, y: window.frame.midY)
-        run { controller in
-            for pending in state.extensionPermissions where !state.isGranted(pending) {
+        watchFace()
+        requestGeneration += 1
+        let generation = requestGeneration
+        let asking = state.extensionPermissions.filter { !state.isGranted($0) }
+        Task { @MainActor [weak self] in
+            for pending in asking {
+                guard let self, self.requestGeneration == generation else { return }
+                // An extension switched off meanwhile has nothing left to ask.
+                guard self.model.extensions.isActive(pending.extensionID) else { continue }
                 if await pending.requester.requestPermission(pending.permission.id) {
+                    guard self.requestGeneration == generation else { return }
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         _ = state.grantedPermissions.insert(pending.key)
                     }
                 }
             }
-            controller.extensionRequestsEnded(restoring: level)
+            guard let self, self.requestGeneration == generation else { return }
+            self.extensionRequestsEnded()
         }
     }
 
-    private func extensionRequestsEnded(restoring level: NSWindow.Level) {
-        guard let state, let window else { return }
-        window.level = level
+    private func extensionRequestsEnded() {
+        unwatchFace()
+        guard let state, let window, !isFinishing, state.extensionAccess == .guiding else { return }
+        if let guidingLevel { window.level = guidingLevel }
+        guidingLevel = nil
         window.ignoresMouseEvents = false
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         eyes.focus = nil
+        // Some requests return before the grant lands, macOS's Accessibility prompt among them.
+        refreshExtensionGrants(animated: false)
         let allGranted = state.extensionPermissions.allSatisfy(state.isGranted)
         if allGranted {
             absorb(1.3)
@@ -613,8 +729,71 @@ final class OnboardingController {
         guard allGranted else { return }
         run { controller in
             try await controller.pause(1.5)
-            controller.go(to: .done)
+            controller.leaveExtensionAccess()
         }
+    }
+
+    private func leaveExtensionAccess() {
+        guard let state, !isFinishing else { return }
+        if state.mode == .checkup { foldAway() } else { go(to: .done) }
+    }
+
+    private func declineExtensionPermissions() {
+        guard let state else { return }
+        for pending in state.extensionPermissions where !state.isGranted(pending) {
+            PermissionCheckup.decline(pending)
+        }
+    }
+
+    /// Asks the extensions what they still lack. Rows turn On as grants land;
+    /// an extension switched off meanwhile drops out.
+    private func refreshExtensionGrants(animated: Bool = true) {
+        guard let state else { return }
+        let live = state.extensionPermissions.filter { model.extensions.isActive($0.extensionID) }
+        var granted = state.grantedPermissions
+        for pending in live where !granted.contains(pending.key) {
+            if !pending.requester.pendingPermissions.contains(where: { $0.id == pending.permission.id }) {
+                granted.insert(pending.key)
+            }
+        }
+        guard live.count != state.extensionPermissions.count || granted != state.grantedPermissions else { return }
+        let apply = {
+            state.extensionPermissions = live
+            state.grantedPermissions = granted
+        }
+        if animated { withAnimation(.spring(response: 0.4, dampingFraction: 0.8), apply) } else { apply() }
+    }
+
+    /// Grants made outside the flow, while it waits on the user: in System
+    /// Settings, or by a prompt that answered after its request returned.
+    private func pollGrants() {
+        guard let state, state.form == .panel, !isFinishing else { return }
+        switch state.step {
+        case .access where state.access == .asking:
+            if state.permission.isGranted {
+                PermissionCenter.shared.refresh()
+                accessRequestEnded(granted: true)
+            }
+        case .extensionAccess where state.extensionAccess == .asking:
+            refreshExtensionGrants()
+            if state.extensionPermissions.allSatisfy(state.isGranted) {
+                state.extensionAccess = .guiding
+                extensionRequestsEnded()
+            }
+        default:
+            break
+        }
+    }
+
+    /// Escape in a checkup: "Not Now" to everything it was going to ask.
+    private func dismissCheckup() {
+        guard let state, state.mode == .checkup, state.form == .panel, !isFinishing,
+              state.access != .guiding, state.extensionAccess != .guiding else { return }
+        for permission in state.ownPermissions where !permission.isGranted {
+            PermissionCheckup.decline(permission)
+        }
+        declineExtensionPermissions()
+        foldAway()
     }
 
     private func settle() {
@@ -625,28 +804,43 @@ final class OnboardingController {
 
     // MARK: Finish
 
-    /// Everything folds back the way it came: the panel into the face, the
-    /// face into the notch, the dim away. The hero then sits exactly on the
-    /// real notch, which takes over.
+    /// The end of the tour: the user's choices are kept, then it folds away.
     private func finish() {
-        guard let state else { return }
+        guard let state, !isFinishing else { return }
         if state.launchAtLogin && !preferences.launchesAtLogin { preferences.setLaunchesAtLogin(true) }
         preferences.hasCompletedOnboarding = true
         settle()
+        foldAway()
+    }
+
+    /// Everything folds back the way it came: the panel into the face, the
+    /// face into the notch, the dim away. The hero then sits exactly on the
+    /// real notch, which takes over. Runs outside the script, so nothing
+    /// that starts later can leave the screen dimmed.
+    private func foldAway() {
+        guard let state, !isFinishing else { return }
+        isFinishing = true
+        script?.cancel()
+        livePoll?.invalidate()
+        livePoll = nil
+        unwatchFace()
         window?.ignoresMouseEvents = true
-        run { controller in
+        let isTour = state.mode == .tour
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) { state.form = .face }
-            controller.eyes.flash(.happy, for: 0.9)
-            try await controller.pause(0.9)
-            controller.eyes.expression = .asleep
-            try await controller.pause(0.2)
+            self.eyes.flash(.happy, for: isTour ? 0.9 : 0.6)
+            try? await Task.sleep(for: .seconds(isTour ? 0.9 : 0.55))
+            if isTour { self.eyes.expression = .asleep }
+            try? await Task.sleep(for: .seconds(isTour ? 0.2 : 0.05))
             withAnimation(.spring(response: 0.45, dampingFraction: 1)) { state.form = .docked }
-            withAnimation(.easeInOut(duration: 0.7)) { state.dim = 0 }
-            try await controller.pause(0.75)
-            controller.model.setPresentingOnboarding(false)
-            controller.eyes.expression = .neutral
-            try await controller.pause(0.05)
-            controller.tearDown()
+            withAnimation(.easeInOut(duration: isTour ? 0.7 : 0.55)) { state.dim = 0 }
+            try? await Task.sleep(for: .seconds(isTour ? 0.75 : 0.6))
+            self.model.setPresentingOnboarding(false)
+            self.eyes.expression = .neutral
+            try? await Task.sleep(for: .seconds(0.05))
+            self.tearDown()
+            self.onEnded?()
         }
     }
 
@@ -654,9 +848,16 @@ final class OnboardingController {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         unwatchFace()
+        livePoll?.invalidate()
+        livePoll = nil
+        script?.cancel()
+        script = nil
+        requestGeneration += 1
+        guidingLevel = nil
         window?.orderOut(nil)
         window = nil
         state = nil
+        isFinishing = false
     }
 }
 

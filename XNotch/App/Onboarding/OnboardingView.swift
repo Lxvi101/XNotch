@@ -192,9 +192,16 @@ private struct StepText {
             StepText(title: "Hover to see where a click goes.",
                      body: "Pills drop out under me. Click one to jump straight to music, the tray or an extension.")
         case .access:
-            access == .granted
-                ? StepText(title: "Thank you.", body: "\(permission.title) is on. I can open anything you hand me.")
-                : StepText(title: "Let me reach your files.", body: permission.reason + " Nothing leaves your Mac.")
+            if access == .granted {
+                StepText(title: "Thank you.",
+                         body: permission == .fullDiskAccess
+                            ? "\(permission.title) is on. I can open anything you hand me."
+                            : "\(permission.title) is on.")
+            } else if state.mode == .checkup {
+                StepText(title: "Time to update my permissions.", body: permission.reason + " Nothing leaves your Mac.")
+            } else {
+                StepText(title: "Let me reach your files.", body: permission.reason + " Nothing leaves your Mac.")
+            }
         case .extensions:
             StepText(title: "Want a few extras?",
                      body: "Extensions add pages to me. Pick any you like; the rest wait in Settings.")
@@ -218,6 +225,10 @@ extension StepText {
         let reason = state.extensionPermissions.count == 1
             ? state.extensionPermissions[0].permission.reason
             : "They need your OK before they can work. macOS asks for each one."
+        if state.mode == .checkup {
+            let title = names.count == 1 ? "\(names[0]) needs your OK." : "Your extensions need your OK."
+            return StepText(title: title, body: reason)
+        }
         return StepText(title: "Let me unlock \(subject).", body: reason)
     }
 }
@@ -248,7 +259,8 @@ private struct StepContent: View {
         }
         .padding(.horizontal, OnboardingState.inset)
         .frame(width: state.panelOuterWidth, height: state.panelHeight(step), alignment: .topLeading)
-        .id(StepID(step: step, granted: step == .extensionAccess ? state.extensionAccess == .granted : state.access == .granted))
+        .id(StepID(step: step, permission: state.permission,
+                   granted: step == .extensionAccess ? state.extensionAccess == .granted : state.access == .granted))
         .transition(.blurReplace)
     }
 
@@ -268,6 +280,7 @@ private struct StepContent: View {
 
 private struct StepID: Hashable {
     let step: OnboardingState.Step
+    let permission: Permission
     let granted: Bool
 }
 
@@ -322,6 +335,7 @@ private struct StepFooter: View {
                         .frame(width: step == state.step ? 16 : 6, height: 6)
                 }
             }
+            .opacity(state.steps.count > 1 ? 1 : 0)
             Spacer(minLength: 0)
             if let secondaryTitle {
                 Button(action: actions.secondary) {

@@ -47,6 +47,8 @@ final class ExtensionManager: ObservableObject {
     @Published private(set) var pagesRevision = 0
     let pointer = NotchPointer()
     weak var driver: ExtensionNotchDriver?
+    /// Called each time an extension starts, so missing permissions can be asked for.
+    var onActivate: ((ExtensionID) -> Void)?
 
     private var hosts: [ExtensionID: HostBridge] = [:]
     private let preferences = Preferences.shared
@@ -144,7 +146,7 @@ final class ExtensionManager: ObservableObject {
         var key: String { "\(extensionID)/\(permission.id)" }
     }
 
-    /// Permissions active extensions still need, for the welcome tour.
+    /// Permissions active extensions still need, for the welcome tour and the checkup.
     var pendingPermissions: [PendingPermission] {
         entries.flatMap { entry -> [PendingPermission] in
             guard entry.isActive, let requester = entry.instance as? PermissionRequesting else { return [] }
@@ -233,6 +235,7 @@ final class ExtensionManager: ObservableObject {
             hosts[id] = host
             try instance.activate(host: host)
             entries[index].isActive = true
+            onActivate?(id)
         } catch {
             hosts[id] = nil
             entries[index].failure = error.localizedDescription

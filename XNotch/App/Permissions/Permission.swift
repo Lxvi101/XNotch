@@ -54,6 +54,37 @@ enum Permission: String, CaseIterable, Identifiable {
     /// macOS applies some grants only after the app restarts.
     var appliesAfterRelaunch: Bool { self == .fullDiskAccess || self == .screenRecording }
 
+    /// The service's name for `tccutil`.
+    var tccService: String {
+        switch self {
+        case .fullDiskAccess: "SystemPolicyAllFiles"
+        case .accessibility: "Accessibility"
+        case .screenRecording: "ScreenCapture"
+        }
+    }
+
+    /// Forgets every grant of this permission to `bundleID`, so the app can be
+    /// added again. System Settings lists an app once per bundle ID, and keeps
+    /// the signature it first saw: a copy signed differently (an older dev
+    /// build) leaves a row that shows On but no longer matches, and dragging
+    /// the app in again does nothing. Returns whether it worked.
+    nonisolated static func reset(_ service: String, bundleID: String) async -> Bool {
+        await Task.detached {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            task.arguments = ["reset", service, bundleID]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            do {
+                try task.run()
+                task.waitUntilExit()
+                return task.terminationStatus == 0
+            } catch {
+                return false
+            }
+        }.value
+    }
+
     var settingsURL: URL {
         let anchor = switch self {
         case .fullDiskAccess: "Privacy_AllFiles"
