@@ -393,6 +393,48 @@ final class CommandBarTests: XCTestCase {
         XCTAssertEqual(model.commands.count, 4)
     }
 
+    /// Return in the switcher: ↩ opens the chosen note, ⌥↩ opens it in a new
+    /// window, ⌘↩ always makes a note, and ↩ makes one when nothing's listed.
+    func testReturnOpensOrCreates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SwitcherReturn-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        library.load()
+        let home = library.spaces[0]
+        let empty = library.addSpace(named: "Empty")
+        let note = Note(record: NoteRecord(id: UUID(), spaceID: home.id, created: Date(), modified: Date(),
+                                           isPinned: false, isOpen: true, frame: nil), text: "# Groceries")
+        library.notes.append(note)
+        let model = SwitcherModel(library: library)
+        model.commandSource = { [] }
+        model.prepare(current: note)
+        var opened: [(UUID, Bool)] = []
+        var created: [String] = []
+        func press(_ modifiers: NSEvent.ModifierFlags = []) {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
+                                         context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                                         isARepeat: false, keyCode: 36)!
+            XCTAssertTrue(model.handle(event, open: { opened.append(($0.id, $1)) }, create: { created.append($0) }, close: {}))
+        }
+
+        press()
+        press(.option)
+        XCTAssertEqual(opened.map(\.0), [note.id, note.id])
+        XCTAssertEqual(opened.map(\.1), [false, true])
+        XCTAssertEqual(created, [])
+
+        press(.command) // a note is listed, ⌘↩ still makes a new one
+        XCTAssertEqual(created, [""])
+
+        model.setScope(.space(empty.id))
+        press() // nothing to open here
+        model.query = "milk"
+        press()
+        XCTAssertEqual(created, ["", "", "milk"])
+        XCTAssertEqual(opened.count, 2)
+    }
+
     /// Spaces by the keys alone, as VS Code moves and indents lines: arrows step
     /// through the chips while nothing's typed, ⌥ arrows move the chosen space,
     /// ⌘] puts it inside the one to its left and ⌘[ takes it out.
@@ -415,7 +457,7 @@ final class CommandBarTests: XCTestCase {
             let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
                                          context: nil, characters: characters, charactersIgnoringModifiers: characters,
                                          isARepeat: false, keyCode: keyCode)!
-            return model.handle(event, open: { _, _ in }, close: {})
+            return model.handle(event, open: { _, _ in }, create: { _ in }, close: {})
         }
         let names = { library.orderedSpaces.map(\.name) }
         XCTAssertEqual(names(), ["Personal", "Work", "Clients", "Ideas"])
