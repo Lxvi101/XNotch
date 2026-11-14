@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 
 private let accentBlue = Color(red: 0.04, green: 0.52, blue: 1)
+
+/// A selection, blue while the shelf has the keyboard and grey while another
+/// app does, as in Finder, so it's clear where Delete will go.
+@MainActor private func selectionFill(_ shelf: Shelf) -> Color {
+    shelf.isKey ? accentBlue : .white.opacity(0.18)
+}
 private let shelfShape = RoundedRectangle(cornerRadius: ShelfGeometry.cornerRadius, style: .continuous)
 
 /// The shelf in its window. Every subview reads only the shelf properties it
@@ -385,7 +391,7 @@ private struct GridTile: View {
         }
         .padding(6)
         .frame(width: 96, height: 106, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(isSelected ? accentBlue : .clear))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(isSelected ? selectionFill(shelf) : .clear))
     }
 }
 
@@ -422,7 +428,7 @@ private struct ListRow: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(isSelected ? accentBlue : .clear))
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(isSelected ? selectionFill(shelf) : .clear))
     }
 }
 

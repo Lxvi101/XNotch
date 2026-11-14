@@ -68,6 +68,7 @@ enum NotchZone {
 /// It can still become key, for Quick Look's space bar and the shelf's keys.
 final class ShelfPanel: NSPanel {
     var onKeyDown: ((NSEvent) -> Bool)?
+    var onKeyChange: ((Bool) -> Void)?
 
     init(shelfSize: CGSize) {
         super.init(contentRect: ShelfGeometry.windowFrame(forShelf: CGRect(origin: .zero, size: shelfSize)),
@@ -81,15 +82,44 @@ final class ShelfPanel: NSPanel {
         isReleasedWhenClosed = false
         animationBehavior = .none
         appearance = NSAppearance(named: .darkAqua)
+        becomesKeyOnlyIfNeeded = false
     }
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     /// Keys go to the shelf before the hosting view, which would swallow the space bar.
+    /// Any click on the shelf takes the keys, without activating XNotch, so
+    /// Delete never lands in the app that was frontmost before.
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, onKeyDown?(event) == true { return }
+        switch event.type {
+        case .keyDown:
+            if onKeyDown?(event) == true { return }
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            takeKeys()
+        default:
+            break
+        }
         super.sendEvent(event)
+    }
+
+    /// Makes the panel key, even when AppKit still counts it as key from
+    /// before another app took the keyboard.
+    func takeKeys() {
+        guard isVisible else { return }
+        if isKeyWindow, NSApp.isActive { return }
+        if isKeyWindow { super.resignKey() }
+        makeKey()
+    }
+
+    override func becomeKey() {
+        super.becomeKey()
+        onKeyChange?(true)
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        onKeyChange?(false)
     }
 }
 

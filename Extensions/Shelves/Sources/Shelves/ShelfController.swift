@@ -45,6 +45,10 @@ final class ShelfController: NSObject {
         // Never drawn on the borderless panel; it names the window for VoiceOver and automation.
         panel.title = "Shelf"
         panel.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
+        panel.onKeyChange = { [weak self] isKey in
+            guard let self, self.shelf.isKey != isKey else { return }
+            withAnimation(ShelfMotion.hover) { self.shelf.isKey = isKey }
+        }
         frameSpring.onFrame = { [weak self] frame in
             self?.panel.setFrame(frame, display: true)
             self?.layoutTray()

@@ -177,6 +177,8 @@ final class Shelf: Identifiable {
     /// A drag of any kind, including this shelf's own files, is over it.
     var isDragInside = false
     var isHovered = false
+    /// The shelf has the keyboard: Delete, Space and ⌘C act on its selection.
+    var isKey = false
     /// Being moved over another shelf, to merge into it on release.
     var isOverShelf = false
     /// Being moved up to the notch, to pour its files into the tray on release.
