@@ -154,7 +154,7 @@ struct RouteArc: View {
 
     let state: State
     let label: String
-    @State private var pulse = false
+    @SwiftUI.State private var pulse = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
