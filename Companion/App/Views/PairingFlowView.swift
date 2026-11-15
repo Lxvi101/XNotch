@@ -10,7 +10,7 @@ struct PairingFlowView: View {
 
     var body: some View {
         ZStack {
-            Palette.background.ignoresSafeArea()
+            (flow.phase == .scanning ? Color.black : Palette.background).ignoresSafeArea()
             if flow.phase == .scanning {
                 ScanStep()
                     .transition(.opacity)
@@ -20,7 +20,7 @@ struct PairingFlowView: View {
             }
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.9), value: flow.phase == .scanning)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(flow.phase == .scanning ? .dark : nil)
     }
 }
 
@@ -91,7 +91,7 @@ private struct ScanStep: View {
                     .foregroundStyle(.white.opacity(0.8))
                 Button(pasteFailed ? "No pairing link on the clipboard" : "Paste Pairing Link", action: paste)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(pasteFailed ? .orange : Palette.cyan)
+                    .foregroundStyle(pasteFailed ? Palette.orange : .white)
             }
             .padding(.vertical, 14)
             .padding(.horizontal, 20)
@@ -169,7 +169,7 @@ private struct ProgressStep: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(title)
                         .font(.system(size: 34, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Palette.ink)
                         .fixedSize(horizontal: false, vertical: true)
                     if let name = flow.pairing?.name, !title.contains(name) {
                         Text(name)
@@ -196,7 +196,7 @@ private struct ProgressStep: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 18)
-            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.card))
+            .sheetCard(radius: 28)
             .padding(.top, 32)
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: findingState)
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: securingState)
@@ -204,7 +204,7 @@ private struct ProgressStep: View {
             if let failure = flow.failure, flow.phase == .failed {
                 Text(failure.message)
                     .font(.system(size: 17))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Palette.ink.opacity(0.85))
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 24)
@@ -314,10 +314,10 @@ private struct StepRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(state == .pending ? Palette.tertiary : .white)
+                    .foregroundStyle(state == .pending ? Palette.tertiary : Palette.ink)
                 Text(detail)
                     .font(.system(size: 14))
-                    .foregroundStyle(detailIsWarning ? .orange : Palette.secondary)
+                    .foregroundStyle(detailIsWarning ? Palette.orange : Palette.secondary)
                     .opacity(state == .pending ? 0.5 : 1)
                     .contentTransition(.opacity)
             }
@@ -325,7 +325,7 @@ private struct StepRow: View {
         }
         .padding(.vertical, 13)
         .overlay(alignment: .bottom) {
-            if !isLast { Rectangle().fill(.white.opacity(0.06)).frame(height: 1).padding(.leading, 42) }
+            if !isLast { Rectangle().fill(Palette.line).frame(height: 1).padding(.leading, 42) }
         }
     }
 
@@ -335,7 +335,7 @@ private struct StepRow: View {
         case .pending:
             Circle().strokeBorder(Palette.tertiary.opacity(0.6), lineWidth: 2)
         case .active:
-            ProgressView().tint(.white)
+            ProgressView().tint(Palette.ink)
         case .done:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 24))
@@ -344,7 +344,7 @@ private struct StepRow: View {
         case .failed:
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 24))
-                .foregroundStyle(.red)
+                .foregroundStyle(Palette.red)
                 .transition(.scale.combined(with: .opacity))
         }
     }

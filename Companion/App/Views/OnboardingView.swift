@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Three steps, then pairing.
+/// Three steps, then pairing. A picture in a white sheet, a caps line, a
+/// title and one line under it; back, dots and Next at the bottom.
 struct OnboardingView: View {
     let onFinish: () -> Void
+    @Environment(\.horizontalSizeClass) private var sizeClass
     #if DEBUG
     // `-onboardingStep 2` opens a later step, for screenshots.
     @State private var step = UserDefaults.standard.integer(forKey: "onboardingStep")
@@ -10,123 +12,269 @@ struct OnboardingView: View {
     @State private var step = 0
     #endif
 
+    private static let count = 3
+    private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+
     var body: some View {
-        ZStack {
-            switch step {
-            case 0:
-                WelcomeStep { advance() }
-                    .transition(stepTransition)
-            case 1:
-                StepLayout(title: "Share to your Mac",
-                           subtitle: "Tap Share in any app and pick XNotch. It lands on your Mac's shelf, under the notch.",
-                           footer: "Photos, PDFs, downloads, anything") {
-                    ShareSheetIllustration()
-                } actions: {
-                    Button("Continue") { advance() }.buttonStyle(PillButtonStyle())
+        GeometryReader { proxy in
+            if sizeClass == .regular && proxy.size.width > proxy.size.height * 1.15 && proxy.size.width >= 900 {
+                HStack(spacing: 48) {
+                    visualCard
+                        .frame(maxHeight: 560)
+                    VStack(alignment: .leading, spacing: 0) {
+                        copy(alignment: .leading, titleSize: 46)
+                        nav
+                            .padding(.top, 36)
+                    }
+                    .frame(maxWidth: 440, alignment: .leading)
                 }
-                .transition(stepTransition)
-            default:
-                StepLayout(title: "Copy here, paste there",
-                           subtitle: "Send text straight to your Mac's clipboard, then press ⌘V.",
-                           footer: "End-to-end encrypted, even over the internet") {
-                    ClipboardIllustration()
-                } actions: {
-                    Button("Continue") { advance() }.buttonStyle(PillButtonStyle())
+                .padding(.horizontal, 48)
+                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 0) {
+                    visualCard
+                        .frame(height: min(proxy.size.height * 0.46, sizeClass == .regular ? 520 : 340))
+                        .padding(.top, 14)
+                    copy(alignment: .center, titleSize: sizeClass == .regular ? 40 : 32)
+                        .padding(.top, 30)
+                        .padding(.horizontal, 6)
+                    Spacer(minLength: 20)
+                    nav
+                        .padding(.bottom, 12)
                 }
-                .transition(stepTransition)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: 600)
+                .frame(maxWidth: .infinity)
             }
         }
         .animation(.spring(response: 0.55, dampingFraction: 0.88), value: step)
     }
 
+    // MARK: Content
+
+    private var eyebrow: String {
+        ["Send to your notch", "Share sheet", "Clipboard"][step]
+    }
+
+    private var title: String {
+        switch step {
+        case 0: isPad ? "Your iPad,\none drag from your Mac" : "Your iPhone,\none tap from your Mac"
+        case 1: "Share to\nyour Mac"
+        default: "Copy here,\npaste there"
+        }
+    }
+
+    private var subtitle: String {
+        switch step {
+        case 0: "Photos, files and text land on your Mac's shelf, right under the notch."
+        case 1: "Tap Share in any app and pick XNotch. Photos, PDFs, downloads, anything."
+        default: "Send text straight to your Mac's clipboard, then press ⌘V."
+        }
+    }
+
+    private var visualCard: some View {
+        ZStack {
+            switch step {
+            case 0: MacShelfIllustration(device: isPad ? "iPad" : "iPhone").transition(stepTransition)
+            case 1: ShareSheetIllustration().transition(stepTransition)
+            default: ClipboardIllustration().transition(stepTransition)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 32, style: .continuous).fill(Palette.card))
+        .overlay(RoundedRectangle(cornerRadius: 32, style: .continuous).strokeBorder(Palette.line.opacity(0.7)))
+        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+
+    private func copy(alignment: HorizontalAlignment, titleSize: CGFloat) -> some View {
+        let text: TextAlignment = alignment == .center ? .center : .leading
+        return VStack(alignment: alignment, spacing: 0) {
+            StatusCaps(text: eyebrow, color: Palette.secondary)
+                .tracking(1.2)
+            Text(title)
+                .font(.system(size: titleSize, weight: .bold))
+                .tracking(-titleSize * 0.035)
+                .foregroundStyle(Palette.ink)
+                .multilineTextAlignment(text)
+                .padding(.top, 10)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(subtitle)
+                .font(.system(size: titleSize > 40 ? 18 : 16))
+                .foregroundStyle(Palette.secondary)
+                .multilineTextAlignment(text)
+                .lineSpacing(3)
+                .padding(.top, 12)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .id(step)
+        .transition(stepTransition)
+    }
+
+    private var nav: some View {
+        HStack(spacing: 14) {
+            Button { back() } label: {
+                CircleButtonLabel(symbol: "arrow.left", size: 56)
+            }
+            .opacity(step == 0 ? 0 : 1)
+            .disabled(step == 0)
+            .accessibilityLabel("Back")
+            Spacer()
+            HStack(spacing: 6) {
+                ForEach(0..<Self.count, id: \.self) { index in
+                    Capsule()
+                        .fill(index == step ? Palette.ink : Palette.tertiary.opacity(0.45))
+                        .frame(width: index == step ? 26 : 7, height: 7)
+                }
+            }
+            Spacer()
+            Button { advance() } label: {
+                HStack(spacing: 10) {
+                    Text(step == Self.count - 1 ? "Get Started" : "Next")
+                    Image(systemName: "arrow.right")
+                }
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Palette.onInk)
+                .padding(.horizontal, 24)
+                .frame(height: 56)
+                .background(Capsule().fill(Palette.ink))
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
+                .contentTransition(.opacity)
+            }
+        }
+    }
+
     private var stepTransition: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(x: 40)),
-                    removal: .opacity.combined(with: .offset(x: -40)))
+        .asymmetric(insertion: .opacity.combined(with: .offset(x: 30)),
+                    removal: .opacity.combined(with: .offset(x: -30)))
     }
 
     private func advance() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        if step < 2 { step += 1 } else { onFinish() }
+        if step < Self.count - 1 { step += 1 } else { onFinish() }
+    }
+
+    private func back() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if step > 0 { step -= 1 }
     }
 }
 
-private struct WelcomeStep: View {
-    let onContinue: () -> Void
+// MARK: Illustrations
 
-    var body: some View {
-        StepLayout(title: "Send to your notch",
-                   subtitle: "Photos, files and text go from your iPhone straight onto your Mac's shelf.",
-                   footer: "Works with XNotch on your Mac") {
-            NotchIllustration()
-        } actions: {
-            Button("Continue", action: onContinue).buttonStyle(PillButtonStyle())
-        }
-    }
-}
-
-/// The top of a Mac screen: the notch, its eyes, and files falling into it.
-struct NotchIllustration: View {
-    @State private var drop = false
+/// The top of a Mac screen: the notch with its eyes, files landing on the
+/// shelf one by one, and the phone they came from.
+struct MacShelfIllustration: View {
+    let device: String
+    @State private var landed = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
-            let width = min(proxy.size.width, 420)
+            let width = min(proxy.size.width * 0.8, 440)
+            let height = width * 0.74
+            let tile = width * 0.17
             ZStack(alignment: .top) {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(white: 0.13), Color(white: 0.05)], startPoint: .top, endPoint: .bottom))
-                    .overlay {
-                        DotGrid(spacing: 17, intensity: 0.8)
-                            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .strokeBorder(.white.opacity(0.12), lineWidth: 1.5)
-                    }
-                // A faint glow where the files land.
-                Ellipse()
-                    .fill(Palette.cyan.opacity(0.14))
-                    .frame(width: width * 0.5, height: 70)
-                    .blur(radius: 30)
-                    .offset(y: 20)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(.clear)
+                    .passCard(radius: 20)
                 NotchShape()
                     .fill(.black)
-                    .frame(width: width * 0.42, height: 46)
-                    .overlay(alignment: .center) {
-                        HStack(spacing: 12) {
-                            Capsule().fill(.white).frame(width: 9, height: 20)
-                            Capsule().fill(.white).frame(width: 9, height: 20)
+                    .frame(width: width * 0.4, height: width * 0.1)
+                    .overlay {
+                        HStack(spacing: width * 0.033) {
+                            Capsule().fill(.white).frame(width: width * 0.022, height: width * 0.048)
+                            Capsule().fill(.white).frame(width: width * 0.022, height: width * 0.048)
                         }
-                        .offset(y: 4)
                     }
-                ForEach(0..<3) { index in
-                    FileChip(symbol: ["photo.fill", "doc.richtext.fill", "film.fill"][index],
-                             tint: [Palette.cyan, .orange, .pink][index])
-                        .offset(x: CGFloat(index - 1) * 74, y: drop ? 22 : 190)
-                        .scaleEffect(drop ? 0.35 : 1)
-                        .opacity(drop ? 0 : 1)
-                        .animation(.easeIn(duration: 1.1).delay(Double(index) * 0.25)
-                                    .repeatForever(autoreverses: false), value: drop)
+                HStack(spacing: tile * 0.18) {
+                    ForEach(0..<3) { index in
+                        shelfTile(index)
+                            .frame(width: tile, height: tile)
+                            .scaleEffect(index < landed ? 1 : 0.4)
+                            .opacity(index < landed ? 1 : 0)
+                            .offset(y: index < landed ? 0 : -tile * 0.6)
+                    }
                 }
+                .padding(.top, width * 0.16)
+                HStack(spacing: 8) {
+                    LiveDot()
+                    Text(landed == 1 ? "1 item from \(device)" : "\(landed) items from \(device)")
+                        .font(.system(size: max(11, width * 0.035), weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .contentTransition(.numericText())
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .frame(height: width * 0.12)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.07)))
+                .padding(.horizontal, width * 0.06)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, width * 0.06)
             }
-            .frame(width: width, height: min(proxy.size.height, 280))
+            .frame(width: width, height: height)
+            .overlay(alignment: .bottomTrailing) {
+                MiniPhone()
+                    .frame(width: width * 0.3, height: width * 0.52)
+                    .rotationEffect(.degrees(-8))
+                    .offset(x: -width * 0.02, y: width * 0.3)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .offset(y: -proxy.size.height * 0.04)
         }
-        .onAppear { drop = true }
+        .task {
+            if reduceMotion { landed = 3; return }
+            while !Task.isCancelled {
+                for count in 1...3 {
+                    try? await Task.sleep(nanoseconds: 650_000_000)
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) { landed = count }
+                }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                withAnimation(.easeInOut(duration: 0.35)) { landed = 0 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func shelfTile(_ index: Int) -> some View {
+        switch index {
+        case 0: RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Swatch.sunset)
+        case 1: RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Swatch.sea)
+        default:
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white)
+                .overlay(Text("PDF").font(.system(size: 11, weight: .heavy)).foregroundStyle(Color(hex: 0xE2626B)))
+        }
     }
 }
 
-private struct FileChip: View {
-    let symbol: String
-    let tint: Color
-
+/// The phone, tilted, with a photo on its screen.
+private struct MiniPhone: View {
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 24, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: 58, height: 58)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Palette.raised))
-            .shadow(color: tint.opacity(0.35), radius: 14)
+        GeometryReader { proxy in
+            RoundedRectangle(cornerRadius: proxy.size.width * 0.22, style: .continuous)
+                .fill(Color.white)
+                .overlay(alignment: .top) {
+                    RoundedRectangle(cornerRadius: proxy.size.width * 0.13, style: .continuous)
+                        .fill(Swatch.sunset)
+                        .frame(height: proxy.size.height * 0.34)
+                        .padding(.horizontal, proxy.size.width * 0.11)
+                        .padding(.top, proxy.size.height * 0.16)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: proxy.size.width * 0.22, style: .continuous)
+                        .strokeBorder(Color(hex: 0x111113), lineWidth: max(4, proxy.size.width * 0.055))
+                }
+                .shadow(color: .black.opacity(0.3), radius: 14, y: 10)
+        }
     }
+}
+
+/// The gradients that stand in for photos.
+enum Swatch {
+    static let sunset = LinearGradient(colors: [Color(hex: 0xF8B26A), Color(hex: 0xE2626B), Color(hex: 0x6B4AA8)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    static let sea = LinearGradient(colors: [Color(hex: 0x9AD0EC), Color(hex: 0x3C7DBA), Color(hex: 0x24496E)],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
 /// The notch: straight top, rounded bottom corners.
@@ -151,77 +299,88 @@ private struct ShareSheetIllustration: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Capsule().fill(.white.opacity(0.25)).frame(width: 40, height: 5)
-            HStack(spacing: 18) {
-                appIcon(symbol: "dot.radiowaves.left.and.right", color: Palette.blue, name: "AirDrop", lit: false)
-                appIcon(symbol: "message.fill", color: Palette.green, name: "Messages", lit: false)
+            Capsule().fill(Palette.tertiary.opacity(0.5)).frame(width: 40, height: 5)
+            HStack(spacing: 16) {
+                appIcon(symbol: "dot.radiowaves.left.and.right", color: Color(hex: 0x2E8BFF), name: "AirDrop")
+                appIcon(symbol: "message.fill", color: Palette.green, name: "Messages")
                 VStack(spacing: 8) {
                     Image("AppIconImage")
                         .resizable()
-                        .frame(width: 64, height: 64)
+                        .frame(width: 62, height: 62)
                         .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                        .shadow(color: Palette.cyan.opacity(lit ? 0.8 : 0.2), radius: lit ? 18 : 6)
-                        .scaleEffect(lit ? 1.08 : 1)
-                    Text("XNotch").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        .shadow(color: .black.opacity(lit ? 0.35 : 0.12), radius: lit ? 16 : 6, y: lit ? 10 : 3)
+                        .scaleEffect(lit ? 1.1 : 1)
+                    Text("XNotch").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink)
                 }
-                appIcon(symbol: "envelope.fill", color: Palette.blue, name: "Mail", lit: false)
+                appIcon(symbol: "envelope.fill", color: Color(hex: 0x2E8BFF), name: "Mail")
             }
+            HStack(spacing: 10) {
+                Image(systemName: "photo").foregroundStyle(Palette.secondary)
+                Text("IMG_2041.HEIC")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                Spacer()
+                Text("3.4 MB").font(.system(size: 12)).foregroundStyle(Palette.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.card))
         }
-        .padding(.vertical, 24)
-        .padding(.horizontal, 20)
-        .background(RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Palette.card))
-        .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).strokeBorder(.white.opacity(0.08)))
+        .padding(.vertical, 22)
+        .padding(.horizontal, 18)
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.raised))
+        .padding(20)
         .onAppear {
             withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) { lit = true }
         }
     }
 
-    private func appIcon(symbol: String, color: Color, name: String, lit: Bool) -> some View {
+    private func appIcon(symbol: String, color: Color, name: String) -> some View {
         VStack(spacing: 8) {
             Image(systemName: symbol)
-                .font(.system(size: 26, weight: .semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 64, height: 64)
-                .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(color.opacity(0.85)))
-                .opacity(0.45)
-            Text(name).font(.system(size: 13)).foregroundStyle(Palette.tertiary)
+                .frame(width: 62, height: 62)
+                .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(color))
+                .opacity(0.35)
+            Text(name).font(.system(size: 12)).foregroundStyle(Palette.tertiary)
         }
     }
 }
 
-/// Text travelling from the phone to the Mac's clipboard.
+/// Text travelling from the phone to the Mac's clipboard, on a small pass.
 private struct ClipboardIllustration: View {
     @State private var sent = false
 
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: 20) {
             Text("Meeting notes: ship the notch companion on Friday")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(.white)
-                .padding(18)
-                .frame(maxWidth: 300, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Palette.raised))
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Palette.ink)
+                .padding(16)
+                .frame(maxWidth: 290, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.raised))
                 .scaleEffect(sent ? 0.97 : 1)
-                .opacity(sent ? 0.6 : 1)
+                .opacity(sent ? 0.55 : 1)
             Image(systemName: "arrow.down")
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(Palette.cyan)
-                .opacity(sent ? 1 : 0.3)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Palette.ink)
+                .opacity(sent ? 1 : 0.25)
                 .offset(y: sent ? 4 : -4)
             HStack(spacing: 14) {
                 Image(systemName: "laptopcomputer")
-                    .font(.system(size: 26))
+                    .font(.system(size: 22))
                     .foregroundStyle(.white)
-                    .frame(width: 40)
+                    .frame(width: 34)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Mac clipboard").font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                    Text("Mac clipboard").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
                     // Pinned to the leading edge, so the swap happens in place.
                     ZStack(alignment: .leading) {
                         if sent {
                             StatusCaps(text: "Ready to paste", color: Palette.green)
                                 .transition(.blurReplace)
                         } else {
-                            StatusCaps(text: "Waiting", color: Palette.tertiary)
+                            StatusCaps(text: "Waiting", color: Palette.passTertiary)
                                 .transition(.blurReplace)
                         }
                     }
@@ -229,17 +388,18 @@ private struct ClipboardIllustration: View {
                 .fixedSize()
                 Spacer(minLength: 8)
                 Text("⌘V")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .fixedSize()
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(sent ? Palette.green.opacity(0.25) : Palette.raised))
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(sent ? Palette.green.opacity(0.3) : .white.opacity(0.1)))
             }
             .padding(18)
-            .frame(maxWidth: 320)
-            .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Palette.card))
+            .frame(maxWidth: 310)
+            .passCard(radius: 24)
         }
+        .padding(20)
         .task {
             // Copy, arrive, pause, again.
             while !Task.isCancelled {

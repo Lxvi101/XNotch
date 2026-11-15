@@ -1,206 +1,154 @@
+import QuickLook
 import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// What's on its way to the Mac. Drop files on it (iPad), or tap + to add.
-struct BasketView: View {
+/// What's on its way to the Mac, as square tiles (iPhone) or bigger cards (iPad).
+struct BasketItems: View {
     @EnvironmentObject private var link: MacLink
-    let onAdd: () -> Void
-    @State private var isTargeted = false
+    var large = false
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(Color(white: 0.06))
-            DotGrid()
-                .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
-            // A file held over the basket: a faint tint that fades, nothing that jumps.
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(Palette.cyan.opacity(isTargeted ? 0.08 : 0))
-                .opacity(link.outgoing.isEmpty ? 1 : 0.45)
-            if link.outgoing.isEmpty {
-                emptyState
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-            } else {
-                items
-                    .transition(.opacity)
-            }
-            if let incoming = link.incomingProgress {
-                IncomingBanner(name: incoming.name, fraction: incoming.fraction)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .strokeBorder(isTargeted ? Palette.cyan.opacity(0.8) : .white.opacity(0.07), lineWidth: isTargeted ? 2 : 1)
-                .animation(.easeOut(duration: 0.25), value: isTargeted)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
-        // Simultaneous, so Add Files and the tiles keep their taps.
-        .onDrop(of: [.item], delegate: BasketDropDelegate(isTargeted: $isTargeted) { urls in
-            link.send(files: urls)
-        })
-        // Items arriving, finishing or leaving; progress animates in its own ring.
-        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: link.outgoing.map(\.layoutKey))
-        .animation(.spring(response: 0.4), value: link.incomingProgress?.name)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "tray.and.arrow.up.fill")
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-            Text("Basket")
-                .font(.system(size: 24, weight: .bold))
-                .foregroundStyle(.white)
-            Text("Add photos and files with +, or share\nto XNotch from any app.")
-                .font(.system(size: 16))
-                .foregroundStyle(Palette.secondary)
-                .multilineTextAlignment(.center)
-            Button(action: onAdd) {
-                Label("Add Files", systemImage: "plus")
-                    .font(.system(size: 16, weight: .semibold))
-                    .padding(.horizontal, 18)
-                    .frame(height: 40)
-                    .background(Capsule().fill(Palette.raised))
-            }
-            .padding(.top, 4)
-        }
-        .padding(24)
-    }
-
-    private var items: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Basket")
-                    .font(.system(size: 17, weight: .semibold))
-                Spacer()
-                if link.outgoing.contains(where: { $0.state == .sent }) {
-                    Button("Clear Sent") { link.clearFinished() }
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Palette.secondary)
+        LazyVGrid(columns: columns, spacing: large ? 14 : 12) {
+            ForEach(link.outgoing) { item in
+                Group {
+                    if large { BasketCard(item: item) } else { BasketTile(item: item) }
                 }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], spacing: 14) {
-                    ForEach(link.outgoing) { item in
-                        BasketTile(item: item)
-                            .contextMenu {
-                                if case .failed(let reason) = item.state {
-                                    Text(reason)
-                                    Button { link.retry(item.id) } label: { Label("Try Again", systemImage: "arrow.clockwise") }
-                                }
-                                if !item.isSending {
-                                    Button(role: .destructive) { link.remove(item.id) } label: { Label("Remove", systemImage: "xmark") }
-                                }
-                            }
-                            .onTapGesture { if case .failed = item.state { link.retry(item.id) } }
-                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                .contentShape(Rectangle())
+                .contextMenu {
+                    if case .failed(let reason) = item.state {
+                        Text(reason)
+                        Button { link.retry(item.id) } label: { Label("Try Again", systemImage: "arrow.clockwise") }
+                    }
+                    if !item.isSending {
+                        Button(role: .destructive) { link.remove(item.id) } label: { Label("Remove", systemImage: "xmark") }
                     }
                 }
-                .padding(16)
+                .onTapGesture { if case .failed = item.state { link.retry(item.id) } }
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
+        }
+        // Items arriving, finishing or leaving; progress animates in its own ring.
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: link.outgoing.map(\.layoutKey))
+    }
+
+    private var columns: [GridItem] {
+        large ? [GridItem(.adaptive(minimum: 160), spacing: 14)]
+              : Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    }
+}
+
+/// iPhone: a square tile with its state in the corner and the name under it.
+private struct BasketTile: View {
+    let item: MacLink.Outgoing
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay { ItemPreview(item: item) }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.line.opacity(0.6)))
+                .overlay { StateBadge(state: item.state) }
+            Group {
+                if case .failed(let reason) = item.state {
+                    Text(reason).foregroundStyle(Palette.orange)
+                } else {
+                    Text(item.name).foregroundStyle(Palette.secondary)
+                }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .lineLimit(1)
+            .truncationMode(.middle)
         }
     }
 }
 
-private struct BasketTile: View {
+/// iPad: a card with the preview, name, size and a progress line.
+private struct BasketCard: View {
+    let item: MacLink.Outgoing
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .aspectRatio(4 / 3, contentMode: .fit)
+                .overlay { ItemPreview(item: item) }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay { StateBadge(state: item.state, showsRing: false) }
+            Text(item.name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.top, 9)
+            if case .sending(let fraction) = item.state {
+                GeometryReader { proxy in
+                    Capsule().fill(Palette.line)
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(Palette.ink).frame(width: max(4, proxy.size.width * fraction))
+                                .animation(.linear(duration: 0.15), value: fraction)
+                        }
+                }
+                .frame(height: 4)
+                .padding(.top, 7)
+            }
+            HStack {
+                Text(FileSizes.label(for: item))
+                Spacer()
+                stateText
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Palette.secondary)
+            .padding(.top, 3)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.raised.opacity(0.6)))
+    }
+
+    @ViewBuilder
+    private var stateText: some View {
+        switch item.state {
+        case .waiting: Text("Waiting")
+        case .sending(let fraction): Text("\(Int((fraction * 100).rounded()))%").foregroundStyle(Palette.ink).fontWeight(.semibold)
+        case .sent: Text("Sent").foregroundStyle(Palette.green).fontWeight(.semibold)
+        case .failed(let reason): Text(reason).foregroundStyle(Palette.orange).lineLimit(1)
+        }
+    }
+}
+
+/// A thumbnail, a document glyph, or the start of the text.
+private struct ItemPreview: View {
     let item: MacLink.Outgoing
     @State private var thumbnail: UIImage?
 
     var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Palette.raised)
-                preview
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .opacity(item.state == .sent ? 0.55 : 1)
-                stateBadge
-            }
-            .frame(width: 84, height: 84)
-            Group {
-                if case .failed(let reason) = item.state {
-                    // Why, right under it; tap to try again, hold for more.
-                    Text(reason)
-                        .foregroundStyle(.orange)
+        ZStack {
+            Palette.card
+            switch item.content {
+            case .text(let text):
+                Text(text)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(5)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            case .file(let url):
+                if let thumbnail {
+                    Image(uiImage: thumbnail).resizable().scaledToFill()
                 } else {
-                    Text(item.name)
-                        .foregroundStyle(.white.opacity(0.85))
+                    Text(url.pathExtension.uppercased().prefix(4))
+                        .font(.system(size: 13, weight: .heavy))
+                        .foregroundStyle(Palette.secondary)
                 }
             }
-            .font(.system(size: 12, weight: .medium))
-            .lineLimit(2)
-            .truncationMode(.middle)
-            .multilineTextAlignment(.center)
-            .frame(width: 92, height: 30, alignment: .top)
         }
+        .opacity(item.state == .sent ? 0.6 : 1)
         .task(id: item.id) { await loadThumbnail() }
-    }
-
-    @ViewBuilder
-    private var preview: some View {
-        switch item.content {
-        case .text:
-            Image(systemName: "text.quote")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(Palette.cyan)
-        case .file:
-            if let thumbnail {
-                Image(uiImage: thumbnail).resizable().scaledToFill().frame(width: 84, height: 84)
-            } else {
-                Image(systemName: "doc.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(Palette.secondary)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var stateBadge: some View {
-        switch item.state {
-        case .waiting:
-            Image(systemName: "clock")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(.black.opacity(0.6)))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(6)
-        case .sending(let fraction):
-            ZStack {
-                Circle().fill(.black.opacity(0.55))
-                Circle().stroke(.white.opacity(0.2), lineWidth: 3)
-                Circle()
-                    .trim(from: 0, to: max(0.03, fraction))
-                    .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.linear(duration: 0.15), value: fraction)
-            }
-            .frame(width: 36, height: 36)
-        case .sent:
-            Image(systemName: "checkmark")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.black)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Palette.green))
-                .transition(.scale.combined(with: .opacity))
-        case .failed:
-            Image(systemName: "exclamationmark")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(.red))
-        }
     }
 
     private func loadThumbnail() async {
         guard case .file(let url) = item.content else { return }
-        let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 84, height: 84),
+        let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 200, height: 200),
                                                    scale: UIScreen.main.scale, representationTypes: .thumbnail)
         if let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) {
             withAnimation(.easeOut(duration: 0.2)) { thumbnail = representation.uiImage }
@@ -208,32 +156,174 @@ private struct BasketTile: View {
     }
 }
 
+/// Waiting, sending (a ring), sent or failed, in the corner.
+private struct StateBadge: View {
+    let state: MacLink.Outgoing.State
+    var showsRing = true
+
+    var body: some View {
+        switch state {
+        case .waiting:
+            corner(symbol: "clock", fill: Palette.ink, foreground: Palette.onInk)
+        case .sending(let fraction):
+            if showsRing {
+                ZStack {
+                    Color.black.opacity(0.25)
+                    Circle().stroke(.white.opacity(0.3), lineWidth: 3)
+                        .frame(width: 32, height: 32)
+                    Circle()
+                        .trim(from: 0, to: max(0.03, fraction))
+                        .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 32, height: 32)
+                        .animation(.linear(duration: 0.15), value: fraction)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+        case .sent:
+            corner(symbol: "checkmark", fill: Palette.green, foreground: .white)
+                .transition(.scale.combined(with: .opacity))
+        case .failed:
+            corner(symbol: "exclamationmark", fill: Palette.red, foreground: .white)
+        }
+    }
+
+    private func corner(symbol: String, fill: Color, foreground: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .heavy))
+            .foregroundStyle(foreground)
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(fill))
+            .overlay(Circle().strokeBorder(Palette.card, lineWidth: 1.5))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .padding(6)
+    }
+}
+
+/// Nothing to send yet: the tray, a line of help, and ways to add.
+struct EmptyBasket: View {
+    var isTargeted = false
+    var large = false
+    var macName: String?
+    let onPhotos: () -> Void
+    let onFiles: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: large ? 32 : 28, weight: .medium))
+                .foregroundStyle(Palette.onInk)
+                .frame(width: large ? 86 : 76, height: large ? 86 : 76)
+                .background(RoundedRectangle(cornerRadius: large ? 28 : 24, style: .continuous).fill(Palette.ink))
+                .shadow(color: .black.opacity(0.25), radius: 14, y: 10)
+                .scaleEffect(isTargeted ? 1.08 : 1)
+            Text(isTargeted ? "Drop to send" : "Basket is empty")
+                .font(.system(size: large ? 24 : 20, weight: .semibold))
+                .foregroundStyle(Palette.ink)
+                .padding(.top, 20)
+                .contentTransition(.opacity)
+            Text(isTargeted ? "It goes straight to \(macName ?? "your Mac")'s shelf." : large
+                 ? "Drag files here from any app, or share to XNotch."
+                 : "Add photos and files, or share to\nXNotch from any app.")
+                .font(.system(size: large ? 15 : 14))
+                .foregroundStyle(Palette.secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+                .padding(.top, 6)
+                .contentTransition(.opacity)
+            HStack(spacing: 8) {
+                quickAction("Photos", symbol: "photo", action: onPhotos)
+                quickAction("Files", symbol: "folder", action: onFiles)
+            }
+            .frame(maxWidth: 320)
+            .padding(.top, 22)
+            .opacity(isTargeted ? 0 : 1)
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(isTargeted ? Palette.ink.opacity(0.03) : Palette.card)
+                .overlay { DotPattern().clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous)) }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(isTargeted ? Palette.ink : (large ? Palette.line : Palette.line.opacity(0.7)),
+                              style: StrokeStyle(lineWidth: isTargeted ? 2 : 1, dash: isTargeted || large ? [6, 5] : []))
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isTargeted)
+    }
+
+    private func quickAction(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Palette.ink)
+                .frame(maxWidth: .infinity)
+                .frame(height: 46)
+                .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Palette.raised))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// A file on its way from the Mac.
-private struct IncomingBanner: View {
+struct IncomingBanner: View {
     let name: String
     let fraction: Double
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle.fill")
-                .foregroundStyle(Palette.cyan)
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Palette.onInk)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Palette.ink))
             Text(name)
                 .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Palette.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
             ProgressView(value: fraction)
                 .frame(width: 70)
-                .tint(Palette.cyan)
+                .tint(Palette.ink)
         }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-        .background(Capsule().fill(Palette.raised))
+        .padding(.leading, 8)
+        .padding(.trailing, 16)
+        .frame(height: 46)
+        .sheetCard(radius: 23)
+    }
+}
+
+/// The dashed strip under a full basket on iPad, for one more drag.
+struct DropStrip: View {
+    var isTargeted = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Palette.onInk)
+                .frame(width: 40, height: 40)
+                .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Palette.ink))
+            Text(isTargeted ? "Drop to send" : "Drag files here from Photos, Files or any app")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(isTargeted ? Palette.ink : Palette.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 92)
+        .background { DotPattern().clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous)) }
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(isTargeted ? Palette.ink : Palette.line, style: StrokeStyle(lineWidth: isTargeted ? 2 : 1.5, dash: [6, 5]))
+        }
+        .animation(.easeOut(duration: 0.2), value: isTargeted)
     }
 }
 
 /// Files dropped on the basket (iPad, or iPhone from another app's drag).
-private struct BasketDropDelegate: DropDelegate {
+struct BasketDropDelegate: DropDelegate {
     @Binding var isTargeted: Bool
     let onFiles: ([URL]) -> Void
 
@@ -276,53 +366,99 @@ private struct BasketDropDelegate: DropDelegate {
     }
 }
 
-/// Files the Mac sent, newest first. Tap to preview.
-struct ReceivedStrip: View {
+// MARK: From your Mac
+
+/// One file the Mac sent: icon, name, size, age. Tap to preview.
+struct ReceivedRow: View {
     @EnvironmentObject private var link: MacLink
+    let item: MacLink.Received
+    @Binding var preview: URL?
+
+    var body: some View {
+        Button { preview = item.url } label: {
+            HStack(spacing: 12) {
+                Image(systemName: ReceivedRow.icon(for: item.url))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                    .frame(width: 36, height: 36)
+                    .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Palette.raised))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.url.lastPathComponent)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(size)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.secondary)
+                }
+                Spacer(minLength: 8)
+                Text(item.date, format: .relative(presentation: .numeric, unitsStyle: .narrow))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            ShareLink(item: item.url) { Label("Share", systemImage: "square.and.arrow.up") }
+            Button(role: .destructive) { link.deleteReceived(item) } label: { Label("Delete", systemImage: "trash") }
+        }
+    }
+
+    private var size: String {
+        let bytes = (try? item.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    static func icon(for url: URL) -> String {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return "doc" }
+        if type.conforms(to: .image) { return "photo" }
+        if type.conforms(to: .movie) { return "film" }
+        if type.conforms(to: .pdf) { return "doc.richtext" }
+        if type.conforms(to: .archive) { return "doc.zipper" }
+        return "doc"
+    }
+}
+
+/// Received files in a white sheet, divided by hairlines.
+struct ReceivedList: View {
     let items: [MacLink.Received]
     @Binding var preview: URL?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("From your Mac")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Palette.secondary)
-                .padding(.leading, 6)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(items) { item in
-                        Button { preview = item.url } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: icon(for: item.url))
-                                    .font(.system(size: 17))
-                                    .foregroundStyle(Palette.cyan)
-                                Text(item.url.lastPathComponent)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: 160)
-                            }
-                            .padding(.horizontal, 14)
-                            .frame(height: 48)
-                            .background(Capsule().fill(Palette.card))
-                        }
-                        .contextMenu {
-                            ShareLink(item: item.url) { Label("Share", systemImage: "square.and.arrow.up") }
-                            Button(role: .destructive) { link.deleteReceived(item) } label: { Label("Delete", systemImage: "trash") }
-                        }
-                    }
-                }
-                .padding(.horizontal, 2)
+        VStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                if index > 0 { Rectangle().fill(Palette.line).frame(height: 1).padding(.leading, 62) }
+                ReceivedRow(item: item, preview: $preview)
             }
         }
+        .sheetCard(radius: 22)
     }
+}
 
-    private func icon(for url: URL) -> String {
-        guard let type = UTType(filenameExtension: url.pathExtension) else { return "doc.fill" }
-        if type.conforms(to: .image) { return "photo.fill" }
-        if type.conforms(to: .movie) { return "film.fill" }
-        if type.conforms(to: .pdf) { return "doc.richtext.fill" }
-        if type.conforms(to: .archive) { return "doc.zipper" }
-        return "doc.fill"
+/// Every file the Mac sent, for "See all".
+struct ReceivedSheet: View {
+    @EnvironmentObject private var link: MacLink
+    @Environment(\.dismiss) private var dismiss
+    @State private var preview: URL?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                ReceivedList(items: link.received, preview: $preview)
+                    .padding(18)
+            }
+            .background(Palette.background)
+            .navigationTitle("From your Mac")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        .tint(Palette.ink)
+        .quickLookPreview($preview, in: link.received.map(\.url))
     }
 }

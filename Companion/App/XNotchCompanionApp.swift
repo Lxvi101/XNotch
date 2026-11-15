@@ -13,8 +13,7 @@ struct XNotchCompanionApp: App {
             RootView(didOnboard: $didOnboard)
                 .environmentObject(link)
                 .environmentObject(flow)
-                .preferredColorScheme(.dark)
-                .tint(.white)
+                .tint(Palette.ink)
                 // The Camera app opens the Mac's code as an xnotchlink:// link.
                 .onOpenURL { url in
                     guard let pairing = LinkPairing(url: url) else { return }
@@ -43,7 +42,6 @@ struct XNotchCompanionApp: App {
 struct RootView: View {
     @EnvironmentObject private var link: MacLink
     @EnvironmentObject private var flow: PairingFlow
-    @Environment(\.scenePhase) private var phase
     @Binding var didOnboard: Bool
 
     var body: some View {
@@ -62,8 +60,6 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: didOnboard)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: link.mac?.id)
-        // Nothing animates behind the pairing screen or while the app is in the background.
-        .environment(\.dotGridPaused, flow.isPresented || phase != .active)
         .fullScreenCover(isPresented: $flow.isPresented, onDismiss: { flow.dismiss() }) {
             PairingFlowView()
                 .environmentObject(flow)

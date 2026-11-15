@@ -12,6 +12,7 @@
 		1B8EE073BE3D63643A051F60 /* XNotchShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 31A128372904050F3352C1BF /* XNotchShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2C74EB0E39FDBC1156950C3C /* XNotchCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A53011D73352006DF8A608 /* XNotchCompanionApp.swift */; };
 		300184038E4F0FCFFD655B1C /* PairView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A72C4CAD4220D41DE03AF2B /* PairView.swift */; };
+		351E6C232D862343BDAD4171 /* PassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C48D4145BC2D93CD52D19CAC /* PassCard.swift */; };
 		4FA34DD0F012A5190AB0203C /* XNotchLink in Frameworks */ = {isa = PBXBuildFile; productRef = C57B7C5C23D0160A85E18BC3 /* XNotchLink */; };
 		4FC9AB6A6915C66A7C0C3D6A /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4081AD1281CB96885DDA09FD /* Theme.swift */; };
 		6C360583F1C087CE040A63D9 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4081AD1281CB96885DDA09FD /* Theme.swift */; };
@@ -68,6 +69,7 @@
 		A644770C30D0F42296AF21E6 /* XNotchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XNotchShare.entitlements; sourceTree = "<group>"; };
 		BD91E7E93838CFEF9E044B8C /* PairingFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingFlow.swift; sourceTree = "<group>"; };
 		BF0F17C9A997327FBE6C5008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		C48D4145BC2D93CD52D19CAC /* PassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassCard.swift; sourceTree = "<group>"; };
 		F4B70AEB92229509F36349A7 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F8C97B2725AD6FC25D994470 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -109,6 +111,7 @@
 				996E9DBFB0E9307B7E55689B /* OnboardingView.swift */,
 				8D8B15DA700A70B6A3FDBF8D /* PairingFlowView.swift */,
 				5A72C4CAD4220D41DE03AF2B /* PairView.swift */,
+				C48D4145BC2D93CD52D19CAC /* PassCard.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -275,6 +278,7 @@
 				B20604065BA864434CF9F9D1 /* PairingFlow.swift in Sources */,
 				E31FD714E2642FB6465024AD /* PairingFlowView.swift in Sources */,
 				DCA7247A3E5BFA6750710A16 /* PairingKeychain.swift in Sources */,
+				351E6C232D862343BDAD4171 /* PassCard.swift in Sources */,
 				4FC9AB6A6915C66A7C0C3D6A /* Theme.swift in Sources */,
 				2C74EB0E39FDBC1156950C3C /* XNotchCompanionApp.swift in Sources */,
 			);

@@ -230,7 +230,6 @@ struct ShareView: View {
                 .frame(maxWidth: 520)
                 .transition(.move(edge: .bottom))
         }
-        .preferredColorScheme(.dark)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: model.phase)
     }
 
@@ -244,13 +243,13 @@ struct ShareView: View {
             HStack(spacing: 14) {
                 Image(systemName: "laptopcomputer")
                     .font(.system(size: 22))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Palette.ink)
                     .frame(width: 52, height: 52)
                     .background(Circle().fill(Palette.raised))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.macName ?? "No Mac paired")
                         .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                     status
                 }
@@ -279,8 +278,8 @@ struct ShareView: View {
             }
         }
         .padding(20)
-        .background(RoundedRectangle(cornerRadius: 34, style: .continuous).fill(Palette.card))
-        .overlay(RoundedRectangle(cornerRadius: 34, style: .continuous).strokeBorder(.white.opacity(0.08)))
+        .sheetCard(radius: 34)
+        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
     }
 
     @ViewBuilder
@@ -288,11 +287,11 @@ struct ShareView: View {
         switch model.phase {
         case .preparing: StatusCaps(text: "Preparing", color: Palette.secondary)
         case .connecting: StatusCaps(text: "Connecting", color: Palette.secondary)
-        case .sending: StatusCaps(text: model.route.map { "Sending · \($0)" } ?? "Sending", color: Palette.cyan)
+        case .sending: StatusCaps(text: model.route.map { "Sending · \($0)" } ?? "Sending", color: Palette.ink)
         case .sent: StatusCaps(text: "On your Mac", color: Palette.green)
         case .failed(let reason):
-            Text(reason).font(.system(size: 13, weight: .medium)).foregroundStyle(.orange).lineLimit(3)
-        case .unpaired: StatusCaps(text: "Not paired", color: .orange)
+            Text(reason).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.orange).lineLimit(3)
+        case .unpaired: StatusCaps(text: "Not paired", color: Palette.orange)
         }
     }
 
@@ -306,7 +305,7 @@ struct ShareView: View {
         case .sent:
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 22)).foregroundStyle(Palette.green)
-                Text("Sent to the shelf").font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                Text("Sent to the shelf").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ink)
             }
             .transition(.scale(scale: 0.8).combined(with: .opacity))
         default:
@@ -326,12 +325,12 @@ private struct ProgressBar: View {
                 Capsule().fill(Palette.raised)
                 if let fraction {
                     Capsule()
-                        .fill(LinearGradient(colors: [Palette.blue, Palette.cyan, Palette.green], startPoint: .leading, endPoint: .trailing))
+                        .fill(Palette.ink)
                         .frame(width: max(12, proxy.size.width * fraction))
                         .animation(.linear(duration: 0.15), value: fraction)
                 } else {
                     Capsule()
-                        .fill(LinearGradient(colors: [Palette.blue.opacity(0), Palette.cyan, Palette.blue.opacity(0)],
+                        .fill(LinearGradient(colors: [Palette.ink.opacity(0), Palette.ink, Palette.ink.opacity(0)],
                                              startPoint: .leading, endPoint: .trailing))
                         .frame(width: proxy.size.width * 0.35)
                         .offset(x: sweep ? proxy.size.width * 0.65 : 0)
@@ -341,7 +340,7 @@ private struct ProgressBar: View {
                 }
             }
         }
-        .frame(height: 10)
+        .frame(height: 6)
     }
 }
 

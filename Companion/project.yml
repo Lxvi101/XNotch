@@ -49,7 +49,6 @@ targets:
           NSAllowsLocalNetworking: true
         UILaunchScreen:
           UIColorName: ""
-        UIUserInterfaceStyle: Dark
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait

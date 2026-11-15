@@ -1,35 +1,91 @@
 import SwiftUI
+import UIKit
 
+/// Light grey screen, white sheets, black ink and one dark "pass" card.
+/// Every color has a dark-mode twin; the pass stays dark in both.
 enum Palette {
-    static let background = Color(white: 0.04)
-    static let card = Color(white: 0.11)
-    static let raised = Color(white: 0.17)
-    static let secondary = Color(white: 0.56)
-    static let tertiary = Color(white: 0.34)
-    static let green = Color(red: 0.2, green: 0.84, blue: 0.4)
-    static let blue = Color(red: 0.16, green: 0.56, blue: 1)
-    static let cyan = Color(red: 0.3, green: 0.85, blue: 1)
+    static let background = dynamic(light: 0xF2F2F4, dark: 0x0E0E10)
+    /// The white sheets: cards, lists, the text box.
+    static let card = dynamic(light: 0xFFFFFF, dark: 0x1A1A1D)
+    /// Fills inside a sheet: icon wells, quick actions, empty tiles.
+    static let raised = dynamic(light: 0xF1F1F4, dark: 0x26262A)
+    static let line = dynamic(light: 0xE6E6EA, dark: 0x2A2A2E)
+    /// Text, and the fill of the main buttons.
+    static let ink = dynamic(light: 0x111113, dark: 0xF4F4F6)
+    /// Text and symbols on an ink fill.
+    static let onInk = dynamic(light: 0xFFFFFF, dark: 0x111113)
+    static let secondary = dynamic(light: 0x6B6B73, dark: 0x9A9AA2)
+    static let tertiary = dynamic(light: 0xA1A1A8, dark: 0x5C5C63)
+    static let dots = dynamic(light: 0xE2E2E6, dark: 0x2A2A2F)
+
+    static let passTop = dynamic(light: 0x2A2A2E, dark: 0x2E2E33)
+    static let passBottom = dynamic(light: 0x141416, dark: 0x18181B)
+    static let passLine = Color.white.opacity(0.09)
+    static let passSecondary = Color.white.opacity(0.55)
+    static let passTertiary = Color.white.opacity(0.4)
+
+    static let green = Color(hex: 0x22C55E)
+    static let orange = Color(hex: 0xF08A24)
+    static let red = Color(hex: 0xEF4444)
+
+    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+        Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
+    }
 }
 
-/// The big dark pill: "Continue", "Scan Code".
+extension Color {
+    init(hex: UInt32) { self.init(uiColor: UIColor(hex: hex)) }
+}
+
+extension UIColor {
+    convenience init(hex: UInt32) {
+        self.init(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+
+// MARK: Surfaces
+
+extension View {
+    /// A white sheet with a hairline edge.
+    func sheetCard(radius: CGFloat = 24) -> some View {
+        background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Palette.card))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Palette.line.opacity(0.7), lineWidth: 1))
+    }
+
+    /// The dark glossy pass: gradient, a lit top edge and a soft drop shadow.
+    func passCard(radius: CGFloat = 28) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(LinearGradient(colors: [Palette.passTop, Palette.passBottom], startPoint: .top, endPoint: .bottom))
+                .overlay {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(LinearGradient(colors: [.white.opacity(0.16), .white.opacity(0.02)], startPoint: .top, endPoint: .bottom),
+                                      lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.28), radius: 16, y: 12)
+        }
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+// MARK: Buttons
+
+/// The big pill: black "Scan Code", or a white secondary one.
 struct PillButtonStyle: ButtonStyle {
     var prominent = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(prominent ? .black : .white)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(prominent ? Palette.onInk : Palette.ink)
             .frame(maxWidth: .infinity)
-            .frame(height: 60)
+            .frame(height: 56)
             .background {
                 Capsule()
-                    .fill(prominent ? AnyShapeStyle(.white) : AnyShapeStyle(
-                        LinearGradient(colors: [Color(white: 0.18), Color(white: 0.12)], startPoint: .top, endPoint: .bottom)))
-                    .overlay {
-                        Capsule().strokeBorder(
-                            LinearGradient(colors: [.white.opacity(0.16), .white.opacity(0.03)], startPoint: .top, endPoint: .bottom),
-                            lineWidth: 1)
-                    }
+                    .fill(prominent ? Palette.ink : Palette.card)
+                    .overlay { if !prominent { Capsule().strokeBorder(Palette.line, lineWidth: 1) } }
+                    .shadow(color: .black.opacity(prominent ? 0.18 : 0), radius: 10, y: 6)
             }
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .opacity(configuration.isPressed ? 0.85 : 1)
@@ -37,119 +93,66 @@ struct PillButtonStyle: ButtonStyle {
     }
 }
 
-/// The round dark buttons of the bottom bar.
+/// A round button: white with a hairline, or black ("+").
 struct CircleButtonLabel: View {
     let symbol: String
-    var size: CGFloat = 54
+    var size: CGFloat = 44
+    var prominent = false
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 19, weight: .semibold))
-            .foregroundStyle(.white)
+            .font(.system(size: size * 0.36, weight: .semibold))
+            .foregroundStyle(prominent ? Palette.onInk : Palette.ink)
             .frame(width: size, height: size)
-            .background(Circle().fill(Palette.card))
-            .overlay(Circle().strokeBorder(.white.opacity(0.07), lineWidth: 1))
+            .background(Circle().fill(prominent ? Palette.ink : Palette.card))
+            .overlay { if !prominent { Circle().strokeBorder(Palette.line, lineWidth: 1) } }
+            .shadow(color: .black.opacity(prominent ? 0.22 : 0.04), radius: prominent ? 9 : 2, y: prominent ? 6 : 1)
     }
 }
 
-/// Small caps label, as in "CONNECTED".
+/// Small caps label, as in "IPHONE" or "CONNECTED".
 struct StatusCaps: View {
     let text: String
     let color: Color
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 13, weight: .bold))
-            .tracking(0.8)
+            .font(.system(size: 12, weight: .semibold))
+            .tracking(0.6)
             .foregroundStyle(color)
     }
 }
 
-/// A field of dots, brightening where a soft glow slowly breathes up from
-/// the bottom. Decoration only: it doesn't react to touches.
-struct DotGrid: View {
-    var spacing: CGFloat = 19
-    var intensity: Double = 1
-    @Environment(\.dotGridPaused) private var paused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// The green "live" dot with its soft ring.
+struct LiveDot: View {
+    var color: Color = Palette.green
 
     var body: some View {
-        // A slow drift needs few frames; none at all with Reduce Motion or in Low Power Mode.
-        let still = paused || reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled
-        TimelineView(.animation(minimumInterval: 1 / 20, paused: still)) { timeline in
-            Canvas { context, size in
-                let time = timeline.date.timeIntervalSinceReferenceDate
-                let center = CGPoint(x: size.width / 2 + sin(time * 0.6) * size.width * 0.12,
-                                              y: size.height * (1.02 - 0.04 * sin(time * 0.9)))
-                let reach = max(size.width, size.height) * 0.42
-                let columns = Int(size.width / spacing)
-                let rows = Int(size.height / spacing)
-                let inset = CGPoint(x: (size.width - CGFloat(columns - 1) * spacing) / 2,
-                                    y: (size.height - CGFloat(rows - 1) * spacing) / 2)
-                for row in 0..<rows {
-                    for column in 0..<columns {
-                        let point = CGPoint(x: inset.x + CGFloat(column) * spacing, y: inset.y + CGFloat(row) * spacing)
-                        let distance = hypot(point.x - center.x, point.y - center.y)
-                        let glow = max(0, 1 - distance / reach)
-                        let eased = glow * glow * (3 - 2 * glow) * intensity
-                        let radius = 0.9 + 3.6 * eased
-                        let rect = CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
-                        context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.2 + 0.7 * eased)))
-                    }
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .background(Circle().fill(color.opacity(0.22)).frame(width: 14, height: 14))
+            .frame(width: 14, height: 14)
+    }
+}
+
+/// A still field of fine dots, for empty and drop areas.
+struct DotPattern: View {
+    var spacing: CGFloat = 16
+
+    var body: some View {
+        Canvas { context, size in
+            let color = GraphicsContext.Shading.color(Palette.dots)
+            var y = spacing / 2
+            while y < size.height {
+                var x = spacing / 2
+                while x < size.width {
+                    context.fill(Path(ellipseIn: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)), with: color)
+                    x += spacing
                 }
+                y += spacing
             }
         }
         .allowsHitTesting(false)
-    }
-}
-
-/// A title, a grey line under it, the picture, and one way forward.
-struct StepLayout<Visual: View, Actions: View>: View {
-    let title: String
-    let subtitle: String
-    var footer: String?
-    @ViewBuilder let visual: Visual
-    @ViewBuilder let actions: Actions
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.system(size: 38, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.top, 40)
-            Text(subtitle)
-                .font(.system(size: 20))
-                .foregroundStyle(Palette.secondary)
-                .lineSpacing(4)
-                .padding(.top, 12)
-                .fixedSize(horizontal: false, vertical: true)
-            visual
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            actions
-            if let footer {
-                Text(footer)
-                    .font(.system(size: 15))
-                    .foregroundStyle(Palette.tertiary)
-                    .frame(maxWidth: .infinity)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 18)
-            }
-        }
-        .padding(.horizontal, 26)
-        .padding(.bottom, 12)
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct DotGridPausedKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    /// Stops the dot grids' idle animation, for when they can't be seen.
-    var dotGridPaused: Bool {
-        get { self[DotGridPausedKey.self] }
-        set { self[DotGridPausedKey.self] = newValue }
     }
 }
