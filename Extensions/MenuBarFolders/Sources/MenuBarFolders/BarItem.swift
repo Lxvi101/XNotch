@@ -53,8 +53,14 @@ struct BarItem: Identifiable, Equatable {
         let ids = WindowServer.menuBarWindowIDs()
         guard let array = WindowServer.windowArray(ids),
               let infos = CGWindowListCreateDescriptionFromArray(array) as? [[CFString: Any]] else { return [] }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
         let mainMenuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+
+        // Every other display's menu bar has its own copy of each item. Only
+        // the main display's can be moved: it's titled, and it sits on that
+        // display's row. Titles need Screen Recording; the row always works
+        // unless the displays line up at the top.
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let mainTop = CGDisplayBounds(CGMainDisplayID()).minY
 
         struct Raw { let wid: CGWindowID; let pid: pid_t; let title: String?; let bounds: CGRect }
         var raws: [Raw] = []
@@ -64,8 +70,11 @@ struct BarItem: Identifiable, Equatable {
                   let layer = info[kCGWindowLayer] as? Int, layer != mainMenuLevel,
                   let boundsDict = info[kCGWindowBounds] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDict),
-                  bounds.width > 0 else { continue }
+                  bounds.width > 0, abs(bounds.minY - mainTop) < 1 else { continue }
             raws.append(Raw(wid: wid, pid: pid, title: info[kCGWindowName] as? String, bounds: bounds))
+        }
+        if raws.contains(where: { $0.title?.isEmpty == false }) {
+            raws.removeAll { $0.title?.isEmpty != false }
         }
 
         // Same app, same title: number them by window ID, which doesn't change

@@ -350,7 +350,7 @@ final class DrawerController {
     /// The panel never becomes key, so SwiftUI's hover is unreliable in it;
     /// the tile under the pointer comes from the layout instead.
     private func updateHoveredTile(mouse: NSPoint, drawer: NSRect) {
-        guard let folder = store.folders.first(where: { $0.id == model.folderID }) else { return }
+        guard let folder = model.folderID.flatMap(store.folder(_:)) else { return }
         var hit: String?
         let tilesTop = drawer.maxY - 6
         if mouse.y <= tilesTop, mouse.y >= tilesTop - DrawerModel.tileHeight {
@@ -381,7 +381,7 @@ final class DrawerController {
         let outside = !drawerRect.insetBy(dx: -2, dy: -2).contains(mouse)
         if model.draggingID != id {
             model.draggingID = id
-            if let item = store.folders.flatMap(\.items).first(where: { $0.id == id }) {
+            if let item = store.allFolders.flatMap(\.items).first(where: { $0.id == id }) {
                 preview.prepare(image: store.image(for: item))
             }
         }
@@ -396,7 +396,7 @@ final class DrawerController {
 
     private func dragEnded(_ id: String) {
         let mouse = NSEvent.mouseLocation
-        guard let folder = store.folders.first(where: { $0.id == model.folderID }) else { return }
+        guard let folder = model.folderID.flatMap(store.folder(_:)) else { return }
         if model.draggedOut {
             preview.drop()
             let top = NSScreen.screens.first?.frame.maxY ?? 0
@@ -424,7 +424,7 @@ final class DrawerController {
     }
 
     private var drawerWidth: CGFloat {
-        guard let folder = store.folders.first(where: { $0.id == model.folderID }) else { return 160 }
+        guard let folder = model.folderID.flatMap(store.folder(_:)) else { return 160 }
         return DrawerView.width(for: folder, store: store, dropTarget: model.isDropTarget)
     }
 
@@ -465,7 +465,7 @@ struct DrawerView: View {
         min(max(anchorX - width / 2, 0), panelWidth - width)
     }
 
-    private var folder: BarFolder? { store.folders.first { $0.id == model.folderID } }
+    private var folder: BarFolder? { model.folderID.flatMap(store.folder(_:)) }
 
     var body: some View {
         let open = model.isOpen

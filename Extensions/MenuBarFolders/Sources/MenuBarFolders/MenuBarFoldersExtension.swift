@@ -106,6 +106,15 @@ private struct SettingsPane: View {
                                 .frame(width: 28, height: 16)
                             Text(item.name)
                             Spacer()
+                            Menu("Move To") {
+                                ForEach(store.folders.filter { $0.id != folder.id }) { other in
+                                    Button(other.name) { controller?.move(item.id, to: other.id) }
+                                }
+                                Divider()
+                                Button("Always Hidden") { controller?.move(item.id, to: FolderStore.hiddenID) }
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
                             Button("Take Out") { controller?.unfile(item.id) }
                                 .buttonStyle(.borderless)
                         }
@@ -123,9 +132,41 @@ private struct SettingsPane: View {
                 }
             }
             Section {
+                if store.hidden.items.isEmpty {
+                    Text("Nothing here. Right-click a folder and choose Add to Always Hidden.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(store.hidden.items) { item in
+                    HStack(spacing: 10) {
+                        Image(nsImage: store.image(for: item))
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 28, height: 16)
+                        Text(item.name)
+                        Spacer()
+                        if !store.folders.isEmpty {
+                            Menu("Move To") {
+                                ForEach(store.folders) { folder in
+                                    Button(folder.name) { controller?.move(item.id, to: folder.id) }
+                                }
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                        }
+                        Button("Show") { controller?.unfile(item.id) }
+                            .buttonStyle(.borderless)
+                    }
+                }
+            } header: {
+                Text("Always Hidden")
+            } footer: {
+                Text("Kept off the bar and out of every folder. Option-click a folder to reach them.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Button("New Folder") { controller?.addFolder() }
             } footer: {
-                Text("Hover a folder in the menu bar to open it, click an icon inside to use it. Right-click a folder to add icons or rename it. Command-drag a folder to move it along the bar.")
+                Text("Hover a folder in the menu bar to open it, click an icon inside to use it. Right-click a folder to add icons or rename it. Option-click a folder for the always hidden icons. Command-drag a folder to move it along the bar.")
                     .foregroundStyle(.secondary)
             }
         }

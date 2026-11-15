@@ -20,6 +20,13 @@ struct BarFolder: Codable, Hashable, Identifiable {
 @MainActor @Observable
 final class FolderStore {
     private(set) var folders: [BarFolder] = []
+    /// Icons kept out of sight and out of every folder. It has no icon of its
+    /// own on the bar: Option-clicking a folder opens it.
+    private(set) var hidden = BarFolder(id: FolderStore.hiddenID, name: "Always Hidden")
+    nonisolated static let hiddenID = UUID(uuidString: "A1A1A1A1-0000-4000-8000-0000000000AD")!
+
+    /// The folders, then the always hidden section.
+    var allFolders: [BarFolder] { folders + [hidden] }
     /// Keyed by BarItem.id. Kept on disk so a folder draws before its items
     /// have been captured this launch.
     private(set) var images: [String: NSImage] = [:]
@@ -27,6 +34,7 @@ final class FolderStore {
     @ObservationIgnored private var defaults: UserDefaults?
     @ObservationIgnored private var imageDirectory: URL?
     private static let key = "folders"
+    private static let hiddenKey = "alwaysHidden"
 
     func load(defaults: UserDefaults, directory: URL) {
         self.defaults = defaults
@@ -36,13 +44,17 @@ final class FolderStore {
            let saved = try? JSONDecoder().decode([BarFolder].self, from: data) {
             folders = saved
         }
+        if let data = defaults.data(forKey: Self.hiddenKey),
+           let saved = try? JSONDecoder().decode(BarFolder.self, from: data) {
+            hidden.items = saved.items
+        }
         if folders.isEmpty {
             // Saved now: the folder's ID names its status item, and with it
             // the item's place in the menu bar.
             folders = [BarFolder(name: "Folder")]
             save()
         }
-        for item in folders.flatMap(\.items) {
+        for item in allFolders.flatMap(\.items) {
             if let url = imageURL(for: item.id), let image = NSImage(contentsOf: url),
                let pixels = image.representations.first {
                 // Saved at the screen's pixel size; shown at its point size.
@@ -54,14 +66,29 @@ final class FolderStore {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(folders) else { return }
+        guard let data = try? JSONEncoder().encode(folders), let hiddenData = try? JSONEncoder().encode(hidden) else { return }
         defaults?.set(data, forKey: Self.key)
+        defaults?.set(hiddenData, forKey: Self.hiddenKey)
     }
 
-    var filedIDs: Set<String> { Set(folders.flatMap { $0.items.map(\.id) }) }
+    /// Everything behind the divider: every folder's icons and the always hidden ones.
+    var filedIDs: Set<String> { Set(allFolders.flatMap { $0.items.map(\.id) }) }
+
+    func folder(_ id: UUID) -> BarFolder? {
+        id == Self.hiddenID ? hidden : folders.first { $0.id == id }
+    }
 
     func folder(containing itemID: String) -> BarFolder? {
-        folders.first { $0.items.contains { $0.id == itemID } }
+        allFolders.first { $0.items.contains { $0.id == itemID } }
+    }
+
+    /// Changes a folder or the always hidden section in place.
+    private func update(_ id: UUID, _ change: (inout BarFolder) -> Void) {
+        if id == Self.hiddenID {
+            change(&hidden)
+        } else if let index = folders.firstIndex(where: { $0.id == id }) {
+            change(&folders[index])
+        }
     }
 
     @discardableResult
@@ -93,9 +120,18 @@ final class FolderStore {
     }
 
     func file(_ item: BarItem, in folderID: UUID) {
+        guard folder(folderID) != nil else { return }
         unfile(item.id, persist: false)
-        guard let index = folders.firstIndex(where: { $0.id == folderID }) else { return }
-        folders[index].items.append(FiledItem(id: item.id, name: item.name, bundleID: item.bundleID))
+        update(folderID) { $0.items.append(FiledItem(id: item.id, name: item.name, bundleID: item.bundleID)) }
+        save()
+    }
+
+    /// From one folder (or the always hidden section) to another.
+    func move(_ itemID: String, to folderID: UUID) {
+        guard let filed = folder(containing: itemID)?.items.first(where: { $0.id == itemID }),
+              folder(folderID) != nil else { return }
+        unfile(itemID, persist: false)
+        update(folderID) { $0.items.append(filed) }
         save()
     }
 
@@ -103,12 +139,12 @@ final class FolderStore {
         for index in folders.indices {
             folders[index].items.removeAll { $0.id == itemID }
         }
+        hidden.items.removeAll { $0.id == itemID }
         if persist { save() }
     }
 
     func moveItem(in folderID: UUID, from source: IndexSet, to destination: Int) {
-        guard let index = folders.firstIndex(where: { $0.id == folderID }) else { return }
-        folders[index].items.move(fromOffsets: source, toOffset: destination)
+        update(folderID) { $0.items.move(fromOffsets: source, toOffset: destination) }
         save()
     }
 

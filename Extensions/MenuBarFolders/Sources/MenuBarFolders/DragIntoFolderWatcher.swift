@@ -60,15 +60,17 @@ final class DragIntoFolderWatcher {
     nonisolated(unsafe) private var hoveringFlag = false
     nonisolated var isHovering: Bool { hoveringFlag }
 
-    /// The folder a drag over `point` is aimed at: a folder's icon, or the
-    /// drawer it opened. macOS reorders the bar live during a Command-drag,
-    /// so the icon often slides out from under the pointer; the drawer stays.
+    /// The folder a drag over `point` is aimed at: a folder's icon, or an
+    /// open drawer. macOS reorders the bar live during a Command-drag, so the
+    /// icon often slides out from under the pointer; the drawer stays. An
+    /// open drawer is also how icons reach the always hidden section, which
+    /// has no icon of its own.
     private func dropTarget(at point: CGPoint, controller: BarController) -> UUID? {
         if let folder = controller.folderFrames.first(where: { $0.frame.insetBy(dx: -6, dy: -4).contains(point) })?.id {
             return folder
         }
-        if controller.drawer.isDropTarget, controller.drawer.contains(globalPoint: point) {
-            return controller.drawer.openFolder
+        if let open = controller.drawer.openFolder, controller.drawer.contains(globalPoint: point) {
+            return open
         }
         return nil
     }
@@ -92,8 +94,9 @@ final class DragIntoFolderWatcher {
             if let over { controller.hoverChanged(true, folder: over) }
             DebugLog.write("hover folder=\(over?.uuidString ?? "none")")
         case .leftMouseDown:
-            // A click anywhere but the drawer and the folders puts a clicked-open drawer away.
-            if !controller.mover.busy, controller.drawer.isPinned, !controller.drawer.contains(globalPoint: point),
+            // A click anywhere but the drawer and the folders puts a clicked-open
+            // drawer away. A Command-press may be a drag on its way into it.
+            if !command, !controller.mover.busy, controller.drawer.isPinned, !controller.drawer.contains(globalPoint: point),
                !controller.folderFrames.contains(where: { $0.frame.contains(point) }) {
                 controller.drawer.close(animated: true)
             }
