@@ -182,6 +182,7 @@ fn layout(title: &str, site_name: &str, nonce: &str, body: &str, is_drop: bool, 
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0a0a">
 <title>{title} · {site}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style nonce="{nonce}">{CSS}</style>
 </head>
 <body>

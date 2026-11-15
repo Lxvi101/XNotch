@@ -24,10 +24,23 @@ pub fn router() -> Router<SharedState> {
         .route("/", get(home))
         .route("/robots.txt", get(|| async { "User-agent: *\nDisallow: /\n" }))
         .route("/favicon.ico", get(|| async { StatusCode::NOT_FOUND }))
+        .route("/favicon.svg", get(favicon))
         .route("/{id}", get(drop_page).post(unlock))
         .route("/{id}/{name}", get(download))
         // Three segments, so it can't collide with a file name (names have no `/`).
         .route("/{id}/-/manifest", get(manifest))
+}
+
+/// XNotch's mark, linked from every page.
+async fn favicon() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        include_str!("assets/favicon.svg"),
+    )
 }
 
 /// Shared headers for responses a browser may render.

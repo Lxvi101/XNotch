@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src=".github/assets/icon.png" width="128" height="128" alt="XNotch icon">
+
 # XNotch
 
 **There are a lot of good macOS Notch apps. But this one will be *yours*.**
