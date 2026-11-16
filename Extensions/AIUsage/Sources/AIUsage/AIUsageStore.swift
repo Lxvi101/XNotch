@@ -100,6 +100,10 @@ final class AIUsageStore: ObservableObject {
     @Published var isSigningInToCursor = false
     /// What Claude Code and Codex send their requests to: the provider, a CLIProxyAPI hub, another proxy.
     @Published private(set) var proxyRoutes: [AIProviderID: ProxyRoute] = [:]
+    /// macOS reports no usable network path. A Wi-Fi that's up but goes nowhere still counts as online.
+    @Published private(set) var isOffline = false {
+        didSet { if isOffline != oldValue { onChange?() } }
+    }
 
     let mirror = SettingsMirror()
     var onSettingsChange: ((AIUsageSettings, AIUsageSettings) -> Void)?
@@ -154,6 +158,49 @@ final class AIUsageStore: ObservableObject {
         visibleProviders.contains { states[$0]?.snapshot == nil && states[$0]?.status == .loading }
     }
 
+    /// Why the notch has no tiles, so a dropped connection never reads as "nothing set up".
+    enum EmptyReason: Equatable {
+        case loading
+        /// No network at all.
+        case offline
+        /// Online, but these couldn't be reached or answered nonsense: a Wi-Fi sign-in page, a dead
+        /// connection, a hub that's down.
+        case unreachable([AIProviderID])
+        /// Asked too often; they'll be asked again once the wait is over.
+        case waiting([AIProviderID])
+        /// Set up, but each needs something only Settings can fix: a sign-in, Keychain access.
+        case needsAttention([AIProviderID])
+        case notSetUp
+    }
+
+    /// Nil while there are tiles to show.
+    var emptyReason: EmptyReason? {
+        guard connectedProviders.isEmpty else { return nil }
+        let unread = visibleProviders.filter { states[$0]?.snapshot == nil }
+        func having(_ match: (ProviderStatus) -> Bool) -> [AIProviderID] {
+            unread.filter { match(state(for: $0).status) }
+        }
+        let setUp = having { $0 != .notConnected }
+        if isOffline, !setUp.isEmpty { return .offline }
+        let unreachable = having { $0 == .unavailable || $0 == .error }
+        if !unreachable.isEmpty { return .unreachable(unreachable) }
+        if isLoadingFirstReading { return .loading }
+        let blocked = having { $0 == .unauthorized || $0 == .needsKeychainAccess }
+        if !blocked.isEmpty { return .needsAttention(blocked) }
+        let waiting = having { if case .rateLimited = $0 { true } else { false } }
+        if !waiting.isEmpty { return .waiting(waiting) }
+        return .notSetUp
+    }
+
+    /// Whether a retry is running for anything the notch can't show yet.
+    var isRetrying: Bool {
+        visibleProviders.contains { states[$0]?.snapshot == nil && states[$0]?.isRefreshing == true }
+    }
+
+    func setOffline(_ offline: Bool) {
+        if isOffline != offline { isOffline = offline }
+    }
+
     func setProxyRoute(_ route: ProxyRoute?, for id: AIProviderID) {
         if proxyRoutes[id] != route { proxyRoutes[id] = route }
     }
@@ -168,7 +215,8 @@ final class AIUsageStore: ObservableObject {
         var state = state(for: id)
         state.isRefreshing = true
         state.lastAttempt = date
-        if state.snapshot == nil, state.status == .notConnected || state.status == .error || state.status == .unavailable {
+        // Only a first reading shows as loading: a retry keeps showing what went wrong until it's back.
+        if state.snapshot == nil, state.status == .notConnected {
             state.status = .loading
         }
         states[id] = state

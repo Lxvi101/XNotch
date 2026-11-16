@@ -21,6 +21,7 @@ final class AIUsageExtension: XNotchExtension {
     private lazy var probeTransport = URLSessionTransport(extraHosts: { [hubs] in hubs.routedHosts })
     private var proxyCheck: Task<Void, Never>?
     private var coordinator: UsageCoordinator?
+    private var network: NetworkWatcher?
     private var host: ExtensionHost?
     private var transport: HTTPTransport?
     private var cursorSignIn: (login: CursorBrowserLogin, task: Task<Void, Never>)?
@@ -51,6 +52,15 @@ final class AIUsageExtension: XNotchExtension {
         store.onSettingsChange = { [weak self] old, new in self?.settingsChanged(from: old, to: new) }
         store.onChange = { [weak self] in self?.pageMayHaveChanged() }
         coordinator.start()
+        let network = NetworkWatcher()
+        network.start { [weak self] online, cameBack in
+            self?.store.setOffline(!online)
+            if cameBack {
+                self?.checkProxies()
+                self?.coordinator?.networkRestored()
+            }
+        }
+        self.network = network
         checkProxies()
         host.log.info("AI Usage activated")
     }
@@ -59,6 +69,8 @@ final class AIUsageExtension: XNotchExtension {
         cancelCursorSignIn()
         proxyCheck?.cancel()
         proxyCheck = nil
+        network?.stop()
+        network = nil
         transport = nil
         coordinator?.stop()
         coordinator = nil
@@ -74,6 +86,10 @@ final class AIUsageExtension: XNotchExtension {
         host?.feedback.tick()
         checkProxies()
         coordinator?.refresh(id.map { [$0] }, trigger: .manual)
+    }
+
+    func openSettings() {
+        host?.notch.openSettings()
     }
 
     func pageBecameActive() {

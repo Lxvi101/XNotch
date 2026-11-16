@@ -24,7 +24,19 @@ struct CLIProxyHub: Equatable, Sendable {
     /// The hub's logins for one provider (`codex`, `claude`), in a stable order. Cooling-down logins stay
     /// in: their limits are exactly what's worth seeing.
     func accounts(provider: AIProviderID, transport: HTTPTransport) async throws -> [Account] {
-        try await allAccounts(transport: transport).filter { $0.provider == provider }.map(\.account)
+        do {
+            return try await allAccounts(transport: transport).filter { $0.provider == provider }.map(\.account)
+        } catch {
+            // An unreachable hub says nothing about its logins: keep the last reading from this hub.
+            throw ProviderFailure.from(error, provider: provider).identified(accountKey: nil,
+                                                                            fingerprint: fingerprint(for: provider))
+        }
+    }
+
+    /// Stands for the hub's logins of one provider, which only the hub can list. A reading from this hub
+    /// survives the hub being out of reach; one from another hub doesn't.
+    func fingerprint(for provider: AIProviderID) -> String {
+        Hashing.key("\(provider.rawValue)-hub-login", host)
     }
 
     /// How many logins the hub holds per provider XNotch shows, for the Connect sheet to confirm.
@@ -127,11 +139,13 @@ struct CLIProxyHub: Equatable, Sendable {
         guard !snapshots.isEmpty else {
             throw readings.lazy.compactMap { result -> Error? in
                 if case let .failure(error) = result { return error } else { return nil }
-            }.first.map { ProviderFailure.from($0, provider: provider) }
+            }.first.map { ProviderFailure.from($0, provider: provider).identified(accountKey: nil,
+                                                                                 fingerprint: fingerprint(for: provider)) }
                 ?? ProviderFailure(.notConnected, "Your CLIProxyAPI hub at \(host) has no \(provider.displayName) login.")
         }
         if readings.count == 1, var only = snapshots.first {
             only.source = .cliProxyHub
+            only.credentialFingerprint = fingerprint(for: provider)
             return only
         }
 
@@ -181,7 +195,7 @@ struct CLIProxyHub: Equatable, Sendable {
         return ProviderUsageSnapshot(
             provider: provider,
             accountKey: Hashing.key("\(provider.rawValue)-hub", accountKeys.joined(separator: ",")),
-            credentialFingerprint: Hashing.key("\(provider.rawValue)-hub-credential", host, accountKeys.joined(separator: ",")),
+            credentialFingerprint: fingerprint(for: provider),
             planLabel: planLabel,
             accountLabel: accountLabel.isEmpty ? nil : accountLabel.joined(separator: " · "),
             windows: core + extra, refreshedAt: now,

@@ -316,4 +316,32 @@ final class CLIProxyHubTests: XCTestCase {
             XCTAssertTrue((error as! ProviderFailure).message.contains("management key"))
         }
     }
+
+    func testUnreachableHubKeepsItsLastReading() async throws {
+        writeKeys()
+        write(#"openai_base_url = "\#(Self.hubURL)/v1""#, to: ".codex/config.toml")
+        let transport = MockTransport { request in
+            if request.url?.path == "/v0/management/auth-files" { return MockTransport.json(200, Self.authFiles) }
+            return Self.relayed(200, body: Fixture.data("codex_usage"))
+        }
+        let provider = CodexUsageProvider(transport: transport, codexHome: locator.codexHome, hubs: locator)
+        let store = await AIUsageStore()
+        let reading = try await provider.fetch(FetchContext(includeExtras: false, now: referenceDate))
+        await store.apply(reading)
+
+        transport.handler = { _ in throw URLError(.notConnectedToInternet) }
+        do {
+            _ = try await provider.fetch(FetchContext(includeExtras: false, now: referenceDate))
+            XCTFail("Read a hub that's out of reach")
+        } catch {
+            await store.apply(ProviderFailure.from(error, provider: .codex), for: .codex)
+        }
+        let state = await store.state(for: .codex)
+        XCTAssertEqual(state.status, .stale, "Losing the network isn't losing the subscription")
+        XCTAssertEqual(state.snapshot?.refreshedAt, referenceDate)
+
+        let otherHub = CLIProxyHub(baseURL: URL(string: "https://other.synthetic.ts.net:8317")!, managementKey: "k")
+        XCTAssertNotEqual(otherHub.fingerprint(for: .codex), reading.credentialFingerprint,
+                          "Another hub's logins are other logins")
+    }
 }

@@ -11,6 +11,8 @@ enum RefreshTrigger: Equatable, Sendable {
     case settingsChanged
     /// The user clicked Allow Access: the one trigger that may show a Keychain prompt.
     case keychainGrant
+    /// macOS found a network path again after having none.
+    case networkRestored
 
     var isInteractive: Bool { self == .keychainGrant }
     /// Automatic triggers wait for the interval and back off after failures; the rest run now.
@@ -78,6 +80,19 @@ final class UsageCoordinator {
     func cancel(_ id: AIProviderID) {
         inFlight.removeValue(forKey: id)?.task.cancel()
         store.endRefresh(id)
+    }
+
+    /// Back online: whatever failed for want of a network is asked again now, without waiting out its
+    /// backoff. A Retry-After still holds.
+    func networkRestored() {
+        let waiting = AIProviderID.allCases.filter { id in
+            switch store.state(for: id).status {
+            case .fresh, .notConnected, .unauthorized, .needsKeychainAccess: false
+            default: true
+            }
+        }
+        for id in waiting { failures[id] = nil }
+        refresh(waiting, trigger: .networkRestored)
     }
 
     /// The refresh interval, doubled in Low Power Mode when the user allows it.

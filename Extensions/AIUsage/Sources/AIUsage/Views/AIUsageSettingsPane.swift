@@ -133,6 +133,7 @@ private struct SubscriptionRow: View {
 
     private var status: String {
         guard isOn else { return "Off" }
+        if state.isRefreshing, state.snapshot == nil { return "Checking…" }
         switch state.status {
         case .fresh, .stale:
             let parts = [state.snapshot?.planLabel,

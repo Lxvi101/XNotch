@@ -294,6 +294,62 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertLessThan(AIUsagePage.height(for: store), closed, "Nothing connected: just the empty state")
     }
 
+    func testEmptyNotchSaysWhyInsteadOfNotConnected() {
+        let store = store()
+        store.settings.enabled = [.claude, .codex]
+        XCTAssertEqual(store.emptyReason, .notSetUp)
+
+        store.beginRefresh(.claude, at: referenceDate)
+        XCTAssertEqual(store.emptyReason, .loading)
+        store.setOffline(true)
+        XCTAssertEqual(store.emptyReason, .offline, "A subscription being read while offline is a connection problem")
+
+        store.apply(ProviderFailure(.unavailable, "Offline"), for: .claude)
+        store.apply(ProviderFailure(.notConnected, "Not signed in"), for: .codex)
+        XCTAssertEqual(store.emptyReason, .offline)
+        store.setOffline(false)
+        XCTAssertEqual(store.emptyReason, .unreachable([.claude]), "Online but unreachable: a dead Wi-Fi or a sign-in page")
+
+        store.beginRefresh(.claude, at: referenceDate)
+        XCTAssertEqual(store.emptyReason, .unreachable([.claude]), "Retrying keeps saying what went wrong")
+        XCTAssertTrue(store.isRetrying)
+        store.apply(ProviderFailure(.unauthorized, "Sign in"), for: .claude)
+        XCTAssertEqual(store.emptyReason, .needsAttention([.claude]))
+        store.apply(ProviderFailure(.rateLimited(retryAfter: nil), "Wait"), for: .claude)
+        XCTAssertEqual(store.emptyReason, .waiting([.claude]))
+        store.apply(ProviderFailure(.notConnected, "Not signed in"), for: .claude)
+        store.setOffline(true)
+        XCTAssertEqual(store.emptyReason, .notSetUp, "Nothing set up stays nothing set up, even offline")
+
+        store.apply(makeSnapshot(.codex))
+        XCTAssertNil(store.emptyReason)
+    }
+
+    func testComingBackOnlineRetriesAtOnceDespiteBackoff() async {
+        let store = store()
+        let clock = referenceDate
+        var offline = true
+        let provider = ScriptedProvider(.codex) {
+            offline ? .failure(ProviderFailure(.unavailable, "Offline")) : .success(makeSnapshot(at: clock))
+        }
+        let coordinator = UsageCoordinator(store: store, providers: [provider], now: { clock }, isLowPower: { false })
+        coordinator.refresh([.codex], trigger: .activation)
+        await coordinator.waitUntilIdle()
+        coordinator.refresh([.codex], trigger: .timer)
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(provider.fetches.count, 1, "Backing off")
+
+        offline = false
+        coordinator.networkRestored()
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(provider.fetches.count, 2)
+        XCTAssertEqual(store.state(for: .codex).status, .fresh)
+
+        coordinator.networkRestored()
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(provider.fetches.count, 2, "A fresh reading isn't asked again")
+    }
+
     func testTodaysShareOpensItsOwnDetailRow() {
         let snapshot = makeSnapshot(.claude, at: Date())
         func labels(showing: Bool) -> [String] {
