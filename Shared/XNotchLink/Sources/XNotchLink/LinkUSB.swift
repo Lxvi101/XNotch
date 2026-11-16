@@ -78,6 +78,12 @@ public final class USBMux: @unchecked Sendable {
     /// A byte stream to `port` on the device; fails fast when nothing listens there.
     public func connect(to device: Device, port: UInt16) async throws -> NetworkTransport {
         let transport = NetworkTransport(NWConnection(to: .unix(path: socketPath), using: .tcp), route: .usb)
+        // usbmuxd normally answers at once; don't let a silent daemon park the dial loop.
+        let watchdog = Task {
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+            transport.close()
+        }
+        defer { watchdog.cancel() }
         do {
             try await transport.start(timeout: 3)
             try await Self.write(["MessageType": "Connect", "DeviceID": device.id,

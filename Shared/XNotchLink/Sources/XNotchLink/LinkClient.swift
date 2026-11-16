@@ -192,14 +192,23 @@ public enum LinkClient {
 }
 
 /// The phone's end of the USB route: the Mac connects in through usbmuxd.
+/// The listener rebuilds itself when it fails (for example when the port is
+/// still held by a listener that was just cancelled), until `cancel()`.
 public final class LinkUSBAcceptor: @unchecked Sendable {
-    private let listener: NWListener
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "dev.levi.XNotchLink.usb")
+    private var listener: NWListener?
+    private var cancelled = false
+    private var failures = 0
+    private let handle: @Sendable (NWConnection) -> Void
+    private let onFailure: (@Sendable (Error) -> Void)?
+
     /// Calls `onSession` for each Mac that connects and proves its pairing.
+    /// `onFailure` reports each listener failure; the acceptor retries on its own.
     public init(pairings: @escaping @Sendable () -> [LinkPairing], as device: @escaping @Sendable () -> LinkDevice,
                 incomingDirectory: URL, onSession: @escaping @Sendable (LinkSession) -> Void,
                 onFailure: (@Sendable (Error) -> Void)? = nil) throws {
-        listener = try LinkUSB.listener()
-        listener.newConnectionHandler = { connection in
+        handle = { connection in
             Task {
                 let transport = NetworkTransport(connection, route: .usb)
                 do {
@@ -214,14 +223,59 @@ public final class LinkUSBAcceptor: @unchecked Sendable {
                 }
             }
         }
-        listener.stateUpdateHandler = { state in
-            if case .failed(let error) = state { onFailure?(error) }
+        self.onFailure = onFailure
+        queue.sync { listen() }
+    }
+
+    private func listen() {
+        guard !lock.withLock({ cancelled }) else { return }
+        let listener: NWListener
+        do {
+            listener = try LinkUSB.listener()
+        } catch {
+            failed(error)
+            return
         }
-        listener.start(queue: DispatchQueue(label: "dev.levi.XNotchLink.usb"))
+        listener.newConnectionHandler = handle
+        listener.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                self?.lock.withLock { self?.failures = 0 }
+            case .failed(let error):
+                listener.cancel()
+                self?.failed(error)
+            default:
+                break
+            }
+        }
+        let keep = lock.withLock { () -> Bool in
+            guard !cancelled else { return false }
+            self.listener = listener
+            return true
+        }
+        if keep { listener.start(queue: queue) }
+    }
+
+    /// Retries after 0.25 s, doubling up to 2 s.
+    private func failed(_ error: Error) {
+        onFailure?(error)
+        let delay = lock.withLock { () -> Double? in
+            guard !cancelled else { return nil }
+            listener = nil
+            failures += 1
+            return min(0.25 * Double(1 << min(failures - 1, 3)), 2)
+        }
+        guard let delay else { return }
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.listen() }
     }
 
     public func cancel() {
-        listener.cancel()
+        let listener = lock.withLock { () -> NWListener? in
+            cancelled = true
+            defer { self.listener = nil }
+            return self.listener
+        }
+        listener?.cancel()
     }
 
     /// Waits for one Mac to connect over USB.
@@ -233,8 +287,7 @@ public final class LinkUSBAcceptor: @unchecked Sendable {
                 waiter.begin(continuation)
                 do {
                     waiter.acceptor = try LinkUSBAcceptor(pairings: { pairings }, as: { device }, incomingDirectory: incomingDirectory,
-                                                          onSession: { waiter.finish(.success($0)) },
-                                                          onFailure: { waiter.finish(.failure(LinkError.unavailable($0.localizedDescription))) })
+                                                          onSession: { waiter.finish(.success($0)) })
                 } catch {
                     waiter.finish(.failure(error))
                 }

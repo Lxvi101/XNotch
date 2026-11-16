@@ -332,23 +332,31 @@ final class CompanionServer: ObservableObject {
         }
     }
 
+    /// Polls quickly while the port is closed (a refused connect costs under
+    /// a millisecond), so USB is up moments after the app comes to the front.
+    /// Backs off after a failed handshake or a session that ended at once,
+    /// such as a phone that's paired but has another Mac selected.
     private func dialUSB(_ device: USBMux.Device) async {
         while !Task.isCancelled {
+            var pause: UInt64 = 250_000_000
             if let transport = try? await USBMux().connect(to: device, port: LinkUSB.port) {
                 do {
                     let session = try await LinkClient.open(transport, pairing: pairing, as: me,
                                                             incomingDirectory: incoming, relay: pairing.relay)
+                    let opened = Date()
                     // Dial again only once this USB session has ended.
                     await withTaskCancellationHandler {
                         await adopt(session).value
                     } onCancel: {
                         Task { await session.close() }
                     }
+                    if Date().timeIntervalSince(opened) < 2 { pause = 2_000_000_000 }
                 } catch {
                     transport.close()
+                    pause = 2_000_000_000
                 }
             }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: pause)
         }
     }
 
