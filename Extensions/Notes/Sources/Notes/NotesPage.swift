@@ -463,9 +463,20 @@ struct NotesSettingsPane: View {
                     Text("From any app. Notes fold into the notch and come back where they were, ready to type in.")
                 }
             } footer: {
-                if preferences.toggleShortcutTaken {
+                switch preferences.toggleShortcutProblem {
+                case .taken:
                     Text("Another app already uses this shortcut. Choose a different one.")
                         .foregroundStyle(.red)
+                case .needsAccessibility:
+                    HStack {
+                        Text("Telling right-side keys from left ones needs Accessibility.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Allow…") { preferences.requestAccessibility?() }
+                    }
+                case nil:
+                    Text("Hold a modifier on the right side, like right ⌘ with period, and only that side works. The left one stays free for other apps.")
+                        .foregroundStyle(.secondary)
                 }
             }
             Section("Editor") {

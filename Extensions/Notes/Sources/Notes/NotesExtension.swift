@@ -23,6 +23,7 @@ final class NotesExtension: XNotchExtension {
     private var observers: Set<AnyCancellable> = []
     private var terminationObserver: NSObjectProtocol?
     private var hotKey: GlobalHotKey?
+    private var isGuiding = false
 
     func activate(host: ExtensionHost) throws {
         self.host = host
@@ -48,10 +49,14 @@ final class NotesExtension: XNotchExtension {
             library?.toggleVisibility(focusing: true)
             host?.feedback.tick()
         }
+        hotKey.onRecovered = { [weak preferences] in preferences?.toggleShortcutProblem = nil }
         preferences.$toggleShortcut.removeDuplicates().sink { [weak preferences, weak hotKey] shortcut in
-            let registered = hotKey?.register(shortcut) ?? true
-            if preferences?.toggleShortcutTaken != !registered { preferences?.toggleShortcutTaken = !registered }
+            let problem = hotKey?.register(shortcut)
+            if preferences?.toggleShortcutProblem != problem { preferences?.toggleShortcutProblem = problem }
         }.store(in: &observers)
+        preferences.requestAccessibility = { [weak self] in
+            Task { @MainActor in _ = await self?.requestPermission("accessibility") }
+        }
         self.hotKey = hotKey
         terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                                                                      object: nil, queue: .main) { [weak library] _ in
@@ -74,6 +79,28 @@ final class NotesExtension: XNotchExtension {
         library = nil
         preferences = nil
         host = nil
+    }
+}
+
+extension NotesExtension: PermissionRequesting {
+    /// Only a right-side shortcut needs Accessibility; the usual ones don't.
+    var pendingPermissions: [ExtensionPermission] {
+        guard preferences?.toggleShortcut?.isSideSpecific == true, !AXIsProcessTrusted() else { return [] }
+        return [ExtensionPermission(id: "accessibility", title: "Right-side shortcut", detail: "Accessibility",
+                                    reason: "Your notes shortcut uses a key on the right side of the keyboard. Telling right from left means reading key presses, which macOS allows only with Accessibility.",
+                                    symbol: "keyboard", tint: "#FFD60A")]
+    }
+
+    func requestPermission(_ id: String) async -> Bool {
+        guard id == "accessibility" else { return false }
+        if AXIsProcessTrusted() { return true }
+        if let guide = host as? PermissionGuiding {
+            guard !isGuiding else { return false }
+            isGuiding = true
+            defer { isGuiding = false }
+            return await guide.guide(.accessibility, for: Bundle.main.bundleURL) { AXIsProcessTrusted() }
+        }
+        return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 }
 

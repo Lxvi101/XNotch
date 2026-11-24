@@ -292,6 +292,30 @@ final class KeyShortcutTests: XCTestCase {
                                      context: nil, characters: "A", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0)!
         XCTAssertNil(KeyShortcut(event: plain))
     }
+
+    func testRightCommandOnlyMatchesTheRightSide() {
+        let command = NSEvent.ModifierFlags.command.rawValue
+        let leftDevice: UInt = 0x08, rightDevice: UInt = 0x10
+        let period: UInt32 = 47
+        let right = KeyShortcut(keyCode: period, rawFlags: command | rightDevice)!
+        XCTAssertTrue(right.isSideSpecific)
+        XCTAssertEqual(right.display, "Right ⌘ .")
+        XCTAssertTrue(right.matches(keyCode: period, rawFlags: command | rightDevice))
+        XCTAssertFalse(right.matches(keyCode: period, rawFlags: command | leftDevice))
+        // ⌘⇧. on the right is a different shortcut; Finder's hidden-files toggle stays with it.
+        XCTAssertFalse(right.matches(keyCode: period, rawFlags: command | NSEvent.ModifierFlags.shift.rawValue | rightDevice))
+
+        let left = KeyShortcut(keyCode: period, rawFlags: command | leftDevice)!
+        XCTAssertFalse(left.isSideSpecific)
+        XCTAssertTrue(left.matches(keyCode: period, rawFlags: command | rightDevice))
+    }
+
+    func testOlderSavedShortcutsStillDecode() throws {
+        let saved = Data(#"{"keyCode":45,"modifiers":786432}"#.utf8)
+        let shortcut = try JSONDecoder().decode(KeyShortcut.self, from: saved)
+        XCTAssertFalse(shortcut.isSideSpecific)
+        XCTAssertEqual(shortcut.display, "⌃⌥N")
+    }
 }
 
 final class CodeHighlighterTests: XCTestCase {

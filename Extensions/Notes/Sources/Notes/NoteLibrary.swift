@@ -98,8 +98,10 @@ final class NotesPreferences: ObservableObject {
         // Stored empty when cleared, so it doesn't fall back to the default.
         didSet { defaults.set(toggleShortcut.flatMap { try? JSONEncoder().encode($0) } ?? Data(), forKey: "toggleShortcut") }
     }
-    /// Set when another app holds the shortcut, for Settings to say so.
-    @Published var toggleShortcutTaken = false
+    /// Why the shortcut isn't listening, for Settings to say so.
+    @Published var toggleShortcutProblem: HotKeyProblem?
+    /// Opens XNotch's Accessibility guide. Set by the extension.
+    var requestAccessibility: (() -> Void)?
     @Published var cursorGlide: Bool { didSet { defaults.set(cursorGlide, forKey: "cursorGlide") } }
     /// Mirrors every note into iCloud Drive as a Markdown file.
     @Published var syncICloud: Bool { didSet { defaults.set(syncICloud, forKey: "syncICloud") } }
