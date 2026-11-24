@@ -2,48 +2,85 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Walkie in Settings, top to bottom in the order you need it: whether it can
+/// work at all, who you are, adding friends, who asked to talk, your friends,
+/// how it behaves. Server and encryption details wait folded at the bottom.
 struct WalkieSettingsPane: View {
     @ObservedObject var store: WalkieStore
     @State private var revealed: String?
+    @State private var showsServer = false
+    @State private var showsSecurity = false
+
+    private var requests: [Contact] { store.contacts.filter { !$0.accepted } }
+    private var friends: [Contact] { store.contacts.filter(\.accepted) }
 
     var body: some View {
         Form {
+            if store.status == .needsServer {
+                Section {
+                    SetupCard()
+                    serverFields
+                } footer: {
+                    Text("Walkie uses your XNotch Cloud server, the same one as Cloud Links. If Cloud Links is set up, Walkie connects by itself.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Section { statusRow }
+            }
+
             Section {
                 HStack(spacing: 14) {
                     FaceImage(name: store.displayName, seed: store.mailbox.box, avatar: store.avatar)
-                        .frame(width: 52, height: 52)
+                        .frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 6) {
                         TextField("Name", text: $store.displayName, prompt: Text("Your name"))
+                            .labelsHidden()
                         HStack {
                             Button("Choose Photo…", action: choosePhoto)
                             if store.avatar != nil {
-                                Button("Remove Photo") { store.avatar = nil }
+                                Button("Remove") { store.avatar = nil }
                             }
                         }
+                        .controlSize(.small)
                     }
                 }
             } header: {
                 Text("You")
             } footer: {
-                Text("This is what the people you add see on their face for you.")
+                Text("Your friends see this name and photo on your face.")
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            AddFriendsSection(store: store)
+
+            if !requests.isEmpty {
+                Section {
+                    ForEach(requests) { contact in
+                        RequestRow(store: store, contact: contact)
+                    }
+                } header: {
+                    Text("Requests")
+                } footer: {
+                    Text("They added you. Accept to talk back, or decline to remove them and anything they sent.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
 
             Section {
-                statusRow
-                TextField("Server URL", text: $store.server,
-                          prompt: Text(store.usesCloudServer ? "Same as Cloud Links" : "https://drop.example.com"))
-                SecureField("Access token", text: $store.token,
-                            prompt: Text(store.usesCloudServer ? "Same as Cloud Links" : "API_TOKEN from the server"))
-                Toggle("Show me to others on this server", isOn: $store.listed)
+                if friends.isEmpty {
+                    Text("No friends yet. Share your invite, or add someone above.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                ForEach(friends) { contact in
+                    FriendRow(store: store, contact: contact, revealed: $revealed)
+                }
             } header: {
-                Text("Server")
-            } footer: {
-                Text("Walkie uses your XNotch Cloud server, the same one as Cloud Links. Leave these empty to share its settings. People on other servers can still reach you with your invite.")
-                    .foregroundStyle(.secondary)
+                Text("Friends")
             }
-
-            AddPeopleView(store: store)
 
             Section {
                 Toggle("Show faces in the menu bar", isOn: $store.menuBarFaces)
@@ -57,54 +94,60 @@ struct WalkieSettingsPane: View {
                 Text("Talking")
             }
 
-            Section {
-                if store.contacts.isEmpty {
-                    Text("People you add appear here.").foregroundStyle(.secondary)
+            if store.status != .needsServer {
+                Section {
+                    DisclosureGroup("Server", isExpanded: $showsServer) { serverFields }
                 }
-                ForEach(store.contacts) { contact in
-                    ContactRow(store: store, contact: contact, revealed: $revealed)
-                }
-            } header: {
-                Text("People")
-            } footer: {
-                Text("To check that nobody sits in the middle, compare the safety number with the other person, in person or on a call. If both see the same numbers, mark them verified.")
-                    .foregroundStyle(.secondary)
             }
 
             Section {
-                LabeledContent("Encryption", value: "X-Wing (ML-KEM-768 + X25519), AES-256-GCM")
-                LabeledContent("Signatures", value: "ML-DSA-65 + Ed25519")
-                LabeledContent("Your fingerprint") {
-                    Text(store.fingerprint.prefix(10).hex.uppercased().chunked(4))
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
+                DisclosureGroup("Encryption", isExpanded: $showsSecurity) {
+                    LabeledContent("Encryption", value: "X-Wing (ML-KEM-768 + X25519), AES-256-GCM")
+                    LabeledContent("Signatures", value: "ML-DSA-65 + Ed25519")
+                    LabeledContent("Your fingerprint") {
+                        Text(store.fingerprint.prefix(10).hex.uppercased().chunked(4))
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    Text("Voice notes, transcripts, files and to-dos are sealed on this Mac for one person and signed by you. Your server only stores ciphertext, and deletes messages once they're fetched or after a week. It can still see who writes to whom, when, and how much.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            } header: {
-                Text("Security")
-            } footer: {
-                Text("Voice notes, transcripts, files and to-dos are sealed on this Mac for one person and signed by you. Your server only stores ciphertext, and it deletes messages after they're fetched or after a week. It can still see who writes to whom, when, and how much.")
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
     }
 
     @ViewBuilder
+    private var serverFields: some View {
+        TextField("Server URL", text: $store.server,
+                  prompt: Text(store.usesCloudServer ? "Same as Cloud Links" : "https://drop.example.com"))
+        SecureField("Access token", text: $store.token,
+                    prompt: Text(store.usesCloudServer ? "Same as Cloud Links" : "API_TOKEN from the server"))
+        Toggle("Let others on this server find me", isOn: $store.listed)
+    }
+
+    @ViewBuilder
     private var statusRow: some View {
-        HStack {
+        HStack(spacing: 8) {
             switch store.status {
             case .needsServer:
-                Label("Add a server here or in Cloud Links", systemImage: "server.rack").foregroundStyle(.secondary)
+                EmptyView()
             case .connecting:
                 ProgressView().controlSize(.small)
                 Text("Connecting…")
             case .online:
-                Label("Connected, listening for messages", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("Connected")
             case .offline(let reason):
-                Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(2)
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(reason).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Reconnect", action: store.reconnect)
+            if store.status != .online {
+                Button("Reconnect", action: store.reconnect)
+            }
         }
     }
 
@@ -135,7 +178,172 @@ struct WalkieSettingsPane: View {
     }
 }
 
-private struct ContactRow: View {
+/// Shown while there's no server: what's missing and how to fix it.
+private struct SetupCard: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(.orange)
+                .frame(width: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Connect a server to start")
+                    .font(.headline)
+                Text("Walkie sends through your own XNotch Cloud server. Enter its address and access token below.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// Your invite out, theirs in, and people on your server, in one place.
+private struct AddFriendsSection: View {
+    @ObservedObject var store: WalkieStore
+    @State private var pasted = ""
+    @State private var adding = false
+    @State private var copied = false
+    @State private var message: (text: String, failed: Bool)?
+    /// An invite found on the clipboard when Settings opened.
+    @State private var clipboardInvite: WalkieInvite?
+
+    /// What gets copied and shared: a line that says what it is, then the invite.
+    private var shareText: String? {
+        store.invite.map { "Add me on Walkie in XNotch: \($0.text)" }
+    }
+
+    var body: some View {
+        Section {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Button(copied ? "Copied" : "Copy") {
+                        guard let shareText else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(shareText, forType: .string)
+                        withAnimation(.smooth(duration: 0.25)) { copied = true }
+                    }
+                    if let shareText {
+                        ShareLink(item: shareText) { Text("Share…") }
+                    }
+                }
+                .disabled(store.invite == nil)
+            } label: {
+                Text("Your invite")
+                Text(store.invite == nil ? "Ready once a server is connected." : "Send it to a friend. Their Walkie adds you.")
+            }
+
+            if let invite = clipboardInvite, invite.text != store.invite?.text {
+                HStack {
+                    Image(systemName: "doc.on.clipboard").foregroundStyle(.secondary)
+                    Text("You copied a Walkie invite.")
+                    Spacer()
+                    Button("Add Friend") { add(invite) }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+
+            HStack {
+                TextField("Friend's invite", text: $pasted, prompt: Text("Paste a friend's invite"))
+                    .labelsHidden()
+                    .onSubmit { WalkieInvite(text: pasted).map(add) }
+                if adding {
+                    ProgressView().controlSize(.small)
+                }
+            }
+
+            if let message {
+                Label(message.text, systemImage: message.failed ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(message.failed ? Color.red : Color.green)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(store.directory, id: \.box) { listed in
+                if let card = WalkieCrypto.SignedCard(base64: listed.card).flatMap({ try? $0.open() }) {
+                    HStack(spacing: 10) {
+                        FaceImage(name: card.name, seed: card.box, avatar: card.avatar)
+                            .frame(width: 26, height: 26)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(card.name)
+                            Text("On your server").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Add") { add(listed, name: card.name) }
+                    }
+                }
+            }
+        } header: {
+            Text("Add Friends")
+        }
+        .onAppear {
+            store.refreshDirectory()
+            // Read once as Settings opens, never polled.
+            clipboardInvite = NSPasteboard.general.string(forType: .string).flatMap(WalkieInvite.init(text:))
+                .flatMap { invite in store.contact(invite.box) == nil ? invite : nil }
+        }
+        .onChange(of: pasted) { _, text in
+            // A whole invite pasted in is added right away; no button to find.
+            if let invite = WalkieInvite(text: text) { add(invite) } else if !text.isEmpty { message = nil }
+        }
+        .onChange(of: store.invite) { _, _ in copied = false }
+    }
+
+    private func add(_ invite: WalkieInvite) {
+        guard !adding else { return }
+        adding = true
+        message = nil
+        Task {
+            defer { adding = false }
+            do {
+                try await store.add(invite: invite)
+                pasted = ""
+                if clipboardInvite == invite { clipboardInvite = nil }
+                let name = store.contact(invite.box)?.firstName ?? "Your friend"
+                withAnimation(.smooth(duration: 0.3)) { message = ("\(name) is added. Hold their face to talk.", false) }
+            } catch {
+                withAnimation(.smooth(duration: 0.3)) { message = (error.localizedDescription, true) }
+            }
+        }
+    }
+
+    private func add(_ listed: WalkieClient.Listed, name: String) {
+        do {
+            try store.add(listed: listed)
+            withAnimation(.smooth(duration: 0.3)) { message = ("\(name) is added.", false) }
+        } catch {
+            withAnimation(.smooth(duration: 0.3)) { message = (error.localizedDescription, true) }
+        }
+    }
+}
+
+/// Someone who added you and is waiting for a yes.
+private struct RequestRow: View {
+    @ObservedObject var store: WalkieStore
+    let contact: Contact
+
+    var body: some View {
+        HStack(spacing: 10) {
+            FaceImage(name: contact.name, seed: contact.box, avatar: contact.avatar)
+                .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(contact.name)
+                Text(waiting).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Decline") { store.remove(contact) }
+            Button("Accept") { store.accept(contact) }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var waiting: String {
+        let count = store.chats[contact.box]?.count ?? 0
+        return count == 0 ? "Wants to talk" : count == 1 ? "Sent you a message" : "Sent you \(count) messages"
+    }
+}
+
+private struct FriendRow: View {
     @ObservedObject var store: WalkieStore
     let contact: Contact
     @Binding var revealed: String?
@@ -145,35 +353,48 @@ private struct ContactRow: View {
             HStack(spacing: 10) {
                 FaceImage(name: contact.name, seed: contact.box, avatar: contact.avatar)
                     .frame(width: 28, height: 28)
-                VStack(alignment: .leading, spacing: 1) {
+                    .overlay(alignment: .bottomTrailing) {
+                        if store.online.contains(contact.box) {
+                            Circle().fill(.green).frame(width: 8, height: 8)
+                                .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                        }
+                    }
+                HStack(spacing: 4) {
                     Text(contact.name)
-                    Text(contact.verified ? "Verified" : contact.accepted ? "Not verified" : "Wants to talk")
-                        .font(.caption)
-                        .foregroundStyle(contact.verified ? .green : .secondary)
+                    if contact.verified {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                            .help("Keys checked")
+                    }
                 }
                 Spacer()
-                if !contact.accepted {
-                    Button("Accept") { store.accept(contact) }
-                }
-                Button(revealed == contact.box ? "Hide Safety Number" : "Safety Number") {
-                    revealed = revealed == contact.box ? nil : contact.box
-                }
-                Button(role: .destructive) {
-                    store.remove(contact)
+                Menu {
+                    Button(revealed == contact.box ? "Hide Safety Number" : "Check Safety Number") {
+                        revealed = revealed == contact.box ? nil : contact.box
+                    }
+                    Divider()
+                    Button("Remove \(contact.firstName)", role: .destructive) { store.remove(contact) }
                 } label: {
-                    Image(systemName: "trash")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .buttonStyle(.borderless)
-                .help("Remove \(contact.firstName) and your conversation")
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
             }
             if revealed == contact.box {
-                HStack(alignment: .top) {
-                    Text(store.safetyNumber(with: contact).chunkedLines(groupsPerLine: 4))
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                    Spacer()
-                    if !contact.verified {
-                        Button("They Match") { store.markVerified(contact) }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Compare these numbers with \(contact.firstName), in person or on a call. If they match, nobody sits in the middle.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top) {
+                        Text(store.safetyNumber(with: contact).chunkedLines(groupsPerLine: 4))
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                        Spacer()
+                        if !contact.verified {
+                            Button("They Match") { store.markVerified(contact) }
+                        }
                     }
                 }
                 .padding(.leading, 38)

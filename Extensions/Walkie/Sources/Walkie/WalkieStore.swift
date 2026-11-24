@@ -753,6 +753,7 @@ extension WalkieStore {
 
     func demoSet(contacts: [Contact]) { self.contacts = contacts }
     func demoSet(online: Set<String>) { self.online = online }
+    func demoSet(status: Status) { self.status = status }
     func demoSet(talking: Set<String>) { self.talking = talking }
     func demoSet(lastSeen: [String: Date]) { self.lastSeen = lastSeen }
     func demoSet(unread: [String: Int]) { self.unread = unread }

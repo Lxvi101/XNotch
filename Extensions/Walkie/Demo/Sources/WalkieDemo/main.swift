@@ -10,6 +10,7 @@ import XNotchKit
 
 let arguments = CommandLine.arguments.dropFirst()
 let menuBarTour = arguments.contains("--menubar")
+let stillsFolder = arguments.contains("--stills") ? arguments.first { !$0.hasPrefix("--") } : nil
 let output = URL(fileURLWithPath: arguments.first { !$0.hasPrefix("--") } ?? "walkie-demo.mp4")
 let sceneSize = CGSize(width: 760, height: 520)
 let fps = 30.0
@@ -506,6 +507,10 @@ MainActor.assumeIsolated {
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: 40, y: 40))
         window.orderFrontRegardless()
+        if let stillsFolder {
+            Stills.run(director: director, host: host, folder: URL(fileURLWithPath: stillsFolder)) { exit(0) }
+            return
+        }
         let scale: CGFloat = 1.5
         let pixels = CGSize(width: sceneSize.width * scale, height: sceneSize.height * scale)
         print("recording \(Int(pixels.width))×\(Int(pixels.height)) at \(scale)x to \(output.path)")
