@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         LegacyMigration.run()
+        EditMenu.install()
         NSApp.applicationIconImage = AppIcon.image
         updater.start()
         guard let displays = NotchDisplays() else { return }
