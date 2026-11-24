@@ -141,6 +141,9 @@ enum MenuBarMotion {
     static let panelOut = Animation.smooth(duration: 0.26)
     /// A sent bubble popping into place, and the composer making room.
     static let pop = Animation.smooth(duration: 0.46, extraBounce: 0.12)
+    /// The conversation making room and gliding up to a new message. No bounce:
+    /// a scroll that overshoots its end reads as a jolt.
+    static let follow = Animation.smooth(duration: 0.42)
     /// The composer changing between writing, recording and reviewing.
     static let morph = Animation.smooth(duration: 0.44, extraBounce: 0.06)
     static let crossfade = Animation.easeInOut(duration: 0.22)
@@ -239,10 +242,12 @@ private struct MenuBarFace: View {
             if dropped || ui.sendBadges[contact.box] != nil {
                 SendBadge(failed: ui.sendBadges[contact.box] == true).scaleEffect(0.6).offset(x: 6, y: -6)
             } else if (store.unread[contact.box] ?? 0) > 0 {
-                Circle().fill(.black).frame(width: 7, height: 7)
-                    .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 1))
-                    .offset(x: 1, y: -1)
-                    .transition(.scale.combined(with: .opacity))
+                // Unread: the red dot macOS uses for notifications, with a thin dark
+                // ring so it stays apart from the face on any menu bar.
+                Circle().fill(Color(nsColor: .systemRed)).frame(width: 8, height: 8)
+                    .overlay(Circle().strokeBorder(.black.opacity(0.55), lineWidth: 1))
+                    .offset(x: 2, y: -2)
+                    .transition(.scale(scale: 0.2).combined(with: .opacity))
             }
         }
         .animation(MenuBarMotion.focus, value: isOpen)
@@ -409,23 +414,84 @@ struct FloatingConversation: View {
     static let width: CGFloat = 372
     /// How far the blurred desktop reaches beyond the bubbles before it has faded out.
     static let backdropReach: CGFloat = 64
+    /// The newest few fill the view when it opens; older ones are a scroll up.
     private static let shown = 4
+    /// How far back you can scroll.
+    private static let kept = 200
+    /// Room inside the scroll view for the bubbles' shadows, which it would clip.
+    private static let shadowRoom: CGFloat = 16
+    private static let spacing: CGFloat = 8
     /// What was there when the conversation opened: only messages after it pop in.
     @State private var openedWith: Set<String>?
+    @State private var rowHeights: [String: CGFloat] = [:]
+    /// A message just arrived: glide to it once its height is known.
+    @State private var followLatest = false
+    private static let end = "end"
 
-    private var items: [ChatItem] { Array((store.chats[contact.box] ?? []).suffix(Self.shown)) }
+    private var items: [ChatItem] { Array((store.chats[contact.box] ?? []).suffix(Self.kept)) }
+
+    /// Tall enough for the newest `shown` messages, so it opens looking the same as before.
+    private func viewport(for items: [ChatItem]) -> CGFloat {
+        let recent = items.suffix(Self.shown)
+        let rows = recent.reduce(0) { $0 + (rowHeights[$1.id] ?? 0) }
+        return rows + CGFloat(max(0, recent.count - 1)) * Self.spacing + 2 * Self.shadowRoom
+    }
 
     var body: some View {
         let items = items
-        VStack(spacing: 8) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                let age = items.count - 1 - index
-                FloatingBubble(item: item, store: store, contact: contact,
-                               fresh: !item.fromMe && !model.revealed.contains(item.id))
-                    .modifier(PopIn(pops: openedWith.map { !$0.contains(item.id) } ?? false, fromTrailing: item.fromMe))
-                    .opacity(age >= 3 ? 0.7 : age == 2 ? 0.88 : 1)
-                    .frame(maxWidth: .infinity, alignment: item.fromMe ? .trailing : .leading)
-                    .transition(.opacity)
+        let scrolls = items.count > Self.shown
+        VStack(spacing: Self.spacing) {
+            if !items.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                        VStack(spacing: Self.spacing) {
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                let age = items.count - 1 - index
+                                FloatingBubble(item: item, store: store, contact: contact,
+                                               fresh: !item.fromMe && !model.revealed.contains(item.id))
+                                    .modifier(PopIn(pops: openedWith.map { !$0.contains(item.id) } ?? false, fromTrailing: item.fromMe))
+                                    .opacity(age >= 3 ? 0.7 : age == 2 ? 0.88 : 1)
+                                    .frame(maxWidth: .infinity, alignment: item.fromMe ? .trailing : .leading)
+                                    .background(GeometryReader { row in
+                                        Color.clear.preference(key: RowHeightsKey.self, value: [item.id: row.size.height])
+                                    })
+                                    .id(item.id)
+                                    .transition(.opacity)
+                            }
+                        }
+                        .padding(Self.shadowRoom)
+                        // Below the shadow room: scrolling here puts the newest bubble
+                        // right above the composer, not half under it.
+                        Color.clear.frame(height: 0).id(Self.end)
+                        }
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .frame(height: viewport(for: items))
+                    // Older messages dissolve at the top instead of being cut off.
+                    .mask {
+                        VStack(spacing: 0) {
+                            LinearGradient(colors: [.black.opacity(scrolls ? 0 : 1), .black], startPoint: .top, endPoint: .bottom)
+                                .frame(height: Self.shadowRoom + 10)
+                            Color.black
+                        }
+                    }
+                    .padding(-Self.shadowRoom)
+                    .onPreferenceChange(RowHeightsKey.self) { heights in
+                        MainActor.assumeIsolated { measured(heights, proxy: proxy) }
+                    }
+                    .onChange(of: items.last?.id) { _, last in
+                        guard last != nil else { return }
+                        followLatest = true
+                        // Normally the new row's height arrives first and the glide
+                        // starts there; this catches a row whose height didn't change.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            guard followLatest else { return }
+                            followLatest = false
+                            withAnimation(MenuBarMotion.follow) { proxy.scrollTo(Self.end, anchor: .bottom) }
+                        }
+                    }
+                }
             }
             Composer(store: store, composer: composer, recorder: store.recorder, player: store.player,
                      contact: contact, actions: actions)
@@ -437,7 +503,31 @@ struct FloatingConversation: View {
             openedWith = Set(items.map(\.id))
             reveal()
         }
-        .onChange(of: items.map(\.id)) { _, _ in reveal() }
+        .onChange(of: items.map(\.id)) { _, _ in
+            reveal()
+            // Read as it arrives: no dot for a conversation you're looking at.
+            store.markRead(contact.box)
+        }
+    }
+
+    /// Row heights from the latest layout. The view grows to fit the newest
+    /// messages and glides to the bottom in one animation, so the list makes
+    /// room and slides up as one body while the new bubble pops in.
+    private func measured(_ heights: [String: CGFloat], proxy: ScrollViewProxy) {
+        let first = rowHeights.isEmpty
+        let follow = followLatest && items.last.map { heights[$0.id] != nil } == true
+        guard heights.contains(where: { rowHeights[$0.key] != $0.value }) || follow else { return }
+        if first {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { rowHeights.merge(heights) { $1 } }
+            return
+        }
+        if follow { followLatest = false }
+        withAnimation(MenuBarMotion.follow) {
+            rowHeights.merge(heights) { $1 }
+            if follow { proxy.scrollTo(Self.end, anchor: .bottom) }
+        }
     }
 
     /// New messages arrive out of focus and tinted, then settle in.
@@ -447,6 +537,13 @@ struct FloatingConversation: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
             withAnimation(MenuBarMotion.reveal) { model.revealed.formUnion(fresh) }
         }
+    }
+}
+
+private struct RowHeightsKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { $1 }
     }
 }
 
@@ -461,6 +558,7 @@ private struct FloatingBubble: View {
         content
             .foregroundStyle(fresh ? Color(red: 0.35, green: 0.62, blue: 1) : .white)
             .blur(radius: fresh ? 2.6 : 0)
+            .copyMenu(item)
     }
 
     @ViewBuilder
@@ -470,6 +568,7 @@ private struct FloatingBubble: View {
             Text(item.text ?? "")
                 .font(.system(size: 13.5))
                 .lineLimit(4)
+                .textSelection(.enabled)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
                 .background { PanelGlass(shape: Capsule(), tone: item.fromMe ? .dark : .light) }
@@ -847,23 +946,32 @@ private struct DotField: View {
 
 // MARK: Backdrop
 
-/// The desktop behind the conversation, blurred and dimmed most behind the
-/// bubbles and fading to nothing toward the edges, so they read on any
-/// wallpaper and no edge shows where the effect stops.
+/// The desktop behind the conversation, blurred most behind the bubbles and
+/// fading to nothing toward the edges, so they read on any wallpaper and no
+/// edge shows where the effect stops. It frosts light in Light Mode and dims
+/// dark in Dark Mode: a dark cloud over the white windows of Light Mode reads
+/// as a grey smudge, and a light one over dark windows as milky haze.
 private struct ProgressiveBackdrop: View {
     @Environment(\.walkieGlassFallback) private var fallback
+    @StateObject private var system = SystemAppearance()
 
     var body: some View {
+        let light = !system.isDark
         ZStack {
             if !fallback {
-                BackdropBlur()
-                // A second pass on a tighter falloff, so the blur deepens toward the middle.
-                BackdropBlur().mask { falloff(solid: 0.25) }
+                BackdropBlur(dark: !light)
+                if !light {
+                    // A second pass on a tighter falloff, so the blur deepens toward the middle.
+                    BackdropBlur(dark: true).mask { falloff(solid: 0.25) }
+                }
             }
-            LinearGradient(colors: [.black.opacity(0.36), .black.opacity(0.24)], startPoint: .top, endPoint: .bottom)
+            if !light || fallback {
+                LinearGradient(colors: [.black.opacity(0.36), .black.opacity(0.24)], startPoint: .top, endPoint: .bottom)
+            }
         }
         .mask { falloff(solid: 0.5) }
         .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.3), value: light)
     }
 
     /// Opaque over the inner `solid` part, then easing to clear at the edges,
@@ -878,17 +986,45 @@ private struct ProgressiveBackdrop: View {
     }
 }
 
+/// Light or Dark Mode, live. The panel itself is always dark, so SwiftUI's
+/// colour scheme can't tell.
+@MainActor
+private final class SystemAppearance: ObservableObject {
+    @Published private(set) var isDark = SystemAppearance.current
+    private var observation: NSKeyValueObservation?
+
+    init() {
+        observation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.isDark != Self.current else { return }
+                    self.isDark = Self.current
+                }
+            }
+        }
+    }
+
+    private static var current: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+}
+
 private struct BackdropBlur: NSViewRepresentable {
+    let dark: Bool
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .fullScreenUI
         view.blendingMode = .behindWindow
         view.state = .active
-        view.appearance = NSAppearance(named: .darkAqua)
+        updateNSView(view, context: context)
         return view
     }
 
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        let name: NSAppearance.Name = dark ? .darkAqua : .aqua
+        if view.appearance?.name != name { view.appearance = NSAppearance(named: name) }
+    }
 }
 
 // MARK: Transitions
