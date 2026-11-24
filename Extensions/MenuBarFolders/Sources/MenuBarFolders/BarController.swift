@@ -25,6 +25,8 @@ final class BarController: NSObject {
     let mover = ItemMover()
     private let log = Logger(subsystem: "dev.levi.XNotch.extension", category: "menubarfolders")
     private var divider: NSStatusItem?
+    /// A divider being placed, not yet stretched.
+    private var stagingDivider: NSStatusItem?
     private var dividerGeneration = 0
     private var folderItems: [UUID: NSStatusItem] = [:]
     private var dragWatcher: DragIntoFolderWatcher?
@@ -204,13 +206,29 @@ final class BarController: NSObject {
         shown(excluding: excluded).min { $0.bounds.minX < $1.bounds.minX }
     }
 
-    /// Everything on the bar that should stay in view: loose icons and the folders.
+    /// Everything on the bar that should stay in view: loose icons, the
+    /// folders, and XNotch's other icons.
     private func shown(excluding excluded: Set<String> = []) -> [(window: CGWindowID, bounds: CGRect)] {
         let filed = store.filedIDs.union(excluded)
         let loose = BarItem.current().filter { !filed.contains($0.id) && $0.bounds.minX > 0 && $0.bounds.width > 0 }
             .map { (window: $0.windowID, bounds: $0.bounds) }
         let folders = folderFrames.compactMap { entry in window(for: entry.id).map { (window: $0, bounds: entry.frame) } }
-        return loose + folders
+        let kept = keptOwnIcons().filter { !excluded.contains($0.id) && $0.bounds.minX > 0 }
+            .map { (window: $0.windowID, bounds: $0.bounds) }
+        return loose + folders + kept
+    }
+
+    /// XNotch's icons other than the folders and the divider, such as
+    /// Walkie's faces. They can't be filed (the folders skip XNotch's own
+    /// windows), so they must never end up behind the divider either, where
+    /// nothing could bring them back.
+    private func keptOwnIcons() -> [BarItem] {
+        var mine = Set(folderItems.values.compactMap { $0.button?.window.map { CGWindowID($0.windowNumber) } })
+        for item in [divider, stagingDivider].compactMap({ $0 }) {
+            if let window = item.button?.window { mine.insert(CGWindowID(window.windowNumber)) }
+        }
+        // A divider on its way out is still 10,000 pt long for a moment.
+        return BarItem.ownWindows().filter { !mine.contains($0.windowID) && $0.bounds.width < Self.collapsedLength / 2 }
     }
 
     /// A fresh divider, 1 pt and invisible, right before the boundary icon:
@@ -229,6 +247,8 @@ final class BarController: NSObject {
         UserDefaults.standard.set(Double(screenWidth - target.bounds.minX), forKey: Self.positionKey(name))
         // A status item made at zero length can stay without a real window.
         let fresh = NSStatusBar.system.statusItem(withLength: 1)
+        stagingDivider = fresh
+        defer { stagingDivider = nil }
         fresh.autosaveName = name
         fresh.isVisible = true
         fresh.button?.image = nil
@@ -288,7 +308,7 @@ final class BarController: NSObject {
     /// lifted off the bar. Before a folder it's dropped right of the other
     /// app's icon in front of it instead.
     private func dividerDrop(before target: CGWindowID) -> (window: CGWindowID, side: ItemMover.Side) {
-        let own = Set(folderItems.keys.compactMap(window(for:)))
+        let own = Set(folderItems.keys.compactMap(window(for:))).union(keptOwnIcons().map(\.windowID))
         guard own.contains(target), let bounds = WindowServer.bounds(of: target),
               let left = BarItem.current().filter({ $0.bounds.minX > 0 && $0.bounds.maxX <= bounds.minX + 1 })
                 .max(by: { $0.bounds.maxX < $1.bounds.maxX }) else { return (target, .left) }
@@ -541,7 +561,9 @@ final class BarController: NSObject {
         let items = BarItem.current().filter(\.isMovable)
         let filed = store.filedIDs
         let strays = items.filter { filed.contains($0.id) && !isHidden($0.bounds) }
-        let swallowed = dividerBounds == nil ? [] : items.filter { !filed.contains($0.id) && isHidden($0.bounds) }
+        var swallowed = dividerBounds == nil ? [] : items.filter { !filed.contains($0.id) && isHidden($0.bounds) }
+        // Walkie's faces and the like, behind the divider after a Command-drag.
+        if dividerBounds != nil { swallowed += keptOwnIcons().filter { isHidden($0.bounds) } }
         // Whatever is in place now has nothing left to try.
         let misplaced = Set((strays + swallowed).map(\.id))
         attempts = attempts.filter { misplaced.contains($0.key) }
@@ -551,7 +573,9 @@ final class BarController: NSObject {
 
         for item in swallowed where tries.contains(item) {
             guard let boundary = boundary(excluding: [item.id]) else { break }
-            await mover.move(item, to: .left, of: boundary.window)
+            // A drop on one of XNotch's own icons never lands; beside the other app's icon instead.
+            let drop = dividerDrop(before: boundary.window)
+            await mover.move(item, to: drop.side, of: drop.window)
         }
         let stashing = strays.filter(tries.contains)
         if !stashing.isEmpty {

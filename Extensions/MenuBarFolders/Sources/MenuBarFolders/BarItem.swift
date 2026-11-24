@@ -47,6 +47,28 @@ struct BarItem: Identifiable, Equatable {
                        bundleID: Bundle.main.bundleIdentifier, title: nil, bounds: bounds, appName: "XNotch")
     }
 
+    /// XNotch's own status item windows on the main display's menu bar row,
+    /// wherever they are along it, off screen included. The folders, the
+    /// divider and other extensions' icons (Walkie's faces) all live here.
+    static func ownWindows() -> [BarItem] {
+        let ids = WindowServer.menuBarWindowIDs()
+        guard let array = WindowServer.windowArray(ids),
+              let infos = CGWindowListCreateDescriptionFromArray(array) as? [[CFString: Any]] else { return [] }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let mainMenuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+        let mainTop = CGDisplayBounds(CGMainDisplayID()).minY
+        return infos.compactMap { info in
+            guard let wid = info[kCGWindowNumber] as? CGWindowID,
+                  let pid = info[kCGWindowOwnerPID] as? pid_t, pid == ownPID,
+                  let layer = info[kCGWindowLayer] as? Int, layer != mainMenuLevel,
+                  let boundsDict = info[kCGWindowBounds] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
+                  bounds.width > 0, abs(bounds.minY - mainTop) < 1 else { return nil }
+            return BarItem(id: "own|\(wid)", windowID: wid, pid: pid, bundleID: Bundle.main.bundleIdentifier,
+                           title: nil, bounds: bounds, appName: "XNotch")
+        }
+    }
+
     /// Status items in the menu bar, left to right. Skips app menus and this
     /// process's own items (the folders and the divider).
     static func current() -> [BarItem] {
