@@ -177,7 +177,10 @@ final class NotchViewModel: ObservableObject {
     var restingGeometry: NotchShellGeometry {
         if showsEyes { return NotchMetrics.eyes(notchSize) }
         if showsHeadphones { return NotchMetrics.headphonesWings(notchSize) }
-        if showsAlert { return NotchMetrics.alertWings(notchSize) }
+        if showsAlert {
+            if let message = alert?.message { return NotchMetrics.message(notchSize, text: message.text) }
+            return NotchMetrics.alertWings(notchSize)
+        }
         if showsTrayWings { return NotchMetrics.wings(notchSize) }
         if showsMediaActivity { return NotchMetrics.mediaWings(notchSize) }
         return NotchMetrics.closed(notchSize)
@@ -413,7 +416,11 @@ final class NotchViewModel: ObservableObject {
             withAnimation(Motion.press) { deformation.impact = .zero }
             media.togglePlayPause()
         } else if isPointerInside {
-            open(page: pill ?? bodyDestination)
+            let target = pill ?? bodyDestination
+            // Before opening, which clears the alert, so the page opens
+            // already showing what the alert was about.
+            if showsAlert, let alert, alert.page == target { extensions.alertOpened(alert) }
+            open(page: target)
         } else {
             withAnimation(Motion.press) { deformation.impact = .zero }
         }
@@ -865,14 +872,14 @@ final class NotchViewModel: ObservableObject {
     // MARK: Extension alerts
 
     /// Shown now when the notch is closed and idle, otherwise once it closes.
-    private func presentAlert() {
+    /// `reshapes`: a message replaces wings or the other way round, so the
+    /// shell changes shape even while an alert already shows.
+    private func presentAlert(reshapes: Bool = false) {
         guard alert != nil, surface == .closed, !isPresentingOnboarding else { return }
         let wasShowing = showsAlert
         showsAlert = true
-        if !wasShowing {
-            render(Motion.open)
-            Haptics.tap()
-        }
+        if !wasShowing || reshapes { render(Motion.open) }
+        if !wasShowing { Haptics.tap() }
         scheduleAlertHide()
         onPointerSyncNeeded?()
     }
@@ -937,8 +944,18 @@ extension NotchViewModel {
 
     func showAlert(_ alert: NotchAlert, eyes: NotchAlertSeverity?, from id: ExtensionID) {
         guard servicesStarted else { return }
+        let reshapes = self.alert?.message != nil
         self.alert = ExtensionAlert(alert: alert, extensionID: id, eyes: eyes)
-        presentAlert()
+        presentAlert(reshapes: reshapes)
+    }
+
+    func showMessage(_ message: NotchMessage, from id: ExtensionID) {
+        guard servicesStarted else { return }
+        let reshapes = self.alert?.message == nil
+        let stand = NotchAlert(symbol: message.symbol ?? "message.fill", tint: message.tint, title: message.sender,
+                               value: "", page: message.page)
+        self.alert = ExtensionAlert(alert: stand, extensionID: id, message: message)
+        presentAlert(reshapes: reshapes)
     }
 
     /// Files an extension brought, say from an iPhone, arrive like a drop.

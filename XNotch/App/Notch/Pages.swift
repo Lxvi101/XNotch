@@ -56,6 +56,8 @@ struct ExtensionAlert: Hashable {
     let extensionID: ExtensionID
     /// Shown with the eyes instead of the value, at this severity.
     var eyes: NotchAlertSeverity?
+    /// Someone wrote: shown as a message banner instead of the wings.
+    var message: NotchMessage?
 
     var page: OpenPage? { alert.page.map { .extensionPage(extensionID, $0) } }
 }

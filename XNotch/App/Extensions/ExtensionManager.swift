@@ -13,6 +13,7 @@ protocol ExtensionNotchDriver: AnyObject {
     func openSettings(extension id: ExtensionID)
     func addToShelf(_ urls: [URL])
     func showAlert(_ alert: NotchAlert, eyes: NotchAlertSeverity?, from id: ExtensionID)
+    func showMessage(_ message: NotchMessage, from id: ExtensionID)
     func watch(_ point: CGPoint?, mood: NotchEyesMood, from id: ExtensionID)
     func stopWatching(farewell: NotchEyesMood?, from id: ExtensionID)
 }
@@ -185,6 +186,17 @@ final class ExtensionManager: ObservableObject {
             + shelfFileActors.flatMap { $0.actor.shelfActions(for: request) }
     }
 
+    /// A click on an extension's alert opened its page (API 1.11.0).
+    func alertOpened(_ alert: ExtensionAlert) {
+        guard let entry = entries.first(where: { $0.id == alert.extensionID }), entry.isActive,
+              let responder = entry.instance as? NotchAlertResponding else { return }
+        if let message = alert.message {
+            responder.didOpen(message)
+        } else {
+            responder.didOpen(alert.alert)
+        }
+    }
+
     func settingsPane(for id: ExtensionID) -> AnyView? {
         guard let entry = entries.first(where: { $0.id == id }), entry.isActive,
               let provider = entry.instance as? SettingsPaneProviding else { return nil }
@@ -277,7 +289,7 @@ final class ExtensionManager: ObservableObject {
 /// One extension's view of the host.
 @MainActor
 private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, NotchEyesWatching, PermissionGuiding,
-    ShelfAccess, ShelfActionSharing {
+    ShelfAccess, ShelfActionSharing, NotchMessageAlerting, FocusReading {
     let extensionID: ExtensionID
     let storage: ExtensionStorage
     let workspace = ExtensionWorkspace()
@@ -353,6 +365,14 @@ private final class HostBridge: ExtensionHost, NotchControl, NotchEyesAlerting, 
         }
         return await PermissionCenter.shared.request(permission, for: app, isGranted: isGranted)
     }
+
+    func showMessage(_ message: NotchMessage) {
+        // Silent while a Focus is on, as the phone keeps it.
+        guard manager?.isActive(extensionID) == true, !FocusState.isOn else { return }
+        manager?.driver?.showMessage(message, from: extensionID)
+    }
+
+    var isFocusOn: Bool { FocusState.isOn }
 
     private func present(_ alert: NotchAlert, eyes: NotchAlertSeverity?) {
         // Only from an extension that's still on.

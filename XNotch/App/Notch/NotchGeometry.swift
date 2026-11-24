@@ -88,6 +88,11 @@ enum NotchMetrics {
     static let wingWidth: CGFloat = 58
     static let headphonesWingWidth: CGFloat = 66
     static let alertWingWidth: CGFloat = 92
+    /// A message banner: the width the alert wings reach, and its name and
+    /// one or two lines of text under the camera.
+    static let messageWidth: CGFloat = 392
+    static let messageAvatar: CGFloat = 46
+    static let messageTextFont = NSFont.systemFont(ofSize: 12.5)
 
     static let dropZoneSize = CGSize(width: 372, height: 126)
     static let dropZoneTopCornerRadius: CGFloat = 16
@@ -152,6 +157,20 @@ enum NotchMetrics {
     static func alertWings(_ notch: CGSize) -> NotchShellGeometry {
         NotchShellGeometry(width: notch.width + 2 * alertWingWidth, height: notch.height,
                            topCornerRadius: closedTopCornerRadius, bottomRadius: closedBottomRadius)
+    }
+
+    static func message(_ notch: CGSize, text: String) -> NotchShellGeometry {
+        let width = max(messageWidth, notch.width + 2 * alertWingWidth)
+        let fits = (text as NSString).size(withAttributes: [.font: messageTextFont]).width <= messageTextWidth(width)
+        return NotchShellGeometry(width: width, height: notch.height + (fits ? 46 : 62),
+                                  topCornerRadius: 14, bottomRadius: 30)
+    }
+
+    /// From the edge of the body: the gap, then the picture, then the words.
+    static let messageInset: CGFloat = 16
+
+    static func messageTextWidth(_ bodyWidth: CGFloat) -> CGFloat {
+        bodyWidth - 2 * messageInset - messageAvatar - 12 - 4
     }
 
     static func mediaWings(_ notch: CGSize) -> NotchShellGeometry {

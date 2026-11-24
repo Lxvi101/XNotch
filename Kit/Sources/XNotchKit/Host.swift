@@ -60,6 +60,66 @@ public struct NotchAlert: Sendable, Hashable {
     }
 }
 
+/// Hears a click on one of the extension's alerts or messages (API 1.11.0).
+/// The notch is already opening on its `page`; show what it's about there,
+/// say the conversation a message arrived in.
+@MainActor
+public protocol NotchAlertResponding: AnyObject {
+    func didOpen(_ alert: NotchAlert)
+    func didOpen(_ message: NotchMessage)
+}
+
+public extension NotchAlertResponding {
+    func didOpen(_ alert: NotchAlert) {}
+    func didOpen(_ message: NotchMessage) {}
+}
+
+/// Someone wrote to you, shown the way a phone shows a new message: the notch
+/// grows into a banner with their picture, their name and the start of what
+/// they said (API 1.11.0).
+public struct NotchMessage: Sendable, Hashable {
+    /// "Mira".
+    public var sender: String
+    /// The message, or what it is: "Voice note · 0:04". Two lines show.
+    public var text: String
+    /// Their picture, PNG or JPEG; nil shows their initials on `tint`.
+    public var image: Data?
+    /// Hex colour for the initials' background and the symbol, e.g. "#5C8CFF".
+    public var tint: String?
+    /// A small symbol before the text, such as "waveform" for a voice note.
+    public var symbol: String?
+    /// The page a click on the banner opens; nil opens the notch as usual.
+    public var page: String?
+
+    public init(sender: String, text: String, image: Data? = nil, tint: String? = nil, symbol: String? = nil,
+                page: String? = nil) {
+        self.sender = sender
+        self.text = text
+        self.image = image
+        self.tint = tint
+        self.symbol = symbol
+        self.page = page
+    }
+}
+
+/// Shows a `NotchMessage` (API 1.11.0). XNotch's `NotchControl` adopts it:
+/// `host.notch as? NotchMessageAlerting`. Like iPhone notifications, messages
+/// stay silent while a Focus is on.
+@MainActor
+public protocol NotchMessageAlerting: AnyObject {
+    func showMessage(_ message: NotchMessage)
+}
+
+/// Whether the user has a Focus on, such as Do Not Disturb (API 1.11.0).
+/// Hold back sounds, alerts and anything that plays by itself while it is.
+/// XNotch's host adopts it: `host as? FocusReading`. A Focus turned on by
+/// hand (here or on a device sharing Focus) is seen; one started by its own
+/// schedule may not be.
+@MainActor
+public protocol FocusReading: AnyObject {
+    var isFocusOn: Bool { get }
+}
+
 /// How serious an alert is, for showing it with the notch's eyes (API 1.5.0).
 public enum NotchAlertSeverity: Sendable, Hashable {
     /// Worth a look: the eyes glance nervously side to side.

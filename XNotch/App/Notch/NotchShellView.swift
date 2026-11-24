@@ -50,10 +50,17 @@ struct NotchShellView: View {
                 .reveal(model.headphonesReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
                 .allowsHitTesting(false)
             if let alert = model.alert {
-                ExtensionAlertWingsView(alert: alert.alert, eyes: alert.eyes, notchSize: model.notchSize)
-                    .id(alert)
-                    .reveal(model.alertReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
-                    .allowsHitTesting(false)
+                if let message = alert.message {
+                    NotchMessageView(message: message, notchSize: model.notchSize)
+                        .id(alert)
+                        .reveal(model.alertReveal, hiddenScale: 0.94, maxBlur: 8, travel: -6, unmountsWhenHidden: true)
+                        .allowsHitTesting(false)
+                } else {
+                    ExtensionAlertWingsView(alert: alert.alert, eyes: alert.eyes, notchSize: model.notchSize)
+                        .id(alert)
+                        .reveal(model.alertReveal, hiddenScale: 0.9, maxBlur: 6, travel: 0, unmountsWhenHidden: true)
+                        .allowsHitTesting(false)
+                }
             }
             NotchEyesView(eyes: model.eyes, unit: NotchMetrics.eyesUnit)
                 .frame(width: model.notchSize.width, height: NotchMetrics.eyesStrip)

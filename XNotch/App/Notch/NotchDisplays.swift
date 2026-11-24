@@ -178,6 +178,10 @@ extension NotchDisplays: ExtensionNotchDriver {
         activeModel.showAlert(alert, eyes: eyes, from: id)
     }
 
+    func showMessage(_ message: NotchMessage, from id: ExtensionID) {
+        activeModel.showMessage(message, from: id)
+    }
+
     /// The eyes open on the active display; one that stopped being active closes its own.
     func watch(_ point: CGPoint?, mood: NotchEyesMood, from id: ExtensionID) {
         let active = activeModel
