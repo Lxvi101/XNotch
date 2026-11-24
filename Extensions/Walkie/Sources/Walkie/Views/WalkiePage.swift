@@ -2,16 +2,20 @@ import AppKit
 import SwiftUI
 import XNotchKit
 
-/// What sits under the faces, and how tall the page is for it.
+/// What the page shows, and how tall it is for it.
 @MainActor
 final class WalkieUI: ObservableObject {
     enum Panel: Equatable {
+        /// The faces, with a hint line under them.
         case hint
-        case recording(String)
+        /// One conversation filling the page; its face rides up into the header.
         case chat(String)
     }
 
     @Published private(set) var panel: Panel = .hint
+    /// The face being held to talk to. A conversation records in place; on
+    /// the faces, a card opens under them.
+    @Published private(set) var recording: String?
     /// The pointer went far enough from the held face to cancel on release.
     @Published var cancelArmed = false
     /// Faces that just sent: `true` when it failed.
@@ -19,18 +23,19 @@ final class WalkieUI: ObservableObject {
     @Published var notice: String?
 
     var onHeightChange: (() -> Void)?
-    private var restore: Panel = .hint
     private var noticeWork: DispatchWorkItem?
 
     static let facesHeight: CGFloat = 80
+    /// The tallest a page can be and still fit the notch's canvas under a
+    /// camera notch, the same limit Vitals keeps to.
+    static let maxHeight: CGFloat = 208
+    static let recordingCardHeight: CGFloat = 106
 
     var contentHeight: CGFloat {
-        let below: CGFloat = switch panel {
-        case .hint: 20
-        case .recording: 106
-        case .chat: 238
+        switch panel {
+        case .chat: Self.maxHeight
+        case .hint: Self.facesHeight + (recording == nil ? 20 : Self.recordingCardHeight)
         }
-        return Self.facesHeight + below
     }
 
     func show(_ panel: Panel) {
@@ -44,13 +49,17 @@ final class WalkieUI: ObservableObject {
     }
 
     func beginRecording(_ box: String) {
-        if case .recording = panel {} else { restore = panel }
         cancelArmed = false
-        show(.recording(box))
+        guard recording != box else { return }
+        withAnimation(KitMotion.shell) { recording = box }
+        onHeightChange?()
     }
 
     func endRecording(sentTo box: String?, failed: Bool = false) {
-        show(restore)
+        if recording != nil {
+            withAnimation(KitMotion.shell) { recording = nil }
+            onHeightChange?()
+        }
         guard let box else { return }
         withAnimation(.smooth(duration: 0.46, extraBounce: 0.12)) { sendBadges[box] = failed }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
@@ -74,17 +83,32 @@ struct WalkiePage: View {
     let openSettings: () -> Void
     let tick: () -> Void
 
+    /// Faces fly between the row and a conversation's header.
+    @Namespace private var faces
+
     var body: some View {
-        VStack(spacing: 0) {
-            FacesRow(store: store, ui: ui, onHoldBegan: holdBegan, onHoldEnded: holdEnded, onClick: click,
-                     onSettings: openSettings)
-                .frame(height: WalkieUI.facesHeight)
-            panel
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                // A short drop, not a full move: content never passes over the faces.
-                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: -10)).combined(with: .scale(scale: 0.97, anchor: .top)),
-                                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .top))))
+        ZStack(alignment: .top) {
+            if case .chat(let box) = ui.panel, let contact = store.contact(box) {
+                ConversationView(store: store, player: store.player, ui: ui, contact: contact, isActive: isActive,
+                                 onHoldBegan: { holdBegan(contact) }, onHoldEnded: { holdEnded(contact, cancel: $0) },
+                                 onBack: { tick(); ui.show(.hint) }, faces: faces)
+                    .id("chat-\(box)")
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)),
+                                            removal: .opacity.combined(with: .offset(y: 6))))
+            } else {
+                VStack(spacing: 0) {
+                    FacesRow(store: store, ui: ui, faces: faces, onHoldBegan: holdBegan, onHoldEnded: holdEnded,
+                             onClick: click, onSettings: openSettings)
+                        .frame(height: WalkieUI.facesHeight)
+                    below
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+                .id("faces")
+                .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)),
+                                        removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))))
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, 12)
         .overlay(alignment: .bottom) { noticeBanner }
         .onChange(of: store.lastError) { _, error in
@@ -92,22 +116,20 @@ struct WalkiePage: View {
         }
     }
 
+    /// Under the faces: the hint, or the card while you hold a face.
     @ViewBuilder
-    private var panel: some View {
-        switch ui.panel {
-        case .hint:
-            HintLine(store: store, openSettings: openSettings)
-                .id("hint")
-        case .recording(let box):
-            if let contact = store.contact(box) {
+    private var below: some View {
+        ZStack(alignment: .top) {
+            if let box = ui.recording, let contact = store.contact(box) {
                 RecordingCard(recorder: store.recorder, contact: contact, cancelArmed: ui.cancelArmed)
                     .id("recording")
-            }
-        case .chat(let box):
-            if let contact = store.contact(box) {
-                ConversationView(store: store, player: store.player, ui: ui, contact: contact, isActive: isActive,
-                                 onHoldBegan: { holdBegan(contact) }, onHoldEnded: { holdEnded(contact, cancel: $0) })
-                    .id("chat-\(box)")
+                    // A short drop, not a full move: content never passes over the faces.
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: -10)).combined(with: .scale(scale: 0.97, anchor: .top)),
+                                            removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .top))))
+            } else {
+                HintLine(store: store, openSettings: openSettings)
+                    .id("hint")
+                    .transition(.opacity)
             }
         }
     }
@@ -123,7 +145,8 @@ struct WalkiePage: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(Capsule().fill(Color(red: 0.25, green: 0.1, blue: 0.1)).overlay(Capsule().strokeBorder(.white.opacity(0.1))))
-                .padding(.bottom, 4)
+                // Above the composer in a conversation, so it never covers what you type.
+                .padding(.bottom, ui.panel == .hint ? 4 : 46)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .onTapGesture { ui.notice = nil }
         }
@@ -148,11 +171,69 @@ struct WalkiePage: View {
     }
 }
 
+extension View {
+    /// Lets a face fly between two places that show it, when there's a namespace.
+    @ViewBuilder
+    func matchedFace(_ box: String, in namespace: Namespace.ID?) -> some View {
+        if let namespace {
+            matchedGeometryEffect(id: "face-\(box)", in: namespace)
+        } else {
+            self
+        }
+    }
+}
+
+/// Down starts a short timer: still down when it fires means talk; up
+/// before it means a click. Dragging far from the face arms cancel.
+struct HoldToTalkGesture: ViewModifier {
+    @ObservedObject var ui: WalkieUI
+    @Binding var holding: Bool
+    let onHoldBegan: () -> Void
+    let onHoldEnded: (Bool) -> Void
+    let onClick: () -> Void
+
+    @State private var pressed = false
+    @State private var holdWork: DispatchWorkItem?
+
+    func body(content: Content) -> some View {
+        content.gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in
+                    if !pressed {
+                        pressed = true
+                        let work = DispatchWorkItem {
+                            holding = true
+                            onHoldBegan()
+                        }
+                        holdWork = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+                    }
+                    if holding {
+                        let armed = hypot(value.translation.width, value.translation.height) > 70
+                        if armed != ui.cancelArmed { withAnimation(KitMotion.content) { ui.cancelArmed = armed } }
+                    }
+                }
+                .onEnded { _ in
+                    holdWork?.cancel()
+                    holdWork = nil
+                    pressed = false
+                    if holding {
+                        holding = false
+                        onHoldEnded(false)
+                    } else {
+                        onClick()
+                    }
+                }
+        )
+    }
+}
+
 // MARK: Faces
 
 private struct FacesRow: View {
     @ObservedObject var store: WalkieStore
     @ObservedObject var ui: WalkieUI
+    let faces: Namespace.ID
     let onHoldBegan: (Contact) -> Void
     let onHoldEnded: (Contact, Bool) -> Void
     let onClick: (Contact) -> Void
@@ -162,7 +243,7 @@ private struct FacesRow: View {
         NotchHoverReader { hovering in
             HStack(spacing: hovering || isFocused ? 14 : 6) {
                 ForEach(store.contacts) { contact in
-                    FaceButton(store: store, ui: ui, player: store.player, contact: contact,
+                    FaceButton(store: store, ui: ui, player: store.player, contact: contact, faces: faces,
                                onHoldBegan: { onHoldBegan(contact) },
                                onHoldEnded: { onHoldEnded(contact, $0) },
                                onClick: { onClick(contact) }, onSettings: onSettings)
@@ -176,10 +257,7 @@ private struct FacesRow: View {
         }
     }
 
-    private var isFocused: Bool {
-        if case .hint = ui.panel { return false }
-        return true
-    }
+    private var isFocused: Bool { ui.recording != nil }
 }
 
 private struct FaceButton: View {
@@ -187,25 +265,18 @@ private struct FaceButton: View {
     @ObservedObject var ui: WalkieUI
     @ObservedObject var player: VoicePlayer
     let contact: Contact
+    let faces: Namespace.ID
     let onHoldBegan: () -> Void
     let onHoldEnded: (Bool) -> Void
     let onClick: () -> Void
     let onSettings: () -> Void
 
-    @State private var pressedAt: Date?
-    @State private var holdWork: DispatchWorkItem?
     @State private var holding = false
 
     private let size: CGFloat = 42
 
-    private var isSelected: Bool {
-        switch ui.panel {
-        case .chat(let box), .recording(let box): box == contact.box
-        default: false
-        }
-    }
-
-    private var isRecordingHere: Bool { ui.panel == .recording(contact.box) }
+    private var isSelected: Bool { isRecordingHere }
+    private var isRecordingHere: Bool { ui.recording == contact.box }
     private var playingProgress: Double? {
         guard let id = player.playing, store.chats[contact.box]?.contains(where: { $0.id == id }) == true else { return nil }
         return player.progress
@@ -223,6 +294,7 @@ private struct FaceButton: View {
                     }
                     FaceImage(name: contact.name, seed: contact.box, avatar: contact.avatar)
                         .saturation(contact.accepted ? 1 : 0.2)
+                        .matchedFace(contact.box, in: faces)
                     if let progress = playingProgress {
                         PlaybackRing(progress: progress).padding(-3)
                     }
@@ -248,7 +320,8 @@ private struct FaceButton: View {
                     .animation(KitMotion.content, value: label)
             }
             .contentShape(Rectangle())
-            .gesture(press)
+            .modifier(HoldToTalkGesture(ui: ui, holding: $holding, onHoldBegan: onHoldBegan, onHoldEnded: onHoldEnded,
+                                        onClick: onClick))
             .notchContextMenu { menu }
             .help("Hold to talk to \(contact.firstName). Click to open.")
         }
@@ -296,39 +369,6 @@ private struct FaceButton: View {
         }
     }
 
-    /// Down starts a short timer: still down when it fires means talk; up
-    /// before it means a click. Dragging far from the face arms cancel.
-    private var press: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onChanged { value in
-                if pressedAt == nil {
-                    pressedAt = Date()
-                    let work = DispatchWorkItem {
-                        holding = true
-                        onHoldBegan()
-                    }
-                    holdWork = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
-                }
-                if holding {
-                    let distance = hypot(value.translation.width, value.translation.height)
-                    let armed = distance > 70
-                    if armed != ui.cancelArmed { withAnimation(KitMotion.content) { ui.cancelArmed = armed } }
-                }
-            }
-            .onEnded { _ in
-                holdWork?.cancel()
-                holdWork = nil
-                pressedAt = nil
-                if holding {
-                    holding = false
-                    onHoldEnded(false)
-                } else {
-                    onClick()
-                }
-            }
-    }
-
     private var menu: [NotchMenuItem] {
         var items: [NotchMenuItem] = [
             .action("Open Conversation", symbol: "bubble.left.and.bubble.right") { onClick() }
@@ -362,16 +402,22 @@ private struct SettingsFace: View {
         NotchHoverReader { hovering in
             Button(action: action) {
                 VStack(spacing: 4) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.55))
-                        .frame(width: 42, height: 42)
-                        .background(Circle().fill(.white.opacity(hovering ? 0.16 : 0.07)))
-                        .overlay(Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.2, dash: emphasized ? [3, 3] : [])).foregroundStyle(.white.opacity(0.25)))
+                    // Smaller and quieter than a face, so it never reads as another person.
+                    Image(systemName: emphasized ? "person.badge.plus" : "gearshape.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(hovering ? 0.9 : emphasized ? 0.7 : 0.4))
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(.white.opacity(hovering ? 0.14 : 0.06)))
+                        .overlay {
+                            if emphasized {
+                                Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.2, dash: [3, 3])).foregroundStyle(.white.opacity(0.3))
+                            }
+                        }
                         .scaleEffect(hovering ? 1.08 : 1)
-                    Text(emphasized ? "Set up in Settings" : "Settings")
+                        .frame(width: 42, height: 42)
+                    Text(emphasized ? "Add people" : "Settings")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(hovering ? 0.9 : 0.45))
+                        .foregroundStyle(.white.opacity(hovering ? 0.9 : emphasized ? 0.6 : 0.3))
                 }
             }
             .buttonStyle(PressScaleStyle(scale: 0.9))
