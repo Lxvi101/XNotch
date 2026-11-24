@@ -18,6 +18,11 @@ struct WireMessage: Codable, Sendable, Equatable {
         case todoDone
         /// Not stored: the sender started or stopped holding the recipient's face.
         case talking
+        /// The sender put the recipient in their menu bar (`active`), or took them out.
+        case menuBar
+        /// A signal: a live talk starts. `ref` is the session (hex), `key` the
+        /// AES-256 key its audio frames are sealed with (`LiveFrame`).
+        case live
     }
 
     struct File: Codable, Sendable, Equatable {
@@ -49,6 +54,8 @@ struct WireMessage: Codable, Sendable, Equatable {
     /// talking: whether they are holding the face now.
     var active: Bool?
     var intro: Introduction?
+    /// live: the session's frame key.
+    var key: Data?
 
     init(kind: Kind, id: String = UUID().uuidString, at: Date = Date()) {
         self.kind = kind

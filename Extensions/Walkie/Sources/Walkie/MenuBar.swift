@@ -136,6 +136,8 @@ final class MenuBarController {
     private var holdWork: DispatchWorkItem?
     private var pressed: Contact?
     private var holding = false
+    /// The held face hears you live instead of getting a voice note.
+    private var holdingLive = false
 
     func pressBegan(atStripX x: CGFloat) {
         guard let contact = face(atStripX: x) else { return }
@@ -144,6 +146,12 @@ final class MenuBarController {
         let work = DispatchWorkItem { [weak self] in
             guard let self, let contact = self.pressed, contact.box != WalkieStore.selfBox else { return }
             self.holding = true
+            // Both of you have the other here: talk live, no panel in the way.
+            if contact.isLive, !self.store.isTalkingLive, self.store.beginLive(only: contact) {
+                self.holdingLive = true
+                self.tick()
+                return
+            }
             self.open(contact)
             self.startRecording(hold: true)
         }
@@ -158,9 +166,13 @@ final class MenuBarController {
         defer {
             pressed = nil
             holding = false
+            holdingLive = false
         }
         guard let contact = pressed else { return }
-        if holding {
+        if holdingLive {
+            store.endLive()
+            tick()
+        } else if holding {
             stopRecording()
         } else if contact.box == WalkieStore.selfBox {
             // Your own face opens Walkie setup in Settings.

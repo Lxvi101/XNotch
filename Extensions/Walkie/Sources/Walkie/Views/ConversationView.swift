@@ -705,8 +705,10 @@ private struct FilesBubble: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(item.files ?? []) { file in
-                FileChip(file: file, url: store.mediaURL(file.path), fromMe: item.fromMe)
+            let files = item.files ?? []
+            let urls = files.map { store.mediaURL($0.path) }
+            ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
+                FileChip(file: file, url: urls[index], urls: urls, index: index, fromMe: item.fromMe)
             }
         }
     }
@@ -715,6 +717,9 @@ private struct FilesBubble: View {
 private struct FileChip: View {
     let file: ChatItem.StoredFile
     let url: URL
+    /// The message's files, for stepping through them in Quick Look.
+    let urls: [URL]
+    let index: Int
     let fromMe: Bool
     @State private var thumbnail: NSImage?
 
@@ -749,13 +754,8 @@ private struct FileChip: View {
             .scaleEffect(hovering ? 1.03 : 1)
             .shadow(color: .black.opacity(hovering ? 0.4 : 0), radius: 8, y: 3)
             .animation(.smooth(duration: 0.34, extraBounce: 0.12), value: hovering)
-            .onTapGesture { NSWorkspace.shared.open(url) }
-            .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
-            .notchContextMenu {
-                [.action("Open", symbol: "arrow.up.forward.app") { NSWorkspace.shared.open(url) },
-                 .action("Show in Finder", symbol: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }]
-            }
-            .help("Click to open, drag to take it anywhere")
+            .overlay { FileInteraction(urls: urls, index: index, dragImage: thumbnail) }
+            .help("Click to preview, double-click to open, drag to take a copy anywhere")
         }
         .task(id: url) { thumbnail = await Self.thumbnail(url) }
     }

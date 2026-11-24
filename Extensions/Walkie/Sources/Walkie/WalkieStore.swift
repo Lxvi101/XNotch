@@ -36,9 +36,19 @@ final class WalkieStore: ObservableObject {
     @Published var filesToTray: Bool { didSet { defaults.set(filesToTray, forKey: "filesToTray") } }
     @Published var transcribe: Bool { didSet { defaults.set(transcribe, forKey: "transcribe") } }
     @Published var menuBarFaces: Bool { didSet { defaults.set(menuBarFaces, forKey: "menuBarFaces") } }
+    /// Held anywhere to talk live to your menu bar; nil turns the keys off.
+    @Published var talkShortcut: TalkShortcut? {
+        didSet { defaults.set(talkShortcut.flatMap { try? JSONEncoder().encode($0) } ?? Data(), forKey: "talkShortcut") }
+    }
+    /// Another app holds the talk keys.
+    @Published var talkShortcutTaken = false
+    /// Who hears you live right now.
+    @Published private(set) var liveTo: Set<String> = []
 
     let player = VoicePlayer()
     let recorder = VoiceRecorder()
+    let livePlayer = LivePlayer()
+    private var liveCapture: LiveCapture?
     let disk: WalkieDisk
 
     /// Wired by the extension.
@@ -47,6 +57,8 @@ final class WalkieStore: ObservableObject {
     var onFilesReceived: (([URL]) -> Void)?
     var onReminder: ((Contact?, ChatItem) -> Void)?
     var onContactsChanged: (() -> Void)?
+    /// A Focus is on: nothing plays by itself.
+    var isQuiet: () -> Bool = { false }
 
     private let defaults: UserDefaults
     private let log: Logger
@@ -96,10 +108,16 @@ final class WalkieStore: ObservableObject {
         filesToTray = defaults.object(forKey: "filesToTray") as? Bool ?? true
         transcribe = defaults.object(forKey: "transcribe") as? Bool ?? true
         menuBarFaces = defaults.object(forKey: "menuBarFaces") as? Bool ?? true
+        if let saved = defaults.data(forKey: "talkShortcut") {
+            talkShortcut = saved.isEmpty ? nil : (try? JSONDecoder().decode(TalkShortcut.self, from: saved)) ?? .standard
+        } else {
+            talkShortcut = .standard
+        }
         contacts = disk.loadContacts().sorted { $0.addedAt < $1.addedAt }
         for contact in contacts { chats[contact.box] = disk.loadChat(contact.box) }
         unread = defaults.dictionary(forKey: "unread") as? [String: Int] ?? [:]
         player.onFinish = { [weak self] id in self?.markHeard(id) }
+        livePlayer.onEnd = { [weak self] box in self?.setTalking(box, false) }
         scheduleReminders()
     }
 
@@ -138,6 +156,8 @@ final class WalkieStore: ObservableObject {
         reminderTimers.removeAll()
         player.stop()
         recorder.cancel()
+        endLive()
+        livePlayer.stopAll()
     }
 
     func reconnect() {
@@ -159,6 +179,7 @@ final class WalkieStore: ObservableObject {
                 try await register(client)
                 listen(client)
                 refreshDirectory()
+                tellMenuBar()
             } catch {
                 status = .offline(error.localizedDescription)
             }
@@ -282,8 +303,107 @@ final class WalkieStore: ObservableObject {
     // MARK: Strip
 
     /// The faces in the menu bar: you first (dropping on yourself keeps the
-    /// files in your tray), then everyone you talk to.
-    var stripPeople: [Contact] { [selfContact] + contacts.filter(\.accepted) }
+    /// files in your tray), then the people you work with right now.
+    var stripPeople: [Contact] { [selfContact] + menuBarPeople }
+
+    var menuBarPeople: [Contact] { contacts.filter(\.isInMenuBar) }
+
+    // MARK: Menu bar
+
+    /// Puts someone in your menu bar or takes them out, before `before` when
+    /// given, and tells them: two people who have each other there can talk live.
+    func setInMenuBar(_ box: String, _ inMenuBar: Bool, before: String? = nil) {
+        guard let index = contacts.firstIndex(where: { $0.box == box }), contacts[index].accepted else { return }
+        var contact = contacts.remove(at: index)
+        contact.inMenuBar = inMenuBar
+        let target = before.flatMap { b in contacts.firstIndex { $0.box == b } } ?? contacts.endIndex
+        contacts.insert(contact, at: target)
+        saveContacts()
+        tellMenuBar()
+    }
+
+    /// Lets everyone whose place in our menu bar changed since we last said so know.
+    private func tellMenuBar() {
+        guard !samples, status == .online || status == .connecting else { return }
+        for contact in contacts where contact.accepted && contact.toldMenuBar != contact.isInMenuBar {
+            let inMenuBar = contact.isInMenuBar
+            guard telling[contact.box] != inMenuBar else { continue }
+            telling[contact.box] = inMenuBar
+            var message = WireMessage(kind: .menuBar)
+            message.active = inMenuBar
+            deliver(message, to: contact, item: nil) { [weak self] sent in
+                guard let self else { return }
+                if self.telling[contact.box] == inMenuBar { self.telling[contact.box] = nil }
+                if sent { self.update(contact.box) { $0.toldMenuBar = inMenuBar } }
+                // Changed again while that was on its way.
+                if self.contact(contact.box).map({ $0.isInMenuBar != inMenuBar }) == true { self.tellMenuBar() }
+            }
+        }
+    }
+
+    /// Menu bar news on its way, so a quick change doesn't send it twice.
+    private var telling: [String: Bool] = [:]
+
+    // MARK: Live
+
+    /// Starts talking live to everyone in the menu bar who has you in theirs
+    /// (or just `only`). False when nobody can hear you live.
+    @discardableResult
+    func beginLive(only: Contact? = nil) -> Bool {
+        guard liveCapture == nil, !samples else { return false }
+        let people = (only.map { [$0] } ?? menuBarPeople).filter(\.isLive)
+        guard !people.isEmpty, recorder.micAuthorized else { return false }
+        let identity = identity, box = mailbox.box
+        struct Listener: Sendable {
+            let contact: Contact
+            let client: WalkieClient
+            let session: Data
+            let key: SymmetricKey
+        }
+        let listeners: [Listener] = people.compactMap { contact in
+            guard let client = WalkieClient(server: contact.server) else { return nil }
+            return Listener(contact: contact, client: client, session: Data((0..<LiveFrame.sessionBytes).map { _ in UInt8.random(in: 0...255) }),
+                            key: SymmetricKey(size: .bits256))
+        }
+        for listener in listeners {
+            var message = WireMessage(kind: .live)
+            message.ref = listener.session.hex
+            message.key = listener.key.withUnsafeBytes { Data($0) }
+            message.active = true
+            Task.detached(priority: .userInitiated) {
+                guard let body = try? WireCodec.encode(message),
+                      let sealed = try? WalkieCrypto.seal(body, from: identity, senderBox: box, to: listener.contact.keys,
+                                                          recipientBox: listener.contact.box) else { return }
+                try? await listener.client.signal(sealed, to: listener.contact.box, postToken: listener.contact.postToken)
+            }
+        }
+        let capture: LiveCapture
+        do {
+            capture = try LiveCapture { packets, seq, last in
+                for listener in listeners {
+                    guard let frame = try? LiveFrame.seal(packets, session: listener.session, seq: seq, last: last,
+                                                          key: listener.key) else { continue }
+                    Task { try? await listener.client.signal(frame, to: listener.contact.box, postToken: listener.contact.postToken) }
+                }
+            }
+            try capture.start()
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+        liveCapture = capture
+        player.stop()
+        liveTo = Set(listeners.map(\.contact.box))
+        return true
+    }
+
+    func endLive() {
+        liveCapture?.stop()
+        liveCapture = nil
+        liveTo = []
+    }
+
+    var isTalkingLive: Bool { liveCapture != nil }
 
     static let selfBox = "walkie.me"
 
@@ -357,10 +477,12 @@ final class WalkieStore: ObservableObject {
         }
         saveContacts()
         refreshPresence()
+        tellMenuBar()
     }
 
     func accept(_ contact: Contact) {
         update(contact.box) { $0.accepted = true }
+        tellMenuBar()
     }
 
     func markVerified(_ contact: Contact) {
@@ -409,6 +531,21 @@ final class WalkieStore: ObservableObject {
     }
 
     // MARK: Sending
+
+    /// One take for several people: each gets their own sealed copy.
+    func sendVoice(_ take: VoiceRecorder.Take, to people: [Contact]) {
+        guard let audio = try? Data(contentsOf: take.url) else { return }
+        for (index, contact) in people.enumerated() {
+            if index == people.count - 1 {
+                sendVoice(take, to: contact)
+            } else {
+                let copy = take.url.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".m4a")
+                guard (try? audio.write(to: copy)) != nil else { continue }
+                sendVoice(VoiceRecorder.Take(url: copy, duration: take.duration, levels: take.levels, transcript: take.transcript),
+                          to: contact)
+            }
+        }
+    }
 
     func sendVoice(_ take: VoiceRecorder.Take, to contact: Contact) {
         var message = WireMessage(kind: .voice)
@@ -519,7 +656,8 @@ final class WalkieStore: ObservableObject {
         deliver(message, attachments: attachments, to: contact, item: item.id)
     }
 
-    private func deliver(_ message: WireMessage, attachments: [Data] = [], to contact: Contact, item: String?) {
+    private func deliver(_ message: WireMessage, attachments: [Data] = [], to contact: Contact, item: String?,
+                         onSent: ((Bool) -> Void)? = nil) {
         if samples {
             // Nobody on the other end: just mark it sent, a beat later.
             if let item {
@@ -530,6 +668,7 @@ final class WalkieStore: ObservableObject {
             return
         }
         guard let client = WalkieClient(server: contact.server) else {
+            onSent?(false)
             if let item { mutate(item, in: contact.box) { $0.delivery = .failed } }
             return
         }
@@ -545,11 +684,20 @@ final class WalkieStore: ObservableObject {
                 let sealed = try await sealing.value
                 try await client.post(sealed, to: contact.box, postToken: contact.postToken)
                 if let item { mutate(item, in: contact.box) { if $0.delivery == .sending { $0.delivery = .sent } } }
-                update(contact.box) { $0.lastActivity = Date() }
+                if let onSent {
+                    onSent(true)
+                } else {
+                    update(contact.box) { $0.lastActivity = Date() }
+                }
             } catch {
                 log.error("walkie send failed: \(error.localizedDescription, privacy: .public)")
                 if let item { mutate(item, in: contact.box) { $0.delivery = .failed } }
-                lastError = error.localizedDescription
+                if let onSent {
+                    // Quiet: it goes again on the next connect.
+                    onSent(false)
+                } else {
+                    lastError = error.localizedDescription
+                }
             }
         }
     }
@@ -608,7 +756,10 @@ final class WalkieStore: ObservableObject {
         if chats[box]?.contains(where: { $0.id == message.id && !$0.fromMe }) == true { return }
         var item: ChatItem
         switch message.kind {
-        case .talking:
+        case .talking, .live:
+            return
+        case .menuBar:
+            update(box) { $0.hasUsInMenuBar = message.active ?? false }
             return
         case .todoDone:
             guard let ref = message.ref else { return }
@@ -642,24 +793,44 @@ final class WalkieStore: ObservableObject {
         saveUnread()
         update(box) { $0.lastActivity = Date() }
         if item.kind == .todo { scheduleReminder(item, box: box) }
-        if item.kind == .voice, autoPlay, contact.accepted, let audio = item.audio {
+        if item.kind == .voice, autoPlay, contact.accepted, !isQuiet(), let audio = item.audio {
             player.enqueue(item.id, url: disk.url(forMedia: audio))
         }
         if contact.accepted { onIncoming?(self.contact(box) ?? contact, item) }
     }
 
     private func handleSignal(_ data: Data) {
+        if LiveFrame.isFrame(data) {
+            livePlayer.receive(data)
+            return
+        }
         let identity = identity, box = mailbox.box
         guard let opened = try? WalkieCrypto.open(data, as: identity, recipientBox: box),
               let contact = contact(opened.senderBox), contact.accepted, opened.verify(with: contact.keys),
-              let (message, _) = try? WireCodec.decode(opened.body), message.kind == .talking,
+              let (message, _) = try? WireCodec.decode(opened.body),
               abs(message.at.timeIntervalSinceNow) < 120 else { return }
-        setTalking(contact.box, message.active ?? false)
         online.insert(contact.box)
+        switch message.kind {
+        case .talking:
+            setTalking(contact.box, message.active ?? false)
+        case .live:
+            // Only someone in your menu bar plays out loud; anyone else stays quiet.
+            guard contact.isInMenuBar, let ref = message.ref, let session = Data(hex: ref),
+                  session.count == LiveFrame.sessionBytes, let key = message.key else { return }
+            if contact.hasUsInMenuBar != true { update(contact.box) { $0.hasUsInMenuBar = true } }
+            livePlayer.begin(session: session, key: key, box: contact.box)
+            setTalking(contact.box, true, live: true)
+        default:
+            break
+        }
     }
 
-    private func setTalking(_ box: String, _ active: Bool) {
+    /// Their face ripples while they talk to you; a live talk also says so in the notch.
+    private(set) var talkingLive: Set<String> = []
+
+    private func setTalking(_ box: String, _ active: Bool, live: Bool = false) {
         talkingExpiry[box]?.cancel()
+        if active, live { talkingLive.insert(box) } else if !active { talkingLive.remove(box) }
         guard active != talking.contains(box) else { return }
         if active {
             talking.insert(box)

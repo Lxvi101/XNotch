@@ -19,8 +19,18 @@ struct Contact: Codable, Identifiable, Equatable, Sendable {
     var knowsUs: Bool
     var addedAt: Date
     var lastActivity: Date
+    /// In your menu bar: the people you work with right now. Nil, from
+    /// before there was a choice, means yes.
+    var inMenuBar: Bool?
+    /// They have you in their menu bar too, as they last told you.
+    var hasUsInMenuBar: Bool?
+    /// What we last told them about our menu bar; nil when we never did.
+    var toldMenuBar: Bool?
 
     var id: String { box }
+    var isInMenuBar: Bool { accepted && (inMenuBar ?? true) }
+    /// Both of you have the other in the menu bar: you can talk live.
+    var isLive: Bool { isInMenuBar && hasUsInMenuBar == true }
     var firstName: String { name.split(separator: " ").first.map(String.init) ?? name }
 }
 

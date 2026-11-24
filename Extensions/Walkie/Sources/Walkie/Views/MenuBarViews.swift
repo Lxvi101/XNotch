@@ -222,6 +222,8 @@ private struct MenuBarFace: View {
                 TalkingRipples(color: .white)
             }
             FaceImage(name: contact.name, seed: contact.box, avatar: contact.avatar)
+            // They hear you live: a warm ring for as long as you talk.
+            LiveRing(active: store.liveTo.contains(contact.box))
             // The rings stay in the tree and fade and tighten in, rather than snapping on.
             ZStack {
                 // A dark ring with a fine light edge, as the open face wears.
@@ -256,6 +258,24 @@ private struct MenuBarFace: View {
     }
 }
 
+/// Around a face that hears you live: tightens in as you start, breathes
+/// while you talk, and lets go when you stop.
+struct LiveRing: View {
+    static let color = Color(red: 1.0, green: 0.42, blue: 0.24)
+    let active: Bool
+    @State private var breathing = false
+
+    var body: some View {
+        Circle().strokeBorder(Self.color, lineWidth: 2).padding(-2.5)
+            .scaleEffect(active ? (breathing ? 1.08 : 1) : 1.25)
+            .opacity(active ? 1 : 0)
+            .animation(.smooth(duration: 0.3), value: active)
+            .animation(active ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .smooth(duration: 0.3),
+                       value: breathing)
+            .onChange(of: active, initial: true) { _, on in breathing = on }
+    }
+}
+
 /// "Mira · 1d ago", or "Mira" and a green dot while they're online.
 struct NamePill: View {
     let contact: Contact
@@ -268,6 +288,11 @@ struct NamePill: View {
                 Circle().fill(KitStyle.green).frame(width: 6, height: 6)
             } else if let seen = store.lastSeen[contact.box] {
                 Text("· \(Self.ago(seen))").foregroundStyle(.white.opacity(0.6))
+            }
+            if contact.isLive {
+                Text("Live").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.black)
+                    .padding(.horizontal, 5).padding(.vertical, 1.5)
+                    .background(Capsule().fill(LiveRing.color))
             }
         }
         .font(.system(size: 11.5))
@@ -576,11 +601,22 @@ private struct FloatingBubble: View {
         case .voice:
             VoiceBubble(item: item, store: store, player: store.player)
         case .files:
-            HStack(spacing: 6) {
-                ForEach((item.files ?? []).prefix(4)) { file in
-                    Thumbnail(url: store.mediaURL(file.path), size: 64)
+            let urls = (item.files ?? []).map { store.mediaURL($0.path) }
+            Group {
+                if urls.count == 1, let url = urls.first, Thumbnail.isImage(url) {
+                    // A picture or screenshot alone shows big enough to read.
+                    Thumbnail(url: url, size: 220, height: 140)
+                        .overlay { FileInteraction(urls: urls, index: 0) }
+                } else {
+                    HStack(spacing: 6) {
+                        ForEach(Array(urls.prefix(4).enumerated()), id: \.element) { index, url in
+                            Thumbnail(url: url, size: 64)
+                                .overlay { FileInteraction(urls: urls, index: index) }
+                        }
+                    }
                 }
             }
+            .help("Click to preview, double-click to open, drag to take a copy anywhere")
             .padding(6)
             .background { PanelGlass(shape: RoundedRectangle(cornerRadius: 20, style: .continuous), tone: item.fromMe ? .dark : .light) }
         case .todo:
@@ -638,7 +674,13 @@ private struct VoiceBubble: View {
 struct Thumbnail: View {
     let url: URL
     let size: CGFloat
+    /// Wider than tall, for a picture shown on its own; square when nil.
+    var height: CGFloat?
     @State private var image: NSImage?
+
+    static func isImage(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true
+    }
 
     var body: some View {
         Group {
@@ -648,15 +690,15 @@ struct Thumbnail: View {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().scaledToFit().padding(size * 0.12)
             }
         }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .frame(width: size, height: height ?? size)
+        .clipShape(RoundedRectangle(cornerRadius: height == nil ? size * 0.22 : 14, style: .continuous))
         .task(id: url) {
             guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else { return }
             image = await Task.detached(priority: .utility) { () -> NSImage? in
                 guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                       let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                           kCGImageSourceCreateThumbnailFromImageAlways: true,
-                          kCGImageSourceThumbnailMaxPixelSize: 240,
+                          kCGImageSourceThumbnailMaxPixelSize: max(240, size * 2),
                           kCGImageSourceCreateThumbnailWithTransform: true
                       ] as CFDictionary) else { return nil }
                 return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
@@ -684,6 +726,7 @@ struct Composer: View {
                 HStack(spacing: 8) {
                     ForEach(composer.files, id: \.self) { url in
                         Thumbnail(url: url, size: 52)
+                            .overlay { FileInteraction(urls: composer.files, index: composer.files.firstIndex(of: url) ?? 0) }
                             .overlay(alignment: .topTrailing) {
                                 Button { actions.removeFile(url) } label: {
                                     Image(systemName: "xmark")

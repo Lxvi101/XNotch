@@ -106,7 +106,7 @@ sig       = Ed25519(m) || ML-DSA-65(m),  m = "XNotch Walkie msg v1" || 0x00 || r
 body = u32be len(header) || header JSON || attachment_0 || attachment_1 || …
 ```
 
-The header holds `kind` (`voice`, `files`, `text`, `todo`, `todoDone`, `talking`), an id,
+The header holds `kind` (`voice`, `files`, `text`, `todo`, `todoDone`, `talking`, `menuBar`, `live`), an id,
 a time, and per kind the transcript, duration, loudness samples, file names and sizes,
 reminder time, or to-do reference. Voice notes carry one AAC (`.m4a`) attachment.
 File messages carry one attachment per file. File names are reduced to a single path
@@ -117,6 +117,38 @@ also carry an `intro`: our signed card and our send token, so they can reply.
 `/signals`. The server passes them to whoever is listening and never stores them. They
 make a face ripple on the other Mac while someone holds yours. They are dropped if older
 than two minutes.
+
+`menuBar` messages are stored like any other. `active` says whether the sender has the
+recipient in their menu bar. Nothing shows in the chat. They're sent once per change, and again on
+the next connect if sending failed.
+
+## Live talk
+
+Two people who have each other in the menu bar can talk live: the listener hears the
+speaker while they speak, not after. Everything goes through `/signals`, so nothing is stored.
+
+1. For each listener the speaker makes a random 16-byte **session** id and a random
+   AES-256 **key**, and sends a `live` signal sealed and signed like any envelope:
+   `ref` = session (hex), `key` = the key, `active` = true.
+2. The microphone is encoded as Opus (48 kHz, mono, 24 kbit/s, 20 ms packets). Every
+   100 ms, five packets go out as one frame per listener:
+
+```
+frame   = "XNWL" || 0x01 || session (16) || u32be seq || flags || AES-256-GCM(key, packets)
+            (nonce || ciphertext || tag; the AAD is everything before it)
+packets = u16be count || (u16be len || Opus packet)…
+flags   = 0x01 on the last frame
+```
+
+The listener plays a talk only if the speaker is in **their own** menu bar. A `live`
+signal from anyone else is dropped, so nobody can make your Mac speak unless you put
+them there. Frames are played in `seq` order. A missing frame is waited for 250 ms, then
+skipped. A talk with no frames for 3 s ends.
+
+Because only the speaker and the listener know the key, a frame that opens came from the
+speaker. Each listener gets their own key, so one listener can't forge frames for another.
+Like signals, live audio has the protections in the next section. The server sees a session
+id, sizes and timing (roughly when and how long someone talks), and never the audio.
 
 ## The server's view
 

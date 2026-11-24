@@ -82,8 +82,11 @@ struct WalkieSettingsPane: View {
                 Text("Friends")
             }
 
+            if !friends.isEmpty {
+                MenuBarSection(store: store)
+            }
+
             Section {
-                Toggle("Show faces in the menu bar", isOn: $store.menuBarFaces)
                 Toggle("Play voice notes as they arrive", isOn: $store.autoPlay)
                 Toggle("Put received files in the tray", isOn: $store.filesToTray)
                 Toggle("Write down what I say (on this Mac)", isOn: $store.transcribe)
@@ -175,6 +178,137 @@ struct WalkieSettingsPane: View {
         context.draw(square, in: CGRect(x: 0, y: 0, width: size, height: size))
         guard let scaled = context.makeImage() else { return nil }
         return NSBitmapImageRep(cgImage: scaled).representation(using: .jpeg, properties: [.compressionFactor: 0.78])
+    }
+}
+
+/// Who's in your menu bar right now: drag faces between the two rows. People
+/// who have each other there can talk live.
+private struct MenuBarSection: View {
+    @ObservedObject var store: WalkieStore
+
+    private var inMenuBar: [Contact] { store.contacts.filter(\.isInMenuBar) }
+    private var others: [Contact] { store.contacts.filter { $0.accepted && !$0.isInMenuBar } }
+
+    var body: some View {
+        Section {
+            Toggle("Show faces in the menu bar", isOn: $store.menuBarFaces)
+            FaceShelf(title: "In your menu bar", empty: "Drag people here", people: inMenuBar, store: store, inMenuBar: true)
+            FaceShelf(title: "Everyone else", empty: "Drag people here to keep them out of the menu bar",
+                      people: others, store: store, inMenuBar: false)
+            LabeledContent {
+                TalkShortcutRecorder(shortcut: $store.talkShortcut)
+            } label: {
+                Text("Hold to talk live")
+                Text("From any app, to everyone in your menu bar.")
+            }
+        } header: {
+            Text("Menu Bar")
+        } footer: {
+            Group {
+                if store.talkShortcutTaken {
+                    Text("Another app already uses these keys. Choose different ones.").foregroundStyle(.red)
+                } else {
+                    Text("Put the people you're working with right now in your menu bar. When they have you in theirs too, their face says Live: hold the keys or their face and they hear you as you speak. Everyone else gets voice notes as usual.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// A row of faces that takes faces dropped on it: on a face, they go
+/// before it; anywhere else, at the end.
+private struct FaceShelf: View {
+    let title: String
+    let empty: String
+    let people: [Contact]
+    @ObservedObject var store: WalkieStore
+    let inMenuBar: Bool
+    @State private var targeted = false
+
+    private static let motion = Animation.smooth(duration: 0.35, extraBounce: 0.08)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).foregroundStyle(.secondary).font(.callout)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(people) { contact in
+                        FaceTile(contact: contact, live: inMenuBar && contact.isLive, online: store.online.contains(contact.box))
+                            .draggable(contact.box) {
+                                FaceImage(name: contact.name, seed: contact.box, avatar: contact.avatar)
+                                    .frame(width: 40, height: 40)
+                            }
+                            .dropDestination(for: String.self) { boxes, _ in
+                                move(boxes, before: contact.box)
+                            }
+                            .contextMenu {
+                                Button(inMenuBar ? "Take Out of the Menu Bar" : "Put in the Menu Bar") {
+                                    withAnimation(Self.motion) { store.setInMenuBar(contact.box, !inMenuBar) }
+                                }
+                            }
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
+                    if people.isEmpty {
+                        Text(empty).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, minHeight: FaceTile.height)
+                    }
+                }
+                .padding(6)
+                .frame(minWidth: 0, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(targeted ? 0.09 : 0.04))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(targeted ? 0.9 : 0), lineWidth: 1.5)
+            }
+            .animation(.smooth(duration: 0.2), value: targeted)
+            .dropDestination(for: String.self) { boxes, _ in
+                move(boxes, before: nil)
+            } isTargeted: { targeted = $0 }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func move(_ boxes: [String], before: String?) -> Bool {
+        let known = boxes.filter { box in store.contact(box)?.accepted == true && box != before }
+        guard !known.isEmpty else { return false }
+        withAnimation(Self.motion) {
+            for box in known { store.setInMenuBar(box, inMenuBar, before: before) }
+        }
+        return true
+    }
+}
+
+private struct FaceTile: View {
+    /// Both rows stay this tall, full or empty.
+    static let height: CGFloat = 76
+    let contact: Contact
+    let live: Bool
+    let online: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            FaceImage(name: contact.name, seed: contact.box, avatar: contact.avatar)
+                .frame(width: 40, height: 40)
+                .overlay(alignment: .bottomTrailing) {
+                    if online {
+                        Circle().fill(.green).frame(width: 9, height: 9)
+                            .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                    }
+                }
+            Text(contact.firstName).font(.caption).lineLimit(1)
+            Text("Live").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Capsule().fill(LiveRing.color))
+                .opacity(live ? 1 : 0)
+                .help("\(contact.firstName) has you in their menu bar too: you can talk live.")
+        }
+        .frame(width: 58, height: Self.height)
+        .contentShape(Rectangle())
     }
 }
 

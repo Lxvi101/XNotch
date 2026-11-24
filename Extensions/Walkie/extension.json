@@ -7,6 +7,6 @@
   "symbol": "waveform.circle.fill",
   "tint": "#FF6A3D",
   "principalClass": "WalkiePrincipal",
-  "kit": { "abi": 3, "minAPI": "1.10.0" },
+  "kit": { "abi": 3, "minAPI": "1.11.0" },
   "creator": { "name": "XNotch" }
 }

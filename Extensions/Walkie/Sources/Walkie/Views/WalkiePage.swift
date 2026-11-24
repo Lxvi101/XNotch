@@ -38,9 +38,15 @@ final class WalkieUI: ObservableObject {
         }
     }
 
-    func show(_ panel: Panel) {
+    /// `animated: false` when the notch is opening straight onto the panel,
+    /// so it grows to the panel's height on its own spring.
+    func show(_ panel: Panel, animated: Bool = true) {
         guard panel != self.panel else { return }
-        withAnimation(KitMotion.shell) { self.panel = panel }
+        if animated {
+            withAnimation(KitMotion.shell) { self.panel = panel }
+        } else {
+            self.panel = panel
+        }
         onHeightChange?()
     }
 
