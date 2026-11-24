@@ -5,12 +5,18 @@ import XCTest
 @MainActor
 /// The text behind the bucket keeps its place: nothing re-hosts the text view.
 final class NoteWindowTests: XCTestCase {
+    /// A note window's controller holds its library `unowned`, and AppKit can
+    /// still run the window's deferred work after a test returns. Libraries
+    /// live until the run ends so that work never reaches a freed one.
+    private static var keepAlive: [NoteLibrary] = []
+
     func testBucketRoundTripKeepsScroll() throws {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("probe-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        Self.keepAlive.append(library)
         library.load()
         let text = (1...80).map { "## Line \($0)\nsome **text** here" }.joined(separator: "\n")
         let note = Note(record: NoteRecord(id: UUID(), spaceID: library.activeSpaceID, created: Date(), modified: Date(),
@@ -44,6 +50,7 @@ final class NoteWindowTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        Self.keepAlive.append(library)
         library.load()
         let note = Note(record: NoteRecord(id: UUID(), spaceID: library.activeSpaceID, created: Date(), modified: Date(),
                                            isPinned: false, isOpen: true, frame: CGRect(x: -3000, y: 100, width: 330, height: 360)),
@@ -81,6 +88,7 @@ final class NoteWindowTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let library = NoteLibrary(root: root, preferences: NotesPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!))
+        Self.keepAlive.append(library)
         library.load()
         let frame = CGRect(x: -3000, y: 100, width: 330, height: 360)
         // Empty notes are discarded rather than trashed, so nothing lands in the real Trash.
